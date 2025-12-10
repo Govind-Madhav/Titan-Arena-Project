@@ -1,0 +1,357 @@
+// Prisma Schema for E-sports Tournament Platform
+// Production-ready with MySQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS (as String for MySQL compatibility)
+// Role: PLAYER, ADMIN, SUPERADMIN
+// HostStatus: NOT_VERIFIED, PENDING_REVIEW, VERIFIED, REJECTED
+// KYCStatus: PENDING, VERIFIED, REJECTED
+// TournamentType: SOLO, TEAM
+// TournamentStatus: UPCOMING, ONGOING, COMPLETED, CANCELED, POSTPONED
+// MatchStatus: SCHEDULED, COMPLETED, DISPUTED
+// RegistrationStatus: PENDING, CONFIRMED, CANCELED
+// TransactionType: DEPOSIT, ENTRY_FEE, PRIZE, HOST_PROFIT, REFUND, WITHDRAW, ADJUSTMENT
+// InsufficientRegPolicy: CANCEL, POSTPONE
+// ============================================
+
+// ============================================
+// USER & AUTH
+// ============================================
+model User {
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  password              String
+  username              String   @unique
+  role                  String   @default("PLAYER")
+  hostStatus            String   @default("NOT_VERIFIED")
+  isBanned              Boolean  @default(false)
+  
+  // Email verification
+  emailVerified         Boolean  @default(false)
+  verificationToken     String?  @unique
+  verificationExpiry    DateTime?
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  wallet            Wallet?
+  kyc               KYCRequest?
+  teams             TeamMember[]
+  captainTeams      Team[]         @relation("CaptainTeams")
+  registrations     Registration[]
+  hostedTournaments Tournament[]   @relation("HostedTournaments")
+  transactions      Transaction[]
+  auditLogs         AuditLog[]     @relation("AdminAuditLogs")
+  notifications     Notification[]
+  disputes          Dispute[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique @db.VarChar(500)
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+}
+
+// ============================================
+// WALLET & TRANSACTIONS
+// ============================================
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  balance   Int      @default(0)  // in paise
+  locked    Int      @default(0)  // locked for pending ops
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  transactions Transaction[]
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  userId    String
+  walletId  String
+  type      String   // DEPOSIT, ENTRY_FEE, PRIZE, HOST_PROFIT, REFUND, WITHDRAW, ADJUSTMENT
+  amount    Int      // +ve for credit, -ve for debit
+  message   String?
+  meta      Json?
+  status    String   @default("COMPLETED") // PENDING, COMPLETED, FAILED
+  
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id])
+  wallet    Wallet   @relation(fields: [walletId], references: [id])
+  
+  @@index([userId])
+  @@index([walletId])
+}
+
+// ============================================
+// KYC / HOST VERIFICATION
+// ============================================
+model KYCRequest {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  documentType String
+  proofUrl     String
+  selfieUrl    String
+  rankProofUrl String?
+  status       String   @default("PENDING") // PENDING, VERIFIED, REJECTED
+  adminNotes   String?  @db.Text
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// TEAMS
+// ============================================
+model Team {
+  id          String       @id @default(cuid())
+  name        String
+  captainId   String
+  maxMembers  Int          @default(5)
+  
+  captain     User         @relation("CaptainTeams", fields: [captainId], references: [id])
+  members     TeamMember[]
+  registrations Registration[]
+  
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  @@index([captainId])
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  userId    String
+  teamId    String
+  role      String   @default("MEMBER") // CAPTAIN, MEMBER
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([userId, teamId])
+  @@index([teamId])
+}
+
+// ============================================
+// TOURNAMENTS
+// ============================================
+model Tournament {
+  id              String   @id @default(cuid())
+  name            String
+  game            String
+  description     String?  @db.Text
+  type            String   // SOLO, TEAM
+  teamSize        Int?     // required if type = TEAM
+  
+  hostId          String
+  host            User     @relation("HostedTournaments", fields: [hostId], references: [id])
+  
+  entryFee        Int      // per player/team (in paise)
+  prizePool       Int      // total prize sum (in paise)
+  minTeamsRequired Int     // ceil(prizePool / entryFee)
+  insufficientRegPolicy String @default("CANCEL") // CANCEL, POSTPONE
+  
+  status          String   @default("UPCOMING") // UPCOMING, ONGOING, COMPLETED, CANCELED, POSTPONED
+  startTime       DateTime
+  registrationEnd DateTime
+  
+  collected       Int      @default(0) // total entry fees collected
+  hostProfit      Int      @default(0) // profit after payout
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  payouts         Payout[]
+  registrations   Registration[]
+  matches         Match[]
+  
+  @@index([hostId])
+  @@index([status])
+  @@index([game])
+}
+
+model Payout {
+  id           String     @id @default(cuid())
+  tournamentId String
+  position     Int        // 1, 2, 3...
+  amount       Int        // in paise
+  
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  
+  @@unique([tournamentId, position])
+}
+
+model Registration {
+  id           String   @id @default(cuid())
+  tournamentId String
+  userId       String?  // for SOLO
+  teamId       String?  // for TEAM
+  status       String   @default("PENDING") // PENDING, CONFIRMED, CANCELED
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user         User?      @relation(fields: [userId], references: [id])
+  team         Team?      @relation(fields: [teamId], references: [id])
+  
+  @@unique([tournamentId, userId])
+  @@unique([tournamentId, teamId])
+  @@index([tournamentId])
+}
+
+// ============================================
+// MATCHES & BRACKETS
+// ============================================
+model Match {
+  id            String   @id @default(cuid())
+  tournamentId  String
+  round         Int
+  matchNumber   Int
+  
+  // For SOLO tournaments
+  playerAId     String?
+  playerBId     String?
+  
+  // For TEAM tournaments
+  teamAId       String?
+  teamBId       String?
+  
+  scoreA        Int?
+  scoreB        Int?
+  winnerUserId  String?
+  winnerTeamId  String?
+  
+  status        String   @default("SCHEDULED") // SCHEDULED, COMPLETED, DISPUTED
+  scheduledTime DateTime?
+  proofUrl      String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  tournament    Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  disputes      Dispute[]
+  
+  @@unique([tournamentId, round, matchNumber])
+  @@index([tournamentId])
+}
+
+model Dispute {
+  id          String   @id @default(cuid())
+  matchId     String
+  raisedById  String
+  reason      String   @db.Text
+  status      String   @default("OPEN") // OPEN, RESOLVED, DISMISSED
+  evidenceUrl String?
+  resolution  String?  @db.Text
+  resolvedAt  DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  match       Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  raisedBy    User     @relation(fields: [raisedById], references: [id])
+  
+  @@index([matchId])
+  @@index([raisedById])
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String   @db.Text
+  type      String   @default("INFO") // INFO, SUCCESS, WARNING, ERROR
+  isRead    Boolean  @default(false)
+  meta      Json?
+  
+  createdAt DateTime @default(now())
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([isRead])
+}
+
+// ============================================
+// ADMIN AUDIT LOGS
+// ============================================
+model AuditLog {
+  id        String   @id @default(cuid())
+  adminId   String
+  action    String   // KYC_APPROVED, KYC_REJECTED, MATCH_RESULT_OVERRIDE, USER_BANNED, etc.
+  entity    String?  // user, tournament, match, kyc
+  entityId  String?
+  meta      Json?
+  
+  createdAt DateTime @default(now())
+  
+  admin     User     @relation("AdminAuditLogs", fields: [adminId], references: [id])
+  
+  @@index([adminId])
+  @@index([action])
+}
+
+// ============================================
+// WITHDRAWAL REQUESTS (for manual processing)
+// ============================================
+model WithdrawalRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  amount      Int      // in paise
+  status      String   @default("PENDING") // PENDING, APPROVED, REJECTED, COMPLETED
+  bankDetails Json?    // encrypted bank info
+  adminNotes  String?
+  processedAt DateTime?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================
+// GAMES
+// ============================================
+model Game {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  shortName   String?
+  logoUrl     String?
+  bannerUrl   String?
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([slug])
+  @@index([isActive])
+}
