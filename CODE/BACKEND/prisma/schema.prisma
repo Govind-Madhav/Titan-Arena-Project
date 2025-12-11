@@ -1,0 +1,273 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model auditlog {
+  id        String   @id
+  adminId   String
+  action    String
+  entity    String?
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  user      user     @relation(fields: [adminId], references: [id], map: "AuditLog_adminId_fkey")
+
+  @@index([action], map: "AuditLog_action_idx")
+  @@index([adminId], map: "AuditLog_adminId_idx")
+}
+
+model dispute {
+  id          String    @id
+  matchId     String
+  raisedById  String
+  reason      String    @db.Text
+  status      String    @default("OPEN")
+  evidenceUrl String?
+  resolution  String?   @db.Text
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+  match       match     @relation(fields: [matchId], references: [id], onDelete: Cascade, map: "Dispute_matchId_fkey")
+  user        user      @relation(fields: [raisedById], references: [id], map: "Dispute_raisedById_fkey")
+
+  @@index([matchId], map: "Dispute_matchId_idx")
+  @@index([raisedById], map: "Dispute_raisedById_idx")
+}
+
+model game {
+  id          String   @id
+  name        String   @unique(map: "Game_name_key")
+  slug        String   @unique(map: "Game_slug_key")
+  shortName   String?
+  logoUrl     String?  @db.Text
+  bannerUrl   String?  @db.Text
+  description String?  @db.Text
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+
+  @@index([isActive], map: "Game_isActive_idx")
+  @@index([slug], map: "Game_slug_idx")
+}
+
+model kycrequest {
+  id           String   @id
+  userId       String   @unique(map: "KYCRequest_userId_key")
+  documentType String
+  proofUrl     String
+  selfieUrl    String
+  rankProofUrl String?
+  status       String   @default("PENDING")
+  adminNotes   String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+  user         user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "KYCRequest_userId_fkey")
+}
+
+model match {
+  id            String     @id
+  tournamentId  String
+  round         Int
+  matchNumber   Int
+  playerAId     String?
+  playerBId     String?
+  teamAId       String?
+  teamBId       String?
+  scoreA        Int?
+  scoreB        Int?
+  winnerUserId  String?
+  winnerTeamId  String?
+  status        String     @default("SCHEDULED")
+  scheduledTime DateTime?
+  proofUrl      String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime
+  dispute       dispute[]
+  tournament    tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade, map: "Match_tournamentId_fkey")
+
+  @@unique([tournamentId, round, matchNumber], map: "Match_tournamentId_round_matchNumber_key")
+  @@index([tournamentId], map: "Match_tournamentId_idx")
+}
+
+model notification {
+  id        String   @id
+  userId    String
+  title     String
+  message   String   @db.Text
+  type      String   @default("INFO")
+  isRead    Boolean  @default(false)
+  meta      Json?
+  createdAt DateTime @default(now())
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "Notification_userId_fkey")
+
+  @@index([isRead], map: "Notification_isRead_idx")
+  @@index([userId], map: "Notification_userId_idx")
+}
+
+model payout {
+  id           String     @id
+  tournamentId String
+  position     Int
+  amount       BigInt
+  tournament   tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade, map: "Payout_tournamentId_fkey")
+
+  @@unique([tournamentId, position], map: "Payout_tournamentId_position_key")
+}
+
+model refreshtoken {
+  id        String   @id
+  token     String   @unique(map: "RefreshToken_token_key") @db.VarChar(500)
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId], map: "RefreshToken_userId_idx")
+}
+
+model registration {
+  id           String     @id
+  tournamentId String
+  userId       String?
+  teamId       String?
+  status       String     @default("PENDING")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime
+  team         team?      @relation(fields: [teamId], references: [id], map: "Registration_teamId_fkey")
+  tournament   tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade, map: "Registration_tournamentId_fkey")
+  user         user?      @relation(fields: [userId], references: [id], map: "Registration_userId_fkey")
+
+  @@unique([tournamentId, teamId], map: "Registration_tournamentId_teamId_key")
+  @@unique([tournamentId, userId], map: "Registration_tournamentId_userId_key")
+  @@index([teamId], map: "Registration_teamId_fkey")
+  @@index([tournamentId], map: "Registration_tournamentId_idx")
+  @@index([userId], map: "Registration_userId_fkey")
+}
+
+model team {
+  id           String         @id
+  name         String
+  captainId    String
+  maxMembers   Int            @default(5)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime
+  registration registration[]
+  user         user           @relation(fields: [captainId], references: [id], map: "Team_captainId_fkey")
+  teammember   teammember[]
+
+  @@index([captainId], map: "Team_captainId_idx")
+}
+
+model teammember {
+  id        String   @id
+  userId    String
+  teamId    String
+  role      String   @default("MEMBER")
+  createdAt DateTime @default(now())
+  team      team     @relation(fields: [teamId], references: [id], onDelete: Cascade, map: "TeamMember_teamId_fkey")
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "TeamMember_userId_fkey")
+
+  @@unique([userId, teamId], map: "TeamMember_userId_teamId_key")
+  @@index([teamId], map: "TeamMember_teamId_idx")
+}
+
+model tournament {
+  id                    String         @id
+  name                  String
+  game                  String
+  description           String?        @db.Text
+  type                  String
+  teamSize              Int?
+  hostId                String
+  entryFee              BigInt
+  prizePool             BigInt
+  minTeamsRequired      Int
+  insufficientRegPolicy String         @default("CANCEL")
+  status                String         @default("UPCOMING")
+  startTime             DateTime
+  registrationEnd       DateTime
+  collected             BigInt         @default(0)
+  hostProfit            BigInt         @default(0)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime
+  match                 match[]
+  payout                payout[]
+  registration          registration[]
+  user                  user           @relation(fields: [hostId], references: [id], map: "Tournament_hostId_fkey")
+
+  @@index([game], map: "Tournament_game_idx")
+  @@index([hostId], map: "Tournament_hostId_idx")
+  @@index([status], map: "Tournament_status_idx")
+}
+
+model transaction {
+  id        String   @id
+  userId    String
+  walletId  String
+  type      String
+  amount    BigInt
+  message   String?
+  meta      Json?
+  status    String   @default("COMPLETED")
+  createdAt DateTime @default(now())
+  user      user     @relation(fields: [userId], references: [id], map: "Transaction_userId_fkey")
+  wallet    wallet   @relation(fields: [walletId], references: [id], map: "Transaction_walletId_fkey")
+
+  @@index([userId], map: "Transaction_userId_idx")
+  @@index([walletId], map: "Transaction_walletId_idx")
+}
+
+model user {
+  id                 String         @id
+  email              String         @unique(map: "User_email_key")
+  password           String
+  username           String         @unique(map: "User_username_key")
+  role               String         @default("PLAYER")
+  hostStatus         String         @default("NOT_VERIFIED")
+  isBanned           Boolean        @default(false)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime
+  emailVerified      Boolean        @default(false)
+  verificationExpiry DateTime?
+  verificationToken  String?        @unique(map: "User_verificationToken_key")
+  auditlog           auditlog[]
+  dispute            dispute[]
+  kycrequest         kycrequest?
+  notification       notification[]
+  registration       registration[]
+  team               team[]
+  teammember         teammember[]
+  tournament         tournament[]
+  transaction        transaction[]
+  wallet             wallet?
+}
+
+model wallet {
+  id          String        @id
+  userId      String        @unique(map: "Wallet_userId_key")
+  balance     BigInt        @default(0)
+  locked      BigInt        @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime
+  transaction transaction[]
+  user        user          @relation(fields: [userId], references: [id], onDelete: Cascade, map: "Wallet_userId_fkey")
+}
+
+model withdrawalrequest {
+  id          String    @id
+  userId      String
+  amount      BigInt
+  status      String    @default("PENDING")
+  bankDetails Json?
+  adminNotes  String?
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+
+  @@index([status], map: "WithdrawalRequest_status_idx")
+  @@index([userId], map: "WithdrawalRequest_userId_idx")
+}
