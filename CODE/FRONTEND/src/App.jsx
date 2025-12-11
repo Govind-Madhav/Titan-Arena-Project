@@ -3,6 +3,7 @@
  * This code is proprietary and confidential.
  */
 
+import React from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import Layout from './Components/layout/Layout'
