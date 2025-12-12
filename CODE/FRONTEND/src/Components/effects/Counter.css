@@ -1,0 +1,30 @@
+.counter-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.counter-counter {
+  display: flex;
+  overflow: hidden;
+  line-height: 1;
+  height: 1.2em; /* Adjust based on fontSize */
+}
+
+.counter-digit {
+  position: relative;
+  width: 0.6em; /* Adjust for spacing */
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.counter-column {
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.counter-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}

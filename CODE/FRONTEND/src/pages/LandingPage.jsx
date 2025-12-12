@@ -21,7 +21,7 @@ import { useEffect, useState } from 'react'
 import useAuthStore from '../store/authStore'
 import Navbar from '../Components/layout/Navbar'
 import TournamentCard from '../Components/tournament/TournamentCard'
-import TargetCursor from '../Components/effects/TargetCursor'
+
 import {
     TiltedCard,
     SpotlightCard,
@@ -281,7 +281,10 @@ function FeaturedTournaments() {
             prizePool: 100000,
             entryFee: 5000,
             status: 'UPCOMING',
-            startTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+            startTime: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+            // Scenario: Reg Open. Ends in 2 days.
+            registrationStart: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+            registrationEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000).toISOString(), // 2 days 4h
             type: 'SQUAD',
             _count: { registrations: 48 },
         },
@@ -292,7 +295,10 @@ function FeaturedTournaments() {
             prizePool: 50000,
             entryFee: 2500,
             status: 'UPCOMING',
-            startTime: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+            startTime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+            // Scenario: Reg Start in future (1 day)
+            registrationStart: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000).toISOString(),
+            registrationEnd: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
             type: 'TEAM',
             _count: { registrations: 32 },
         },
@@ -302,8 +308,11 @@ function FeaturedTournaments() {
             game: 'Free Fire',
             prizePool: 25000,
             entryFee: 1000,
-            status: 'ONGOING',
-            startTime: new Date().toISOString(),
+            status: 'UPCOMING', // Changed to UPCOMING so we see countdown
+            startTime: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // Starts in 12h
+            // Scenario: Reg Open. Ends in 6h (< 24h)
+            registrationStart: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+            registrationEnd: new Date(Date.now() + 6 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString(), // 6h 30m
             type: 'SOLO',
             _count: { registrations: 64 },
         },
@@ -512,27 +521,11 @@ function Footer() {
 
 // Main Landing Page
 export default function LandingPage() {
-    const [showCursor, setShowCursor] = useState(false)
-
-    useEffect(() => {
-        const isMobile = window.innerWidth < 768
-        const hasTouch = 'ontouchstart' in window
-        setShowCursor(!isMobile && !hasTouch)
-    }, [])
-
     return (
         <div className="min-h-screen bg-transparent">
             {/* Fixed Background */}
             <HeroBackground />
-            {/* GSAP Target Cursor */}
-            {showCursor && (
-                <TargetCursor
-                    targetSelector=".cursor-target"
-                    spinDuration={2}
-                    hideDefaultCursor={true}
-                    parallaxOn={true}
-                />
-            )}
+
             <Navbar />
             <HeroSection />
             <GamesSection />

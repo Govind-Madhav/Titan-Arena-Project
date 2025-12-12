@@ -1,11 +1,7 @@
-/**
- * Copyright (c) 2025 Titan E-sports. All rights reserved.
- * This code is proprietary and confidential.
- */
-
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Trophy, Users, Calendar, Clock, ChevronRight } from 'lucide-react'
+import Countdown from '../effects/Countdown'
 
 export default function TournamentCard({ tournament }) {
     const {
@@ -16,6 +12,8 @@ export default function TournamentCard({ tournament }) {
         entryFee,
         status,
         startTime,
+        registrationStart,
+        registrationEnd,
         type,
         _count,
     } = tournament
@@ -60,6 +58,33 @@ export default function TournamentCard({ tournament }) {
         }
         return colors[game] || 'from-titan-purple/20 to-titan-blue/10'
     }
+
+    // Countdown Logic
+    const getCountdownTarget = () => {
+        if (status !== 'UPCOMING' && status !== 'ONGOING') return null;
+
+        const now = new Date().getTime();
+        const start = startTime ? new Date(startTime).getTime() : null;
+        const regStart = registrationStart ? new Date(registrationStart).getTime() : null;
+        const regEnd = registrationEnd ? new Date(registrationEnd).getTime() : null;
+
+        // 1. If Reg hasn't started
+        if (regStart && now < regStart) {
+            return { date: registrationStart, label: 'Registration Opens In' };
+        }
+        // 2. If Reg is open (between start and end)
+        if (regEnd && now < regEnd) {
+            return { date: registrationEnd, label: 'Registration Ends In' };
+        }
+        // 3. If Reg ended, waiting for tournament start
+        if (start && now < start && (!regEnd || now > regEnd)) {
+            return { date: startTime, label: 'Tournament Starts In' };
+        }
+
+        return null;
+    };
+
+    const target = getCountdownTarget();
 
     return (
         <motion.div
@@ -109,18 +134,28 @@ export default function TournamentCard({ tournament }) {
                         {name}
                     </h3>
 
-                    <div className="space-y-2 mb-4">
-                        <div className="flex items-center gap-2 text-white/60 text-sm">
-                            <Trophy size={14} className="text-titan-purple" />
-                            <span>Entry: {formatCurrency(entryFee)}</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-white/60 text-sm">
-                            <Users size={14} className="text-titan-purple" />
-                            <span>{type} • {_count?.registrations || 0} registered</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-white/60 text-sm">
-                            <Calendar size={14} className="text-titan-purple" />
-                            <span>{formatDate(startTime)}</span>
+                    <div className="space-y-3 mb-4">
+                        {/* Countdown integration */}
+                        {target ? (
+                            <div className="bg-titan-bg-light/50 p-2 rounded-lg border border-white/5">
+                                <Countdown targetDate={target.date} label={target.label} fontSize={14} />
+                            </div>
+                        ) : (
+                            <div className="flex items-center gap-2 text-white/60 text-sm py-1">
+                                <Calendar size={14} className="text-titan-purple" />
+                                <span>{formatDate(startTime)}</span>
+                            </div>
+                        )}
+
+                        <div className="flex items-center justify-between text-white/60 text-sm">
+                            <div className="flex items-center gap-2">
+                                <Trophy size={14} className="text-titan-purple" />
+                                <span>Entry: {formatCurrency(entryFee)}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Users size={14} className="text-titan-purple" />
+                                <span>{type} • {_count?.registrations || 0}</span>
+                            </div>
                         </div>
                     </div>
 
@@ -142,3 +177,4 @@ export default function TournamentCard({ tournament }) {
         </motion.div>
     )
 }
+
