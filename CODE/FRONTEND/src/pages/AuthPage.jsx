@@ -10,8 +10,17 @@ import { Mail, Lock, User, Eye, EyeOff, ArrowRight, Gamepad2, Check } from 'luci
 import toast from 'react-hot-toast'
 import useAuthStore from '../store/authStore'
 import { Particles, GradientText } from '../Components/effects/ReactBits'
+import TargetCursor from '../Components/effects/TargetCursor'
 
 export default function AuthPage() {
+    const [showCursor, setShowCursor] = useState(false)
+
+    useEffect(() => {
+        const isMobile = window.innerWidth < 768
+        const hasTouch = 'ontouchstart' in window
+        setShowCursor(!isMobile && !hasTouch)
+    }, [])
+
     const [isLogin, setIsLogin] = useState(true)
     const [showPassword, setShowPassword] = useState(false)
     const [rememberMe, setRememberMe] = useState(false)
@@ -55,6 +64,16 @@ export default function AuthPage() {
 
     return (
         <div className="min-h-screen bg-titan-bg flex items-center justify-center relative overflow-hidden">
+            {/* GSAP Target Cursor */}
+            {showCursor && (
+                <TargetCursor
+                    targetSelector=".cursor-target"
+                    spinDuration={2}
+                    hideDefaultCursor={true}
+                    parallaxOn={true}
+                />
+            )}
+
             <Particles count={40} color="rgba(139, 92, 246, 1)" />
 
             {/* Background glow */}
@@ -66,7 +85,7 @@ export default function AuthPage() {
                 className="relative z-10 w-full max-w-md p-8"
             >
                 {/* Logo */}
-                <Link to="/" className="flex items-center justify-center gap-3 mb-8">
+                <Link to="/" className="flex items-center justify-center gap-3 mb-8 cursor-target">
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-titan-purple to-titan-blue flex items-center justify-center shadow-neon">
                         <Gamepad2 className="text-white" size={24} />
                     </div>
@@ -93,7 +112,7 @@ export default function AuthPage() {
                                     placeholder="Username"
                                     value={formData.username}
                                     onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                                    className="input-dark pl-12"
+                                    className="input-dark pl-12 cursor-target"
                                     autoComplete="off"
                                     required={!isLogin}
                                 />
@@ -107,7 +126,7 @@ export default function AuthPage() {
                                 placeholder="Email"
                                 value={formData.email}
                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                className="input-dark pl-12"
+                                className="input-dark pl-12 cursor-target"
                                 autoComplete="off"
                                 required
                             />
@@ -120,14 +139,14 @@ export default function AuthPage() {
                                 placeholder="Password"
                                 value={formData.password}
                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                                className="input-dark pl-12 pr-12"
+                                className="input-dark pl-12 pr-12 cursor-target"
                                 autoComplete="new-password"
                                 required
                             />
                             <button
                                 type="button"
                                 onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+                                className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 hover:text-white cursor-target"
                             >
                                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                             </button>
@@ -135,7 +154,7 @@ export default function AuthPage() {
 
                         {isLogin && (
                             <div className="flex items-center justify-between text-sm">
-                                <label className="flex items-center gap-2 cursor-pointer group">
+                                <label className="flex items-center gap-2 cursor-pointer group cursor-target">
                                     <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${rememberMe
                                         ? 'bg-titan-purple border-titan-purple'
                                         : 'border-white/30 group-hover:border-white/50'
@@ -150,7 +169,7 @@ export default function AuthPage() {
                                     />
                                     <span className="text-white/60 group-hover:text-white/80 transition-colors">Remember me</span>
                                 </label>
-                                <button type="button" className="text-titan-purple hover:text-titan-purple-light transition-colors">
+                                <button type="button" className="text-titan-purple hover:text-titan-purple-light transition-colors cursor-target">
                                     Forgot Password?
                                 </button>
                             </div>
@@ -159,7 +178,7 @@ export default function AuthPage() {
                         <button
                             type="submit"
                             disabled={isLoading}
-                            className="btn-neon w-full flex items-center justify-center gap-2"
+                            className="btn-neon w-full flex items-center justify-center gap-2 cursor-target"
                         >
                             {isLoading ? (
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
