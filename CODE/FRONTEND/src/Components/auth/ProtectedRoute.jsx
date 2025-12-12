@@ -3,6 +3,7 @@
  * This code is proprietary and confidential.
  */
 
+import React, { useEffect } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import useAuthStore from '../../store/authStore'
 

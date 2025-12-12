@@ -3,6 +3,7 @@
  * This code is proprietary and confidential.
  */
 
+import React, { useState, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
@@ -18,7 +19,6 @@ import {
     LayoutDashboard,
     Crown
 } from 'lucide-react'
-import { useState, useEffect, useRef } from 'react'
 import useAuthStore from '../../store/authStore'
 
 const NotificationDropdown = () => {

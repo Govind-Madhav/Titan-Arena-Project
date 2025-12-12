@@ -3,7 +3,7 @@
  * This code is proprietary and confidential.
  */
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import useAuthStore from '../../store/authStore'
 
