@@ -75,7 +75,7 @@ export default function TournamentDetailPage() {
 
         setRegistering(true)
         try {
-            await api.post(`/tournaments/${id}/register`)
+            await api.post(`/tournaments/${id}/join`)
             toast.success('Registered successfully!')
             fetchTournament()
         } catch (error) {

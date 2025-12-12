@@ -195,7 +195,16 @@ exports.login = async (req, res) => {
     try {
         const data = loginSchema.parse(req.body);
 
-        const result = await db.select()
+        const result = await db.select({
+            id: users.id,
+            email: users.email,
+            password: users.password,
+            username: users.username,
+            role: users.role,
+            hostStatus: users.hostStatus,
+            isBanned: users.isBanned,
+            emailVerified: users.emailVerified
+        })
             .from(users)
             .where(eq(users.email, data.email))
             .limit(1);

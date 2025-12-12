@@ -118,6 +118,11 @@ module.exports = {
         }
 
         if (roles.length > 0 && !roles.includes(req.user.role)) {
+            // Allow ADMIN and SUPERADMIN to access everything
+            if (req.user.role === 'ADMIN' || req.user.role === 'SUPERADMIN') {
+                return next();
+            }
+
             return res.status(403).json({
                 success: false,
                 message: 'Insufficient permissions'

@@ -10,16 +10,9 @@ import { Mail, Lock, User, Eye, EyeOff, ArrowRight, Gamepad2, Check } from 'luci
 import toast from 'react-hot-toast'
 import useAuthStore from '../store/authStore'
 import { Particles, GradientText } from '../Components/effects/ReactBits'
-import TargetCursor from '../Components/effects/TargetCursor'
+
 
 export default function AuthPage() {
-    const [showCursor, setShowCursor] = useState(false)
-
-    useEffect(() => {
-        const isMobile = window.innerWidth < 768
-        const hasTouch = 'ontouchstart' in window
-        setShowCursor(!isMobile && !hasTouch)
-    }, [])
 
     const [isLogin, setIsLogin] = useState(true)
     const [showPassword, setShowPassword] = useState(false)
@@ -65,14 +58,7 @@ export default function AuthPage() {
     return (
         <div className="min-h-screen bg-titan-bg flex items-center justify-center relative overflow-hidden">
             {/* GSAP Target Cursor */}
-            {showCursor && (
-                <TargetCursor
-                    targetSelector=".cursor-target"
-                    spinDuration={2}
-                    hideDefaultCursor={true}
-                    parallaxOn={true}
-                />
-            )}
+
 
             <Particles count={40} color="rgba(139, 92, 246, 1)" />
 

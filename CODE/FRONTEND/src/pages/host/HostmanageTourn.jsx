@@ -49,7 +49,7 @@ const ManageTournamentsPage = () => {
     try {
       setLoading(true);
       const [tournRes, gameRes] = await Promise.all([
-        api.get(`/host/get-tournaments/${hostId}`),
+        api.get(`/tournaments/host/${hostId}`),
         api.get('/games')
       ]);
       setTournaments(tournRes.data.data || []);
@@ -71,10 +71,10 @@ const ManageTournamentsPage = () => {
     e.preventDefault();
     try {
       if (editing) {
-        await api.put(`/host/update-tournament/${editId}`, formData);
+        await api.put(`/tournaments/${editId}`, formData);
         toast.success('Tournament updated');
       } else {
-        await api.post(`/host/create-tournament/${hostId}`, formData);
+        await api.post('/tournaments', formData);
         toast.success('Tournament created');
       }
       resetForm();
@@ -106,7 +106,7 @@ const ManageTournamentsPage = () => {
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this tournament?')) return;
     try {
-      await api.delete(`/admin/delete-tournament/${id}`); // Note: Using admin endpoint as per old code
+      await api.delete(`/tournaments/${id}`);
       toast.success('Tournament deleted');
       fetchData();
     } catch (err) {
