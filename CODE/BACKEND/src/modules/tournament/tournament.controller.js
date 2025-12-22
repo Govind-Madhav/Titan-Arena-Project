@@ -4,10 +4,12 @@
  */
 
 const { db } = require('../../db');
-const { tournaments, users, games, registrations } = require('../../db/schema');
+const { tournaments, users, games, registrations, matches } = require('../../db/schema');
 const { eq, desc, and } = require('drizzle-orm');
 const { z } = require('zod');
 const crypto = require('crypto');
+const walletService = require('../wallet/wallet.service');
+const auditService = require('../admin/audit.service');
 
 // Validation Schemas
 const createTournamentSchema = z.object({
@@ -297,9 +299,220 @@ module.exports = {
     // Remaining stubs
     registerTeam: stubHandler, // For team-based joining
     getTournamentRegistrations: exports.getParticipants, // Reuse
-    startTournament: stubHandler,
+    // Start Tournament (Bracket Generation)
+    startTournament: async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            // 1. Fetch Tournament & Participants
+            const tournament = await db.select().from(tournaments).where(eq(tournaments.id, id)).limit(1);
+            if (!tournament[0]) return res.status(404).json({ success: false, message: 'Tournament not found' });
+
+            // Security: Only Host or Admin
+            if (tournament[0].hostId !== req.user.id && req.user.role !== 'ADMIN') {
+                return res.status(403).json({ success: false, message: 'Unauthorized' });
+            }
+
+            // Check Status
+            // Allow starting if UPCOMING or REGISTRATION (flexible)
+            if (tournament[0].status === 'ONGOING' || tournament[0].status === 'COMPLETED') {
+                return res.status(400).json({ success: false, message: 'Tournament already started or completed' });
+            }
+
+            const participants = await db.select().from(registrations)
+                .where(and(eq(registrations.tournamentId, id), eq(registrations.status, 'CONFIRMED'))); // Only confirmed players
+
+            if (participants.length < 2) {
+                return res.status(400).json({ success: false, message: 'Need at least 2 participants to start' });
+            }
+
+            // 2. Shuffle & Seed
+            // Simple shuffle
+            const shuffled = participants.map(p => ({
+                id: p.userId || p.teamId, // Handle both user/team
+                name: 'TBD' // Ideally fetch names, but ID is enough for logic
+            })).sort(() => Math.random() - 0.5);
+
+            const participantCount = shuffled.length;
+            const rounds = Math.ceil(Math.log2(participantCount));
+            const bracketSize = Math.pow(2, rounds);
+            const byes = bracketSize - participantCount;
+
+            // 3. Generate Bracket Matches
+            // Strategy: Create all matches for the tree.
+            // Example 8 players -> 7 matches (4 QF, 2 SF, 1 F)
+            // Round 1 matches: bracketSize / 2
+
+            const matchesToCreate = [];
+
+            // We need to keep track of created matches to link them
+            // Key: "round_matchNumber" -> uuid
+            const matchMap = new Map();
+
+            // Generate matches from Final backwards or Round 1 forwards? 
+            // For linking nextMatchId, easier to generate Final first (Round = rounds), then track backwards?
+            // Or generate forwards and update? 
+            // Better: Generate IDs upfront.
+
+            // Let's generate systematically by Round 1 to Final.
+            // But we need nextMatchIds.
+            // Formula for Next match: 
+            // If current match is Round R, Match M
+            // Next match is Round R+1, Match ceil(M/2)
+            // Position: if M is odd -> 1, if even -> 2
+
+            // Generate IDs for all matches
+            let currentRoundMatches = bracketSize / 2;
+            for (let r = 1; r <= rounds; r++) {
+                for (let m = 1; m <= currentRoundMatches; m++) {
+                    matchMap.set(`${r}_${m}`, crypto.randomUUID());
+                }
+                currentRoundMatches /= 2;
+            }
+
+            // Now create match objects
+            currentRoundMatches = bracketSize / 2;
+            for (let r = 1; r <= rounds; r++) {
+                for (let m = 1; m <= currentRoundMatches; m++) {
+                    const matchId = matchMap.get(`${r}_${m}`);
+                    let nextMatchId = null;
+                    let positionInNextMatch = null;
+
+                    if (r < rounds) {
+                        const nextM = Math.ceil(m / 2);
+                        nextMatchId = matchMap.get(`${r + 1}_${nextM}`);
+                        positionInNextMatch = m % 2 === 1 ? 1 : 2;
+                    }
+
+                    // For Round 1, assign participants
+                    let participantAId = null;
+                    let participantBId = null;
+                    let isBye = false;
+                    let status = 'SCHEDULED';
+                    let winnerId = null;
+
+                    if (r === 1) {
+                        // Slot 1 (A) index: (m-1)*2
+                        // Slot 2 (B) index: (m-1)*2 + 1
+                        const slotAIndex = (m - 1) * 2;
+                        const slotBIndex = (m - 1) * 2 + 1;
+
+                        if (slotAIndex < shuffled.length) participantAId = shuffled[slotAIndex].id;
+
+                        // Handle BYE logic: If we have BYEs, usually the highest seeds get them. 
+                        // In random shuffle, later slots get "empty". 
+                        // If bracketSize > count, slots > count are empty.
+                        // Wait, Standard bye logic: The layout should put byes such that they meet late.
+                        // Simple logic: Just fill slots. If Slot B is empty -> BYE.
+
+                        if (slotBIndex < shuffled.length) {
+                            participantBId = shuffled[slotBIndex].id;
+                        } else {
+                            // BYE
+                            isBye = true;
+                            status = 'COMPLETED'; // Auto-advance? Next logic handles it. 
+                            // Actually, let's mark it COMPLETED here so logic picks it up, 
+                            // OR keep SCHEDULED and let immediate process handle it.
+                            // Let's set Winner immediately.
+                            winnerId = participantAId;
+                        }
+                    }
+
+                    matchesToCreate.push({
+                        id: matchId,
+                        tournamentId: id,
+                        round: r,
+                        matchNumber: m,
+                        participantAId,
+                        participantBId,
+                        nextMatchId,
+                        positionInNextMatch,
+                        status,
+                        isBye,
+                        winnerId // Set if BYE
+                    });
+                }
+                currentRoundMatches /= 2;
+            }
+
+            // Database Updates
+            await db.transaction(async (tx) => {
+                // Bulk insert matches
+                // Drizzle's MySQL insert doesn't support bulk well with unique UUIDs generated in JS? 
+                // We generated IDs in JS. 
+                // We can use Promise.all or loop. Bulk insert usually preferred.
+                // Drizzle values() accepts array.
+
+                await tx.insert(matches).values(matchesToCreate);
+
+                // Update Tournament Status
+                await tx.update(tournaments)
+                    .set({
+                        status: 'ONGOING',
+                        totalRounds: rounds,
+                        currentRound: 1
+                    })
+                    .where(eq(tournaments.id, id));
+
+                // Advance BYE winners immediately
+                // We already set winnerId for BYEs, but we need to propagate them to next round.
+                // We can loop through the created matchesToCreate, find BYEs, and update the next match.
+                // OR relies on "advanceWinner" logic. 
+                // Since this is initialization, standard `advanceWinner` might be safer but circular dep? 
+                // Let's do it manually here for efficiency in the transaction.
+
+                const byes = matchesToCreate.filter(m => m.isBye && m.winnerId);
+                for (const byeMatch of byes) {
+                    if (byeMatch.nextMatchId) {
+                        // We need to find the specific match UUID in matchesToCreate (or DB) and update it.
+                        // Update DB directly since we just inserted.
+                        const updateField = byeMatch.positionInNextMatch === 1 ? 'participantAId' : 'participantBId';
+                        await tx.update(matches)
+                            .set({ [updateField]: byeMatch.winnerId })
+                            .where(eq(matches.id, byeMatch.nextMatchId));
+                    }
+                }
+
+                // Log Audit
+                await auditService.logAction(req.user.id, 'TOURNAMENT_START', id, {
+                    rounds,
+                    participants: participantCount
+                });
+            });
+
+            res.json({ success: true, message: 'Tournament started and bracket generated', rounds });
+
+        } catch (error) {
+            console.error('Start tournament error:', error);
+            res.status(500).json({ success: false, message: 'Failed to start tournament' });
+        }
+    },
+
     submitResult: stubHandler,
-    finalizeTournament: stubHandler,
+
+    // Finalize tournament and distribute prizes
+    finalizeTournament: async (req, res) => {
+        try {
+            const { id } = req.params;
+
+            // Security: Check ownership
+            const tournament = await db.select().from(tournaments).where(eq(tournaments.id, id)).limit(1);
+            if (!tournament[0]) return res.status(404).json({ success: false, message: 'Tournament not found' });
+
+            if (tournament[0].hostId !== req.user.id && req.user.role !== 'ADMIN') {
+                return res.status(403).json({ success: false, message: 'Unauthorized' });
+            }
+
+            // Distribute prizes
+            await walletService.distributeTournamentPrizes(id);
+
+            res.json({ success: true, message: 'Tournament finalized and prizes distributed' });
+        } catch (error) {
+            console.error('Finalize tournament error:', error);
+            res.status(500).json({ success: false, message: error.message || 'Failed to finalize tournament' });
+        }
+    },
+
     updateParticipantStatus: stubHandler,
     declareWinners: stubHandler,
     getWinners: stubHandler

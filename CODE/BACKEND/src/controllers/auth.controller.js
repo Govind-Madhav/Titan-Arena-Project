@@ -3,20 +3,26 @@
  * This code is proprietary and confidential.
  */
 
-const { PrismaClient } = require('@prisma/client');
+const { db } = require('../db');
+const { users, wallets } = require('../db/schema');
+const { eq, sql } = require('drizzle-orm');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { z } = require('zod');
-
-const prisma = new PrismaClient();
+const crypto = require('crypto');
 
 // Validation schemas
+// Validation schemas
 const registerSchema = z.object({
-    fullName: z.string().min(2, 'Name must be at least 2 characters'),
+    legalName: z.string().min(2, 'Name must be at least 2 characters'),
+    username: z.string().min(3, 'Username must be at least 3 characters').regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
     email: z.string().email('Invalid email format'),
     password: z.string().min(6, 'Password must be at least 6 characters'),
     mobile: z.string().optional(),
-    role: z.enum(['ADMIN', 'HOST', 'PLAYER']).optional().default('PLAYER')
+    role: z.enum(['ADMIN', 'HOST', 'PLAYER']).optional().default('PLAYER'),
+    country: z.string().length(2, 'Country code must be 2 characters (ISO)'), // Expecting 'IN', 'US' etc.
+    state: z.string().min(1, 'State is required'),
+    city: z.string().optional()
 });
 
 const loginSchema = z.object({
@@ -36,45 +42,65 @@ const generateToken = (userId) => {
 // Register new user
 exports.register = async (req, res) => {
     try {
-        // Transform username to fullName if present (for frontend compatibility)
-        const requestData = { ...req.body };
-        if (requestData.username && !requestData.fullName) {
-            requestData.fullName = requestData.username;
-        }
+        const validatedData = registerSchema.parse(req.body);
 
-        const validatedData = registerSchema.parse(requestData);
+        // Check if email or username already exists
+        const existingUser = await db.select().from(users).where(
+            sql`${users.email} = ${validatedData.email} OR ${users.username} = ${validatedData.username}`
+        );
 
-        // Check if user already exists
-        const existingUser = await prisma.user.findUnique({
-            where: { email: validatedData.email }
-        });
-
-        if (existingUser) {
+        if (existingUser.length > 0) {
+            const isEmailTaken = existingUser.some(u => u.email === validatedData.email);
             return res.status(400).json({
                 success: false,
-                message: 'User with this email already exists'
+                message: isEmailTaken ? 'User with this email already exists' : 'Username is already taken'
             });
         }
 
-        // Hash password
         const hashedPassword = await bcrypt.hash(validatedData.password, 12);
 
+        // Derive Region from Country (Simple mapping for now)
+        // In real app, might want a robust mapping. For now default to 'IN' if unknown
+        const regionMapping = {
+            'IN': 'IN', 'US': 'NA', 'GB': 'EU', 'CA': 'NA', 'AU': 'OC'
+        };
+        const regionCode = regionMapping[validatedData.country] || 'IN';
+
         // Create user
-        const user = await prisma.user.create({
-            data: {
-                ...validatedData,
-                password: hashedPassword
-            },
-            select: {
-                id: true,
-                fullName: true,
-                email: true,
-                mobile: true,
-                role: true,
-                verified: true,
-                imageUrl: true,
-                createdAt: true
-            }
+        const newUser = {
+            platformUid: crypto.randomBytes(10).toString('hex'), // Generate unique Platform ID (20 chars)
+            username: validatedData.username,
+            email: validatedData.email,
+            passwordHash: hashedPassword,
+            legalName: validatedData.legalName,
+            phone: validatedData.mobile || null,
+            countryCode: validatedData.country,
+            state: validatedData.state,
+            city: validatedData.city || null,
+            regionCode: regionCode,
+            role: validatedData.role,
+            hostStatus: validatedData.role === 'HOST' ? 'PENDING' : 'NOT_VERIFIED',
+            dateOfBirth: new Date(), // Using current date as placeholder
+            registrationCompleted: true,
+            termsAccepted: true
+        };
+
+        const [result] = await db.insert(users).values(newUser).$returningId();
+
+        // Fetch created user
+        const [user] = await db.select({
+            id: users.id,
+            username: users.username,
+            email: users.email,
+            role: users.role,
+            legalName: users.legalName,
+        }).from(users).where(eq(users.id, result.id));
+
+        // Create wallet for user
+        await db.insert(wallets).values({
+            userId: result.id,
+            balance: 0,
+            locked: 0
         });
 
         // Generate token
@@ -86,7 +112,7 @@ exports.register = async (req, res) => {
             data: {
                 user,
                 accessToken: token,
-                refreshToken: token // Using same token for now
+                refreshToken: token
             }
         });
     } catch (error) {
@@ -111,9 +137,7 @@ exports.login = async (req, res) => {
         const validatedData = loginSchema.parse(req.body);
 
         // Find user
-        const user = await prisma.user.findUnique({
-            where: { email: validatedData.email }
-        });
+        const [user] = await db.select().from(users).where(eq(users.email, validatedData.email));
 
         if (!user) {
             return res.status(401).json({
@@ -136,7 +160,7 @@ exports.login = async (req, res) => {
         const token = generateToken(user.id);
 
         // Return user without password
-        const { password, ...userWithoutPassword } = user;
+        const { passwordHash, ...userWithoutPassword } = user;
 
         res.json({
             success: true,
@@ -144,7 +168,7 @@ exports.login = async (req, res) => {
             data: {
                 user: userWithoutPassword,
                 accessToken: token,
-                refreshToken: token // Using same token for now
+                refreshToken: token
             }
         });
     } catch (error) {

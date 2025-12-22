@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { FaTrophy, FaUserEdit, FaSun, FaMoon } from 'react-icons/fa';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast, Toaster } from 'react-hot-toast';
-import axios from 'axios';
+import api from '../../lib/api';
 
 const UserProfilePage = () => {
   const [darkMode, setDarkMode] = useState(true);
@@ -77,8 +77,8 @@ const UserProfilePage = () => {
         formDataToSend.append('file', profilePic);
       }
 
-      const response = await axios.put(`http://localhost:8080/api/player/update-profile/${userId}`, formDataToSend);
-      
+      const response = await api.put(`/player/update-profile/${userId}`, formDataToSend);
+
       if (response.data.status === 'success') {
         const updatedPlayer = response.data.data;
         // Update sessionStorage individually
@@ -108,7 +108,7 @@ const UserProfilePage = () => {
 
   return (
     <div className={`${darkMode ? 'bg-gray-950 text-white' : 'bg-white text-black'} font-poppins min-h-screen flex flex-col transition-colors duration-300`}>
-      
+
       <Toaster position="top-center" reverseOrder={false} />
 
       {/* Navbar */}
@@ -135,8 +135,8 @@ const UserProfilePage = () => {
         <div className="max-w-3xl mx-auto bg-gray-700 p-8 rounded-lg shadow-lg">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-3xl font-bold">User Profile</h2>
-            <button 
-              onClick={() => setEditing(!editing)} 
+            <button
+              onClick={() => setEditing(!editing)}
               className="bg-yellow-400 hover:bg-yellow-500 text-black font-semibold px-4 py-2 rounded-full flex items-center gap-2 transition"
             >
               <FaUserEdit />
@@ -145,9 +145,9 @@ const UserProfilePage = () => {
           </div>
 
           <div className="flex flex-col items-center mb-8">
-            <img 
-              src={user.profilePic || '/default-profile.png'} 
-              alt="Profile" 
+            <img
+              src={user.profilePic || '/default-profile.png'}
+              alt="Profile"
               className="w-28 h-28 rounded-full object-cover border-4 border-yellow-400"
             />
             {editing && (

@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../lib/api';
 import { FaTrophy, FaSignOutAlt, FaSun, FaMoon, FaCheckCircle, FaTwitter, FaInstagram, FaFacebookF, FaYoutube } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
@@ -28,7 +28,7 @@ const PaymentPage = () => {
   useEffect(() => {
     const fetchTournaments = async () => {
       try {
-        const response = await axios.get('http://localhost:8080/api/player/active-tournaments');
+        const response = await api.get('/player/active-tournaments');
         if (response.data.status === 'success') {
           setTournaments(response.data.data);
         } else {
@@ -44,7 +44,7 @@ const PaymentPage = () => {
   // Step 1: First Join the tournament
   const handleJoinTournament = async (tournament) => {
     try {
-      const response = await axios.post(`http://localhost:8080/api/player/join/${playerId}/${tournament.id}`);
+      const response = await api.post(`/player/join/${playerId}/${tournament.id}`);
       if (response.data.status === 'success') {
         toast.success('Successfully requested to join tournament!');
         setSelectedTournament(tournament);
@@ -77,7 +77,7 @@ const PaymentPage = () => {
     };
 
     try {
-      const response = await axios.post(`http://localhost:8080/api/player/make-payment/${playerId}/${selectedTournament.id}`, paymentData);
+      const response = await api.post(`/player/make-payment/${playerId}/${selectedTournament.id}`, paymentData);
       if (response.data.status === 'success') {
         setPaymentSuccess(true);
         setTimeout(() => {
@@ -114,7 +114,7 @@ const PaymentPage = () => {
 
   return (
     <div className="bg-gray-950 text-white font-poppins min-h-screen">
-      
+
 
       {/* 🎮 Hero Section */}
       <section className="relative py-16 bg-gradient-to-br from-gray-900 via-gray-800 to-black overflow-hidden">
@@ -124,7 +124,7 @@ const PaymentPage = () => {
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`
           }}></div>
         </div>
-        
+
         {/* Floating Gaming Elements */}
         <div className="absolute top-20 left-10 animate-bounce">
           <FaTrophy className="text-yellow-400 text-4xl opacity-30" />
@@ -192,7 +192,7 @@ const PaymentPage = () => {
               Choose your battles and join the ultimate competitive gaming experience
             </p>
           </div>
-          
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
             {tournaments.length > 0 ? tournaments.map((tournament, i) => (
               <motion.div
@@ -209,13 +209,13 @@ const PaymentPage = () => {
                   </div>
                   <FaTrophy className="text-yellow-400 text-lg" />
                 </div>
-                
+
                 <img src={tournament.imageUrl || 'public/esports.png'} alt={tournament.name} className="w-full h-48 object-cover rounded-lg mb-4" />
                 <h3 className="text-xl font-bold text-white mb-2 group-hover:text-yellow-400 transition-colors duration-300">
                   {tournament.name}
                 </h3>
                 <p className="text-gray-400 mb-4">{tournament.description}</p>
-                
+
                 <div className="space-y-2 mb-6">
                   <div className="flex items-center text-gray-300">
                     <FaCalendarAlt className="mr-2 text-yellow-400" />
@@ -230,7 +230,7 @@ const PaymentPage = () => {
                     Fee: ₹{tournament.joiningFee}
                   </div>
                 </div>
-                
+
                 <button
                   onClick={() => handleJoinTournament(tournament)}
                   className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black font-bold rounded-lg hover:from-yellow-400 hover:to-orange-400 transition-all duration-300 transform hover:scale-105"
@@ -341,7 +341,7 @@ const PaymentPage = () => {
                 </h3>
               </div>
               <p className="text-gray-400 mb-6 max-w-md leading-relaxed">
-                The ultimate competitive gaming platform where champions are made. 
+                The ultimate competitive gaming platform where champions are made.
                 Join thousands of players in the most intense esports battles.
               </p>
               <div className="flex space-x-4">
@@ -351,9 +351,9 @@ const PaymentPage = () => {
                   { icon: FaFacebookF, color: "hover:text-blue-500" },
                   { icon: FaYoutube, color: "hover:text-red-500" }
                 ].map((social, i) => (
-                  <a 
+                  <a
                     key={i}
-                    href="#" 
+                    href="#"
                     className={`text-2xl text-gray-400 transition-all duration-300 transform hover:scale-110 ${social.color}`}
                   >
                     <social.icon />
@@ -361,22 +361,22 @@ const PaymentPage = () => {
                 ))}
               </div>
             </div>
-            
+
             {/* Quick Links */}
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Quick Links</h4>
               <ul className="space-y-3">
                 {[
                   "Tournaments",
-                  "Leaderboard", 
+                  "Leaderboard",
                   "Players",
                   "Host Events",
                   "Prizes",
                   "Community"
                 ].map((link, i) => (
                   <li key={i}>
-                    <a 
-                      href="#" 
+                    <a
+                      href="#"
                       className="text-gray-400 hover:text-yellow-400 transition-colors duration-300"
                     >
                       {link}
@@ -385,7 +385,7 @@ const PaymentPage = () => {
                 ))}
               </ul>
             </div>
-            
+
             {/* Support */}
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Support</h4>
@@ -399,8 +399,8 @@ const PaymentPage = () => {
                   "Refund Policy"
                 ].map((link, i) => (
                   <li key={i}>
-                    <a 
-                      href="#" 
+                    <a
+                      href="#"
                       className="text-gray-400 hover:text-yellow-400 transition-colors duration-300"
                     >
                       {link}
@@ -410,7 +410,7 @@ const PaymentPage = () => {
               </ul>
             </div>
           </div>
-          
+
           {/* Bottom Bar */}
           <div className="border-t border-gray-800 pt-8">
             <div className="flex flex-col md:flex-row justify-between items-center">

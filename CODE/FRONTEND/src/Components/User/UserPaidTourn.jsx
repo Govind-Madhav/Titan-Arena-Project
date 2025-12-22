@@ -8,7 +8,7 @@ import { FaTrophy, FaSignOutAlt, FaSun, FaMoon, FaTwitter, FaInstagram, FaFacebo
 import { Link } from 'react-router-dom';
 import jsPDF from 'jspdf'; // 📄 For PDF
 import QRCode from 'qrcode'; // 📲 For QR code
-import axios from 'axios'; // For making API requests
+import api from '../../lib/api'; // For making API requests
 import toast from 'react-hot-toast';
 
 
@@ -26,7 +26,7 @@ const PaidTournamentsPage = () => {
     const fetchPaidTournaments = async () => {
       try {
         setLoading(true);
-        const response = await axios.get(`http://localhost:8080/api/player/paid-tournaments/${playerId}`);
+        const response = await api.get(`/player/paid-tournaments/${playerId}`);
         if (response.data.status === 'success') {
           setPaidTournaments(response.data.data); // Assuming the data is under 'data' key
         } else {
@@ -76,67 +76,67 @@ const PaidTournamentsPage = () => {
   // 🎟️ Function to download ticket with QR code
   const downloadTicket = async (tournament) => {
     const doc = new jsPDF();
-  
+
     // Header background
     doc.setFillColor(40, 116, 166);
     doc.rect(0, 0, 210, 30, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(18);
     doc.text('🏆 Titan E-sports Tournament Ticket', 105, 20, { align: 'center' });
-  
+
     // Tournament info
     const infoY = 50;
     const gap = 10;
-  
+
     doc.setFontSize(14);
     doc.setTextColor(0, 0, 0);
     doc.text('🎮 Tournament Name:', 20, infoY);
     doc.setFontSize(12);
     doc.text(tournament.name, 80, infoY);
-  
+
     doc.setFontSize(14);
     doc.text('🧑 Host ID:', 20, infoY + gap);
     doc.setFontSize(12);
     doc.text(tournament.hostId, 80, infoY + gap);
-  
+
     doc.setFontSize(14);
     doc.text('📅 Start Date:', 20, infoY + 2 * gap);
     doc.setFontSize(12);
     doc.text(tournament.startDate.substring(0, 10), 80, infoY + 2 * gap);
-  
+
     doc.setFontSize(14);
     doc.text('📅 End Date:', 20, infoY + 3 * gap);
     doc.setFontSize(12);
     doc.text(tournament.endDate.substring(0, 10), 80, infoY + 3 * gap);
-  
+
     doc.setFontSize(14);
     doc.setTextColor(34, 139, 34);
     doc.text('✔ Payment Status:', 20, infoY + 4 * gap);
     doc.setFontSize(12);
     doc.text('Paid', 80, infoY + 4 * gap);
-  
+
     // QR Code
     const qrText = `Tournament: ${tournament.name}\nHost ID: ${tournament.hostId}\nPayment: Paid`;
     const qrDataURL = await QRCode.toDataURL(qrText);
     doc.addImage(qrDataURL, 'PNG', 140, infoY - 10, 50, 50);
-  
+
     // Border
     doc.setDrawColor(40, 116, 166);
     doc.rect(10, 35, 190, 130);
-  
+
     // Footer
     doc.setFontSize(10);
     doc.setTextColor(150);
     doc.text('Thank you for registering. Visit titanesports.com for more info.', 105, 170, { align: 'center' });
-  
+
     // Save
     doc.save(`${tournament.name}_Ticket.pdf`);
   };
-  
+
 
   return (
     <div className="bg-gray-950 text-white font-poppins min-h-screen">
-      
+
 
       {/* 🎮 Hero Section */}
       <section className="relative py-16 bg-gradient-to-br from-gray-900 via-gray-800 to-black overflow-hidden">
@@ -146,7 +146,7 @@ const PaidTournamentsPage = () => {
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`
           }}></div>
         </div>
-        
+
         {/* Floating Gaming Elements */}
         <div className="absolute top-20 left-10 animate-bounce">
           <FaTrophy className="text-yellow-400 text-4xl opacity-30" />
@@ -237,13 +237,13 @@ const PaidTournamentsPage = () => {
                   </div>
                   <FaTrophy className="text-green-400 text-lg" />
                 </div>
-                
+
                 <img src={tournament.image || 'public/tourn1.avif'} alt={tournament.name} className="w-full h-48 object-cover rounded-lg mb-4" />
                 <h3 className="text-xl font-bold text-white mb-2 group-hover:text-green-400 transition-colors duration-300">
                   {tournament.name}
                 </h3>
                 <p className="text-gray-400 mb-4">{tournament.description}</p>
-                
+
                 <div className="space-y-2 mb-6">
                   <div className="flex items-center text-gray-300">
                     <FaUsers className="mr-2 text-green-400" />
@@ -262,7 +262,7 @@ const PaidTournamentsPage = () => {
                     Countdown: {countdowns[tournament.id]}
                   </div>
                 </div>
-                
+
                 <div className="text-green-400 font-semibold mb-4 text-center">
                   ✔️ Payment Completed
                 </div>
@@ -313,7 +313,7 @@ const PaidTournamentsPage = () => {
                 </h3>
               </div>
               <p className="text-gray-400 mb-6 max-w-md leading-relaxed">
-                The ultimate competitive gaming platform where champions are made. 
+                The ultimate competitive gaming platform where champions are made.
                 Join thousands of players in the most intense esports battles.
               </p>
               <div className="flex space-x-4">
@@ -323,9 +323,9 @@ const PaidTournamentsPage = () => {
                   { icon: FaFacebookF, color: "hover:text-blue-500" },
                   { icon: FaYoutube, color: "hover:text-red-500" }
                 ].map((social, i) => (
-                  <a 
+                  <a
                     key={i}
-                    href="#" 
+                    href="#"
                     className={`text-2xl text-gray-400 transition-all duration-300 transform hover:scale-110 ${social.color}`}
                   >
                     <social.icon />
@@ -333,22 +333,22 @@ const PaidTournamentsPage = () => {
                 ))}
               </div>
             </div>
-            
+
             {/* Quick Links */}
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Quick Links</h4>
               <ul className="space-y-3">
                 {[
                   "Tournaments",
-                  "Leaderboard", 
+                  "Leaderboard",
                   "Players",
                   "Host Events",
                   "Prizes",
                   "Community"
                 ].map((link, i) => (
                   <li key={i}>
-                    <a 
-                      href="#" 
+                    <a
+                      href="#"
                       className="text-gray-400 hover:text-yellow-400 transition-colors duration-300"
                     >
                       {link}
@@ -357,7 +357,7 @@ const PaidTournamentsPage = () => {
                 ))}
               </ul>
             </div>
-            
+
             {/* Support */}
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Support</h4>
@@ -371,8 +371,8 @@ const PaidTournamentsPage = () => {
                   "Refund Policy"
                 ].map((link, i) => (
                   <li key={i}>
-                    <a 
-                      href="#" 
+                    <a
+                      href="#"
                       className="text-gray-400 hover:text-yellow-400 transition-colors duration-300"
                     >
                       {link}
@@ -382,7 +382,7 @@ const PaidTournamentsPage = () => {
               </ul>
             </div>
           </div>
-          
+
           {/* Bottom Bar */}
           <div className="border-t border-gray-800 pt-8">
             <div className="flex flex-col md:flex-row justify-between items-center">

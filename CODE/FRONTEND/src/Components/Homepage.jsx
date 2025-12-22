@@ -6,14 +6,14 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import axios from 'axios';
+import api from '../lib/api';
 import toast from 'react-hot-toast';
 
 import { useAuth } from '../Context/AuthContext';
 import StableCard from './StableCard';
-import { 
-  FaTrophy, FaUsers, FaSun, FaMoon, 
-  FaFootballBall, FaTwitter, 
+import {
+  FaTrophy, FaUsers, FaSun, FaMoon,
+  FaFootballBall, FaTwitter,
   FaInstagram, FaFacebookF, FaYoutube,
   FaGamepad, FaCrown, FaFire, FaStar,
   FaCalendarAlt, FaClock, FaPlay, FaMedal,
@@ -31,11 +31,11 @@ const HomePage = () => {
   const [showForgotModal, setShowForgotModal] = useState(false); // 🆕
   const [isLoading, setIsLoading] = useState(false);
   const [cardsLoaded, setCardsLoaded] = useState(false);
-  
+
   const [selectedRole, setSelectedRole] = useState('');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  
+
   const [registerFullName, setRegisterFullName] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
@@ -45,7 +45,7 @@ const HomePage = () => {
   const [forgotEmail, setForgotEmail] = useState(''); // 🆕
   const [forgotNewPassword, setForgotNewPassword] = useState(''); // 🆕
   const [forgotConfirmPassword, setForgotConfirmPassword] = useState(''); // 🆕
-  
+
   const [loading, setLoading] = useState(false);
 
   // Ensure cards load properly
@@ -80,63 +80,63 @@ const HomePage = () => {
     }
 
     const loginData = {
-        email: loginEmail,
-        password: loginPassword
+      email: loginEmail,
+      password: loginPassword
     };
 
     try {
-        setLoading(true);
-        console.log("Attempting login with:", loginData);
-        const response = await axios.post("http://localhost:8080/api/auth/login", loginData);
-        console.log("Login response:", response.data);
+      setLoading(true);
+      console.log("Attempting login with:", loginData);
+      const response = await api.post("/auth/login", loginData);
+      console.log("Login response:", response.data);
 
-        // Check if the login is successful and save data using AuthContext
-        if (response.data?.status === 'success' && response.data?.data) {
-          const userData = response.data.data;
-          const userRole = response.data.role;
-          const token = response.data.token;
-        
-          console.log("Login successful, user data:", userData);
-          console.log("User role:", userRole);
-          console.log("Token:", token);
-        
-          // Use AuthContext login method
-          login(userData, token);
-        
-          console.log(`User data stored via AuthContext:`, userData);
-          toast.success(`Login successful!`);
+      // Check if the login is successful and save data using AuthContext
+      if (response.data?.status === 'success' && response.data?.data) {
+        const userData = response.data.data;
+        const userRole = response.data.role;
+        const token = response.data.token;
 
-          setTimeout(() => {
-              console.log("Navigating to:", userRole);
-              if (userRole === 'ADMIN') {
-                  navigate('/adminPage');
-              } else if (userRole === 'HOST') {
-                  navigate('/hostPage');
-              } else if (userRole === 'PLAYER') {
-                  navigate('/userHomePage');
-              }
-          }, 1500);
+        console.log("Login successful, user data:", userData);
+        console.log("User role:", userRole);
+        console.log("Token:", token);
 
-          setLoginEmail('');
-          setLoginPassword('');
-        } else {
-          console.log("Login failed - response:", response.data);
-          toast.error(response.data?.message || "Login failed");
-        }
+        // Use AuthContext login method
+        login(userData, token);
+
+        console.log(`User data stored via AuthContext:`, userData);
+        toast.success(`Login successful!`);
+
+        setTimeout(() => {
+          console.log("Navigating to:", userRole);
+          if (userRole === 'ADMIN') {
+            navigate('/adminPage');
+          } else if (userRole === 'HOST') {
+            navigate('/hostPage');
+          } else if (userRole === 'PLAYER') {
+            navigate('/userHomePage');
+          }
+        }, 1500);
+
+        setLoginEmail('');
+        setLoginPassword('');
+      } else {
+        console.log("Login failed - response:", response.data);
+        toast.error(response.data?.message || "Login failed");
+      }
 
     } catch (error) {
-        console.error("Login Failed - Full error:", error);
-        console.error("Error response:", error.response?.data);
-        console.error("Error message:", error.message);
-        const errorMessage = error.response?.data?.message || "Login failed! Please check your credentials.";
-        toast.error(errorMessage);
+      console.error("Login Failed - Full error:", error);
+      console.error("Error response:", error.response?.data);
+      console.error("Error message:", error.message);
+      const errorMessage = error.response?.data?.message || "Login failed! Please check your credentials.";
+      toast.error(errorMessage);
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
-};
+  };
 
-  
-  
+
+
 
   // 🆕 Register Submit Function
   const handleRegisterSubmit = async (e) => {
@@ -147,12 +147,12 @@ const HomePage = () => {
       toast.warn("Please fill in all required fields!");
       return;
     }
-    
+
     if (!selectedRole) {
       toast.warn("Please select a role before registering!");
       return;
     }
-    
+
     if (!registerFile) {
       toast.warn("Please upload a file (image)!");
       return;
@@ -181,12 +181,11 @@ const HomePage = () => {
 
     try {
       setLoading(true);
-      const response = await axios.post("http://localhost:8080/api/auth/register", formData, {
-        headers: { 
+      const response = await api.post("/auth/register", formData, {
+        headers: {
           "Content-Type": "multipart/form-data",
           "Accept": "application/json"
-        },
-        withCredentials: true
+        }
       });
 
       if (response.data?.status === 'success') {
@@ -248,7 +247,7 @@ const HomePage = () => {
 
     try {
       setLoading(true);
-      const response = await axios.put("http://localhost:8080/api/auth/forgot-password", forgotData);
+      const response = await api.put("/auth/forgot-password", forgotData);
 
       if (response.data?.status === 'success') {
         console.log("Password Reset Successful", response.data);
@@ -274,7 +273,7 @@ const HomePage = () => {
 
   return (
     <div className={`${darkMode ? 'bg-gray-950 text-white' : 'bg-white text-black'} font-poppins min-h-screen flex flex-col transition-colors duration-300`}>
-  
+
 
       {/* 🎮 Hero Section */}
       <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
@@ -284,7 +283,7 @@ const HomePage = () => {
             backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Ccircle cx='30' cy='30' r='2'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`
           }}></div>
         </div>
-        
+
         {/* Floating Gaming Elements */}
         <div className="absolute top-20 left-10 animate-bounce">
           <FaGamepad className="text-yellow-400 text-4xl opacity-30" />
@@ -299,7 +298,7 @@ const HomePage = () => {
         {/* Navbar */}
         <nav className="absolute top-0 left-0 right-0 z-50 bg-black/20 backdrop-blur-md border-b border-gray-800/50">
           <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-        <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3">
               <div className="relative">
                 <FaGamepad className="text-3xl text-yellow-400" />
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
@@ -307,35 +306,35 @@ const HomePage = () => {
               <h1 className="text-2xl font-bold bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent">
                 Titan Esports
               </h1>
-        </div>
-        <div className="space-x-6 flex items-center">
-              <button 
-                onClick={() => setShowModal(true)} 
+            </div>
+            <div className="space-x-6 flex items-center">
+              <button
+                onClick={() => setShowModal(true)}
                 className="px-6 py-2 bg-gradient-to-r from-yellow-500 to-orange-500 text-black font-semibold rounded-lg hover:from-yellow-400 hover:to-orange-400 transition-all duration-300 transform hover:scale-105"
               >
                 Register
               </button>
-              <button 
-                onClick={() => setShowLoginModal(true)} 
+              <button
+                onClick={() => setShowLoginModal(true)}
                 className="px-6 py-2 border-2 border-yellow-400 text-yellow-400 font-semibold rounded-lg hover:bg-yellow-400 hover:text-black transition-all duration-300"
               >
                 Login
               </button>
-              <button 
-                onClick={handleScrollToAbout} 
+              <button
+                onClick={handleScrollToAbout}
                 className="text-gray-300 hover:text-yellow-400 transition-colors duration-300"
               >
                 About
               </button>
-              <button 
-                onClick={() => setDarkMode(!darkMode)} 
+              <button
+                onClick={() => setDarkMode(!darkMode)}
                 className="p-2 rounded-full border border-gray-600 hover:border-yellow-400 transition-colors duration-300"
               >
                 {darkMode ? <FaSun className="text-yellow-300" /> : <FaMoon className="text-gray-300" />}
-          </button>
+              </button>
             </div>
-        </div>
-      </nav>
+          </div>
+        </nav>
 
         {/* Hero Content */}
         <div className="relative z-10 text-center max-w-6xl mx-auto px-6 pt-24">
@@ -353,10 +352,10 @@ const HomePage = () => {
               Battle Like a Pro
             </p>
             <p className="text-lg md:text-xl text-gray-400 mb-12 max-w-3xl mx-auto leading-relaxed">
-              Join the ultimate competitive gaming platform. Host tournaments, compete with champions, 
+              Join the ultimate competitive gaming platform. Host tournaments, compete with champions,
               and climb the leaderboards in the most intense esports battles.
             </p>
-            
+
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-6 justify-center items-center mb-16">
               <motion.button
@@ -399,191 +398,191 @@ const HomePage = () => {
       </section>
 
       {/* 🔐 Register Modal */}
-    {showModal && (
-      <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }} 
-          animate={{ opacity: 1, scale: 1 }} 
-          transition={{ duration: 0.3 }} 
-          className={`rounded-xl p-8 w-full max-w-md ${darkMode ? 'bg-gray-900 text-white' : 'bg-white text-black'} shadow-2xl relative`}
-        >
-          <button onClick={() => setShowModal(false)} className="absolute top-2 right-4 text-2xl font-bold">×</button>
-          <h2 className="text-2xl font-bold text-center mb-6">Create Your Account</h2>
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+            className={`rounded-xl p-8 w-full max-w-md ${darkMode ? 'bg-gray-900 text-white' : 'bg-white text-black'} shadow-2xl relative`}
+          >
+            <button onClick={() => setShowModal(false)} className="absolute top-2 right-4 text-2xl font-bold">×</button>
+            <h2 className="text-2xl font-bold text-center mb-6">Create Your Account</h2>
 
-          <form className="space-y-4" onSubmit={handleRegisterSubmit}>
-            <input 
-              type="file" 
-              className="w-full border rounded p-2" 
-              accept="image/*" 
-              onChange={(e) => setRegisterFile(e.target.files[0])}
-              required
-            />
-            <input 
-              type="text" 
-              placeholder="Full Name" 
-              className="w-full border rounded p-2 text-black" 
-              value={registerFullName}
-              onChange={(e) => setRegisterFullName(e.target.value)}
-              required
-            />
-            <input 
-              type="email" 
-              placeholder="Email" 
-              className="w-full border rounded p-2 text-black" 
-              value={registerEmail}
-              onChange={(e) => setRegisterEmail(e.target.value)}
-              required
-            />
-            <input 
-              type="password" 
-              placeholder="Password" 
-              className="w-full border rounded p-2 text-black" 
-              value={registerPassword}
-              onChange={(e) => setRegisterPassword(e.target.value)}
-              required
-            />
-            <input 
-              type="tel" 
-              placeholder="Mobile Number" 
-              className="w-full border rounded p-2 text-black" 
-              value={registerMobile}
-              onChange={(e) => setRegisterMobile(e.target.value)}
-              required
-            />
-            <div className="flex justify-between gap-2">
-              {roles.map((role) => (
-                <button
-                  key={role.value}
-                  type="button"
-                  onClick={() => setSelectedRole(role.value)}
-                  className={`flex-1 py-2 rounded-lg font-semibold border transition ${selectedRole === role.value ? 'bg-yellow-400 text-black' : `${darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-800'}`}`}
-                >
-                  {role.label}
-                </button>
-              ))}
-            </div>
+            <form className="space-y-4" onSubmit={handleRegisterSubmit}>
+              <input
+                type="file"
+                className="w-full border rounded p-2"
+                accept="image/*"
+                onChange={(e) => setRegisterFile(e.target.files[0])}
+                required
+              />
+              <input
+                type="text"
+                placeholder="Full Name"
+                className="w-full border rounded p-2 text-black"
+                value={registerFullName}
+                onChange={(e) => setRegisterFullName(e.target.value)}
+                required
+              />
+              <input
+                type="email"
+                placeholder="Email"
+                className="w-full border rounded p-2 text-black"
+                value={registerEmail}
+                onChange={(e) => setRegisterEmail(e.target.value)}
+                required
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                className="w-full border rounded p-2 text-black"
+                value={registerPassword}
+                onChange={(e) => setRegisterPassword(e.target.value)}
+                required
+              />
+              <input
+                type="tel"
+                placeholder="Mobile Number"
+                className="w-full border rounded p-2 text-black"
+                value={registerMobile}
+                onChange={(e) => setRegisterMobile(e.target.value)}
+                required
+              />
+              <div className="flex justify-between gap-2">
+                {roles.map((role) => (
+                  <button
+                    key={role.value}
+                    type="button"
+                    onClick={() => setSelectedRole(role.value)}
+                    className={`flex-1 py-2 rounded-lg font-semibold border transition ${selectedRole === role.value ? 'bg-yellow-400 text-black' : `${darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-800'}`}`}
+                  >
+                    {role.label}
+                  </button>
+                ))}
+              </div>
 
-            <button 
-              type="submit" 
-              className={`w-full py-2 rounded font-semibold flex items-center justify-center ${darkMode ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-yellow-600 text-white hover:bg-yellow-700'}`}
-              disabled={loading}
-            >
-              {loading ? (
-                <svg className="animate-spin h-5 w-5 mr-3 border-t-2 border-b-2 border-gray-900 rounded-full" viewBox="0 0 24 24"></svg>
-              ) : (
-                'Register'
-              )}
-            </button>
-          </form>
-        </motion.div>
-      </div>
-    )}
+              <button
+                type="submit"
+                className={`w-full py-2 rounded font-semibold flex items-center justify-center ${darkMode ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-yellow-600 text-white hover:bg-yellow-700'}`}
+                disabled={loading}
+              >
+                {loading ? (
+                  <svg className="animate-spin h-5 w-5 mr-3 border-t-2 border-b-2 border-gray-900 rounded-full" viewBox="0 0 24 24"></svg>
+                ) : (
+                  'Register'
+                )}
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
 
 
-    {/* 🔐 Login Modal */}
-    {showLoginModal && (
-      <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }} 
-          animate={{ opacity: 1, scale: 1 }} 
-          transition={{ duration: 0.3 }} 
-          className={`rounded-xl p-8 w-full max-w-md ${darkMode ? 'bg-gray-900 text-white' : 'bg-white text-black'} shadow-2xl relative`}
-        >
-          <button onClick={() => setShowLoginModal(false)} className="absolute top-2 right-4 text-2xl font-bold">×</button>
-          <h2 className="text-2xl font-bold text-center mb-6">Login</h2>
+      {/* 🔐 Login Modal */}
+      {showLoginModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+            className={`rounded-xl p-8 w-full max-w-md ${darkMode ? 'bg-gray-900 text-white' : 'bg-white text-black'} shadow-2xl relative`}
+          >
+            <button onClick={() => setShowLoginModal(false)} className="absolute top-2 right-4 text-2xl font-bold">×</button>
+            <h2 className="text-2xl font-bold text-center mb-6">Login</h2>
 
-          <form className="space-y-4" onSubmit={handleLoginSubmit}>
-            <input 
-              type="email" 
-              placeholder="Email" 
-              className="w-full border rounded p-2 text-black"
-              value={loginEmail}
-              onChange={(e) => setLoginEmail(e.target.value)}
-              required
-            />
-            <input 
-              type="password" 
-              placeholder="Password" 
-              className="w-full border rounded p-2 text-black"
-              value={loginPassword}
-              onChange={(e) => setLoginPassword(e.target.value)}
-              required
-            />
+            <form className="space-y-4" onSubmit={handleLoginSubmit}>
+              <input
+                type="email"
+                placeholder="Email"
+                className="w-full border rounded p-2 text-black"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                required
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                className="w-full border rounded p-2 text-black"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                required
+              />
 
-            {/* 🆕 Forgot Password Link */}
-            <p className="text-center text-sm cursor-pointer text-yellow-400 hover:underline" onClick={() => { setShowForgotModal(true); setShowLoginModal(false); }}>
-              Forgot Password?
-            </p>
+              {/* 🆕 Forgot Password Link */}
+              <p className="text-center text-sm cursor-pointer text-yellow-400 hover:underline" onClick={() => { setShowForgotModal(true); setShowLoginModal(false); }}>
+                Forgot Password?
+              </p>
 
-            <button 
-              type="submit" 
-              className={`w-full py-2 rounded font-semibold flex items-center justify-center ${darkMode ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-yellow-600 text-white hover:bg-yellow-700'}`}
-              disabled={loading}
-            >
-              {loading ? (
-                <svg className="animate-spin h-5 w-5 mr-3 border-t-2 border-b-2 border-gray-900 rounded-full" viewBox="0 0 24 24"></svg>
-              ) : (
-                'Login'
-              )}
-            </button>
-          </form>
-        </motion.div>
-      </div>
-    )}
+              <button
+                type="submit"
+                className={`w-full py-2 rounded font-semibold flex items-center justify-center ${darkMode ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-yellow-600 text-white hover:bg-yellow-700'}`}
+                disabled={loading}
+              >
+                {loading ? (
+                  <svg className="animate-spin h-5 w-5 mr-3 border-t-2 border-b-2 border-gray-900 rounded-full" viewBox="0 0 24 24"></svg>
+                ) : (
+                  'Login'
+                )}
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
 
-    {/* 🔐 Forgot Password Modal */}
-    {showForgotModal && (
-      <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }} 
-          animate={{ opacity: 1, scale: 1 }} 
-          transition={{ duration: 0.3 }} 
-          className={`rounded-xl p-8 w-full max-w-md ${darkMode ? 'bg-gray-900 text-white' : 'bg-white text-black'} shadow-2xl relative`}
-        >
-          <button onClick={() => setShowForgotModal(false)} className="absolute top-2 right-4 text-2xl font-bold">×</button>
-          <h2 className="text-2xl font-bold text-center mb-6">Reset Password</h2>
+      {/* 🔐 Forgot Password Modal */}
+      {showForgotModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+            className={`rounded-xl p-8 w-full max-w-md ${darkMode ? 'bg-gray-900 text-white' : 'bg-white text-black'} shadow-2xl relative`}
+          >
+            <button onClick={() => setShowForgotModal(false)} className="absolute top-2 right-4 text-2xl font-bold">×</button>
+            <h2 className="text-2xl font-bold text-center mb-6">Reset Password</h2>
 
-          <form className="space-y-4" onSubmit={handleForgotPasswordSubmit}>
-            <input 
-              type="email" 
-              placeholder="Email" 
-              className="w-full border rounded p-2 text-black"
-              value={forgotEmail}
-              onChange={(e) => setForgotEmail(e.target.value)}
-              required
-            />
-            <input 
-              type="password" 
-              placeholder="New Password" 
-              className="w-full border rounded p-2 text-black"
-              value={forgotNewPassword}
-              onChange={(e) => setForgotNewPassword(e.target.value)}
-              required
-            />
-            <input 
-              type="password" 
-              placeholder="Confirm Password" 
-              className="w-full border rounded p-2 text-black"
-              value={forgotConfirmPassword}
-              onChange={(e) => setForgotConfirmPassword(e.target.value)}
-              required
-            />
+            <form className="space-y-4" onSubmit={handleForgotPasswordSubmit}>
+              <input
+                type="email"
+                placeholder="Email"
+                className="w-full border rounded p-2 text-black"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                required
+              />
+              <input
+                type="password"
+                placeholder="New Password"
+                className="w-full border rounded p-2 text-black"
+                value={forgotNewPassword}
+                onChange={(e) => setForgotNewPassword(e.target.value)}
+                required
+              />
+              <input
+                type="password"
+                placeholder="Confirm Password"
+                className="w-full border rounded p-2 text-black"
+                value={forgotConfirmPassword}
+                onChange={(e) => setForgotConfirmPassword(e.target.value)}
+                required
+              />
 
-            <button 
-              type="submit" 
-              className={`w-full py-2 rounded font-semibold flex items-center justify-center ${darkMode ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-yellow-600 text-white hover:bg-yellow-700'}`}
-              disabled={loading}
-            >
-              {loading ? (
-                <svg className="animate-spin h-5 w-5 mr-3 border-t-2 border-b-2 border-gray-900 rounded-full" viewBox="0 0 24 24"></svg>
-              ) : (
-                'Reset Password'
-              )}
-            </button>
-          </form>
-        </motion.div>
-      </div>
-    )}
+              <button
+                type="submit"
+                className={`w-full py-2 rounded font-semibold flex items-center justify-center ${darkMode ? 'bg-yellow-400 text-black hover:bg-yellow-500' : 'bg-yellow-600 text-white hover:bg-yellow-700'}`}
+                disabled={loading}
+              >
+                {loading ? (
+                  <svg className="animate-spin h-5 w-5 mr-3 border-t-2 border-b-2 border-gray-900 rounded-full" viewBox="0 0 24 24"></svg>
+                ) : (
+                  'Reset Password'
+                )}
+              </button>
+            </form>
+          </motion.div>
+        </div>
+      )}
 
 
 
@@ -600,7 +599,7 @@ const HomePage = () => {
               Experience the ultimate competitive gaming platform with cutting-edge features
             </p>
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
               {
@@ -660,7 +659,7 @@ const HomePage = () => {
               Don't miss out on the biggest competitive gaming events
             </p>
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {!cardsLoaded ? (
               // Loading skeleton
@@ -720,12 +719,12 @@ const HomePage = () => {
                   </div>
                   <FaFire className="text-yellow-400 text-lg" />
                 </div>
-                
+
                 <h3 className="text-xl font-bold text-white mb-2 group-hover:text-yellow-400 transition-colors duration-300">
                   {tournament.title}
                 </h3>
                 <p className="text-gray-400 mb-4">{tournament.game}</p>
-                
+
                 <div className="space-y-2 mb-6">
                   <div className="flex items-center text-gray-300">
                     <FaCalendarAlt className="mr-2 text-yellow-400" />
@@ -744,7 +743,7 @@ const HomePage = () => {
                     {tournament.players} Players
                   </div>
                 </div>
-                
+
                 <button className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black font-bold rounded-lg hover:from-yellow-400 hover:to-orange-400 transition-all duration-300 transform hover:scale-105">
                   <FaPlay className="inline mr-2" />
                   Join Tournament
@@ -768,7 +767,7 @@ const HomePage = () => {
               The champions who dominate the competitive scene
             </p>
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {!cardsLoaded ? (
               // Loading skeleton for leaderboard
@@ -802,12 +801,11 @@ const HomePage = () => {
                 key={`player-${i}-${player.name}`}
                 delay={i * 100}
                 animationType="slideIn"
-                className={`group relative bg-gradient-to-br ${
-                  i === 0 ? 'from-yellow-500/20 to-orange-500/20 border-yellow-400' :
-                  i === 1 ? 'from-gray-400/20 to-gray-500/20 border-gray-400' :
-                  i === 2 ? 'from-orange-600/20 to-orange-700/20 border-orange-600' :
-                  'from-gray-700/20 to-gray-800/20 border-gray-600'
-                } border rounded-2xl p-6 hover:shadow-2xl hover:scale-105 transition-all duration-300`}
+                className={`group relative bg-gradient-to-br ${i === 0 ? 'from-yellow-500/20 to-orange-500/20 border-yellow-400' :
+                    i === 1 ? 'from-gray-400/20 to-gray-500/20 border-gray-400' :
+                      i === 2 ? 'from-orange-600/20 to-orange-700/20 border-orange-600' :
+                        'from-gray-700/20 to-gray-800/20 border-gray-600'
+                  } border rounded-2xl p-6 hover:shadow-2xl hover:scale-105 transition-all duration-300`}
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center space-x-3">
@@ -822,7 +820,7 @@ const HomePage = () => {
                     <div className="text-sm text-gray-400">Win Rate</div>
                   </div>
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-4 text-center">
                   <div>
                     <div className="text-xl font-bold text-green-400">{player.wins}</div>
@@ -834,7 +832,7 @@ const HomePage = () => {
                   </div>
                 </div>
               </StableCard>
-          ))}
+            ))}
           </div>
         </div>
       </section>
@@ -852,7 +850,7 @@ const HomePage = () => {
               Join thousands of satisfied players and hosts
             </p>
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {!cardsLoaded ? (
               // Loading skeleton for testimonials
@@ -908,13 +906,13 @@ const HomePage = () => {
                     <p className="text-gray-400 text-sm">{testimonial.role}</p>
                   </div>
                 </div>
-                
+
                 <div className="flex mb-4">
                   {[...Array(testimonial.rating)].map((_, star) => (
                     <FaStar key={star} className="text-yellow-400 text-sm" />
-  ))}
-</div>
-                
+                  ))}
+                </div>
+
                 <div className="relative">
                   <FaQuoteLeft className="absolute -top-2 -left-2 text-purple-400 text-2xl opacity-30" />
                   <p className="text-gray-300 leading-relaxed italic">
@@ -940,7 +938,7 @@ const HomePage = () => {
               Your digital battleground for competitive gaming excellence
             </p>
           </div>
-          
+
           <div className="relative bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-lg rounded-3xl p-12 border border-gray-700/50">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
               <div className="space-y-8">
@@ -953,7 +951,7 @@ const HomePage = () => {
                     <p className="text-gray-300">We bring the best together with professional tournament management, real-time analytics, and seamless player coordination.</p>
                   </div>
                 </div>
-                
+
                 <div className="flex items-start space-x-4">
                   <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center">
                     <FaCrown className="text-white text-xl" />
@@ -963,7 +961,7 @@ const HomePage = () => {
                     <p className="text-gray-300">Track every move, win, and statistic in real-time. Our advanced ranking system keeps the competitive fire alive.</p>
                   </div>
                 </div>
-                
+
                 <div className="flex items-start space-x-4">
                   <div className="flex-shrink-0 w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-500 rounded-lg flex items-center justify-center">
                     <FaUsers className="text-white text-xl" />
@@ -974,7 +972,7 @@ const HomePage = () => {
                   </div>
                 </div>
               </div>
-              
+
               <div className="relative">
                 <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-2xl blur-xl"></div>
                 <div className="relative bg-gray-800/50 backdrop-blur-sm rounded-2xl p-8 border border-gray-700">
@@ -1015,7 +1013,7 @@ const HomePage = () => {
           <p className="text-xl text-gray-400 mb-12 max-w-2xl mx-auto">
             Join the ultimate competitive gaming platform and start your journey to esports greatness.
           </p>
-          
+
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
             <motion.button
               whileHover={{ scale: 1.05 }}
@@ -1053,9 +1051,9 @@ const HomePage = () => {
                 <h3 className="text-2xl font-bold bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent">
                   Titan Esports
                 </h3>
-          </div>
+              </div>
               <p className="text-gray-400 mb-6 max-w-md leading-relaxed">
-                The ultimate competitive gaming platform where champions are made. 
+                The ultimate competitive gaming platform where champions are made.
                 Join thousands of players in the most intense esports battles.
               </p>
               <div className="flex space-x-4">
@@ -1065,9 +1063,9 @@ const HomePage = () => {
                   { icon: FaFacebookF, color: "hover:text-blue-500" },
                   { icon: FaYoutube, color: "hover:text-red-500" }
                 ].map((social, i) => (
-                  <a 
+                  <a
                     key={i}
-                    href="#" 
+                    href="#"
                     className={`text-2xl text-gray-400 transition-all duration-300 transform hover:scale-110 ${social.color}`}
                   >
                     <social.icon />
@@ -1075,22 +1073,22 @@ const HomePage = () => {
                 ))}
               </div>
             </div>
-            
+
             {/* Quick Links */}
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Quick Links</h4>
               <ul className="space-y-3">
                 {[
                   "Tournaments",
-                  "Leaderboard", 
+                  "Leaderboard",
                   "Players",
                   "Host Events",
                   "Prizes",
                   "Community"
                 ].map((link, i) => (
                   <li key={i}>
-                    <a 
-                      href="#" 
+                    <a
+                      href="#"
                       className="text-gray-400 hover:text-yellow-400 transition-colors duration-300"
                     >
                       {link}
@@ -1099,7 +1097,7 @@ const HomePage = () => {
                 ))}
               </ul>
             </div>
-            
+
             {/* Support */}
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Support</h4>
@@ -1113,8 +1111,8 @@ const HomePage = () => {
                   "Refund Policy"
                 ].map((link, i) => (
                   <li key={i}>
-                    <a 
-                      href="#" 
+                    <a
+                      href="#"
                       className="text-gray-400 hover:text-yellow-400 transition-colors duration-300"
                     >
                       {link}
@@ -1124,7 +1122,7 @@ const HomePage = () => {
               </ul>
             </div>
           </div>
-          
+
           {/* Bottom Bar */}
           <div className="border-t border-gray-800 pt-8">
             <div className="flex flex-col md:flex-row justify-between items-center">

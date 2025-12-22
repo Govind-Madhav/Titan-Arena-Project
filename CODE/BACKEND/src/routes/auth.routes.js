@@ -7,16 +7,17 @@ const express = require('express');
 const router = express.Router();
 const authController = require('../modules/auth/auth.controller');
 const { authRequired } = require('../middleware/auth.middleware');
+const { authLimiter } = require('../middleware/security.middleware');
 
 // Public routes
-router.post('/register', authController.signup); // Alias
-router.post('/signup', authController.signup);
-router.post('/login', authController.login);
+router.post('/register', authLimiter, authController.signup); // Alias
+router.post('/signup', authLimiter, authController.signup);
+router.post('/login', authLimiter, authController.login);
 router.post('/refresh', authController.refresh);
 router.post('/logout', authRequired, authController.logout);
 
 // Email verification routes
-router.get('/verify-email', authController.verifyEmail);
+router.post('/verify-email', authController.verifyEmail);
 router.post('/resend-verification', authController.resendVerification);
 
 // Protected routes

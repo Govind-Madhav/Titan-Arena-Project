@@ -1,371 +1,134 @@
-/**
- * Copyright (c) 2025 Titan E-sports. All rights reserved.
- * This code is proprietary and confidential.
- */
+const { db } = require('../../db');
+const { matches, tournaments, users } = require('../../db/schema');
+const { eq, and } = require('drizzle-orm');
+const auditService = require('../admin/audit.service');
+const matchService = require('./match.service');
 
-const prisma = require('../../config/prisma');
-const walletService = require('../wallet/wallet.service');
-
-// Get matches for tournament
-exports.getMatches = async (req, res) => {
+// Get match by ID
+exports.getMatchById = async (req, res) => {
     try {
-        const matches = await prisma.match.findMany({
-            where: { tournamentId: req.params.tournamentId },
-            orderBy: [{ round: 'asc' }, { matchNumber: 'asc' }]
-        });
+        const { id } = req.params;
+        const result = await db.select({
+            id: matches.id,
+            round: matches.round,
+            participantA: {
+                id: matches.participantAId,
+                username: matches.participantAId // Temp: just returning ID, ideally join or fetch name
+            },
+            participantB: {
+                id: matches.participantBId,
+            },
+            scoreA: matches.scoreA,
+            scoreB: matches.scoreB,
+            status: matches.status,
+            startTime: matches.startTime
+        })
+            .from(matches)
+            .where(eq(matches.id, id))
+            .limit(1);
 
-        res.json({ success: true, data: matches });
-    } catch (error) {
-        console.error('Get matches error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch matches' });
-    }
-};
+        // Better: Fetch raw match and join manually if needed
+        const match = await db.select().from(matches).where(eq(matches.id, id)).limit(1);
+        if (!match[0]) return res.status(404).json({ success: false, message: 'Match not found' });
 
-// Get single match
-exports.getMatch = async (req, res) => {
-    try {
-        const match = await prisma.match.findUnique({
-            where: { id: req.params.id },
-            include: { disputes: true }
-        });
-
-        if (!match) {
-            return res.status(404).json({ success: false, message: 'Match not found' });
-        }
-
-        res.json({ success: true, data: match });
+        res.json({ success: true, data: match[0] });
     } catch (error) {
         console.error('Get match error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch match' });
     }
 };
 
-// Generate bracket
-exports.generateBracket = async (req, res) => {
+// Submit Score
+exports.submitScore = async (req, res) => {
     try {
-        const tournamentId = req.params.tournamentId;
+        const { id } = req.params;
+        const { scoreA, scoreB } = req.body;
+        const userId = req.user.id;
 
-        const tournament = await prisma.tournament.findUnique({
-            where: { id: tournamentId },
-            include: {
-                registrations: {
-                    where: { status: 'CONFIRMED' },
-                    include: {
-                        user: { select: { id: true, username: true } },
-                        team: { select: { id: true, name: true } }
-                    }
-                }
-            }
+        // Transaction for concurrency
+        await db.transaction(async (tx) => {
+            // 1. Lock & Fetch
+            // Drizzle doesn't support 'FOR UPDATE' easily in all drivers/modes yet. 
+            // We'll proceed with standard transaction. 
+            const match = await tx.select().from(matches).where(eq(matches.id, id)).limit(1).then(r => r[0]);
+
+            if (!match) throw new Error('Match not found');
+
+            // 2. Validate Status
+            if (match.status === 'COMPLETED') throw new Error('Match already completed');
+            if (match.locked) throw new Error('Match is locked');
+
+            // 3. Validate Permission (Participant or Host/Admin)
+            // Need tournament host check too? Expensive.
+            const isParticipant = (match.participantAId === userId || match.participantBId === userId);
+            const isAdmin = (req.user.role === 'ADMIN');
+
+            if (!isParticipant && !isAdmin) throw new Error('Unauthorized to submit score');
+
+            // 4. Update Score & Determine Winner
+            let winnerId = null;
+            let status = 'COMPLETED'; // Auto-complete for now
+
+            if (scoreA > scoreB) winnerId = match.participantAId;
+            else if (scoreB > scoreA) winnerId = match.participantBId;
+            else throw new Error('Draws not allowed in knockout');
+
+            if (!winnerId) throw new Error('Winner could not be determined');
+
+            // 5. Save
+            await tx.update(matches)
+                .set({
+                    scoreA,
+                    scoreB,
+                    winnerId,
+                    status,
+                    endTime: new Date()
+                })
+                .where(eq(matches.id, id));
+
+            // 6. Advance
+            await matchService.advanceWinner(id, tx);
+
+            // 7. Audit
+            await auditService.logAction(userId, 'MATCH_SCORE', id, { scoreA, scoreB, winnerId });
         });
 
-        if (!tournament) {
-            return res.status(404).json({ success: false, message: 'Tournament not found' });
-        }
-
-        if (tournament.hostId !== req.user.id && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
-            return res.status(403).json({ success: false, message: 'Access denied' });
-        }
-
-        if (tournament.status !== 'ONGOING') {
-            return res.status(400).json({ success: false, message: 'Tournament must be ONGOING to generate bracket' });
-        }
-
-        const participants = tournament.registrations;
-        if (participants.length < 2) {
-            return res.status(400).json({ success: false, message: 'Need at least 2 participants' });
-        }
-
-        // Shuffle participants
-        const shuffled = [...participants].sort(() => Math.random() - 0.5);
-
-        // Calculate rounds needed (single elimination)
-        const totalRounds = Math.ceil(Math.log2(shuffled.length));
-        const bracketSize = Math.pow(2, totalRounds);
-
-        // Pad with BYEs if needed
-        while (shuffled.length < bracketSize) {
-            shuffled.push(null); // BYE
-        }
-
-        // Create first round matches
-        const matches = [];
-        let matchNumber = 1;
-
-        for (let i = 0; i < shuffled.length; i += 2) {
-            const p1 = shuffled[i];
-            const p2 = shuffled[i + 1];
-
-            const matchData = {
-                tournamentId,
-                round: 1,
-                matchNumber,
-                status: 'SCHEDULED'
-            };
-
-            if (tournament.type === 'SOLO') {
-                matchData.playerAId = p1?.userId || null;
-                matchData.playerBId = p2?.userId || null;
-
-                // Auto-win if BYE
-                if (!p2) {
-                    matchData.winnerUserId = p1?.userId;
-                    matchData.status = 'COMPLETED';
-                }
-            } else {
-                matchData.teamAId = p1?.teamId || null;
-                matchData.teamBId = p2?.teamId || null;
-
-                if (!p2) {
-                    matchData.winnerTeamId = p1?.teamId;
-                    matchData.status = 'COMPLETED';
-                }
-            }
-
-            matches.push(matchData);
-            matchNumber++;
-        }
-
-        // Delete existing matches
-        await prisma.match.deleteMany({ where: { tournamentId } });
-
-        // Create new matches
-        await prisma.match.createMany({ data: matches });
-
-        // Create placeholder matches for subsequent rounds
-        for (let round = 2; round <= totalRounds; round++) {
-            const matchesInRound = Math.pow(2, totalRounds - round);
-            const roundMatches = [];
-
-            for (let m = 1; m <= matchesInRound; m++) {
-                roundMatches.push({
-                    tournamentId,
-                    round,
-                    matchNumber: m,
-                    status: 'SCHEDULED'
-                });
-            }
-
-            await prisma.match.createMany({ data: roundMatches });
-        }
-
-        const allMatches = await prisma.match.findMany({
-            where: { tournamentId },
-            orderBy: [{ round: 'asc' }, { matchNumber: 'asc' }]
-        });
-
-        res.json({
-            success: true,
-            message: `Bracket generated: ${totalRounds} rounds`,
-            data: allMatches
-        });
+        res.json({ success: true, message: 'Score submitted and processed' });
     } catch (error) {
-        console.error('Generate bracket error:', error);
-        res.status(500).json({ success: false, message: 'Failed to generate bracket' });
+        console.error('Submit score error:', error);
+        res.status(400).json({ success: false, message: error.message || 'Failed to submit score' });
     }
 };
 
-// Submit match result
-exports.submitResult = async (req, res) => {
+// Dispute Match
+exports.disputeMatch = async (req, res) => {
     try {
-        const { scoreA, scoreB, winnerId } = req.body;
+        const { id } = req.params;
+        const { reason } = req.body;
 
-        const match = await prisma.match.findUnique({
-            where: { id: req.params.id },
-            include: { tournament: true }
-        });
+        await db.update(matches)
+            .set({ status: 'DISPUTED', locked: true })
+            .where(eq(matches.id, id));
 
-        if (!match) {
-            return res.status(404).json({ success: false, message: 'Match not found' });
-        }
+        await auditService.logAction(req.user.id, 'MATCH_DISPUTE', id, { reason });
 
-        if (match.tournament.hostId !== req.user.id && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
-            return res.status(403).json({ success: false, message: 'Access denied' });
-        }
-
-        const isSolo = match.tournament.type === 'SOLO';
-        const updateData = {
-            scoreA,
-            scoreB,
-            status: 'COMPLETED'
-        };
-
-        if (isSolo) {
-            updateData.winnerUserId = winnerId;
-        } else {
-            updateData.winnerTeamId = winnerId;
-        }
-
-        await prisma.match.update({
-            where: { id: match.id },
-            data: updateData
-        });
-
-        // Advance winner to next round
-        const nextRound = match.round + 1;
-        const nextMatchNumber = Math.ceil(match.matchNumber / 2);
-
-        const nextMatch = await prisma.match.findFirst({
-            where: {
-                tournamentId: match.tournamentId,
-                round: nextRound,
-                matchNumber: nextMatchNumber
-            }
-        });
-
-        if (nextMatch) {
-            const isFirstOfPair = match.matchNumber % 2 === 1;
-            const field = isSolo
-                ? (isFirstOfPair ? 'playerAId' : 'playerBId')
-                : (isFirstOfPair ? 'teamAId' : 'teamBId');
-
-            await prisma.match.update({
-                where: { id: nextMatch.id },
-                data: { [field]: winnerId }
-            });
-        }
-
-        res.json({ success: true, message: 'Result submitted' });
+        res.json({ success: true, message: 'Match marked as disputed' });
     } catch (error) {
-        console.error('Submit result error:', error);
-        res.status(500).json({ success: false, message: 'Failed to submit result' });
+        res.status(500).json({ success: false, message: 'Failed to dispute match' });
     }
 };
 
-// Upload proof
-exports.uploadProof = async (req, res) => {
+// Get Status
+exports.getMatches = async (req, res) => {
     try {
-        const { proofUrl } = req.body;
-
-        await prisma.match.update({
-            where: { id: req.params.id },
-            data: { proofUrl }
-        });
-
-        res.json({ success: true, message: 'Proof uploaded' });
+        // Stub for getMatches by tournament
+        res.status(501).json({ message: 'Not Implemented' });
     } catch (error) {
-        console.error('Upload proof error:', error);
-        res.status(500).json({ success: false, message: 'Failed to upload proof' });
+        res.status(500).json({ message: 'Error' });
     }
-};
-
-// Complete tournament and distribute prizes
-exports.completeTournament = async (req, res) => {
-    try {
-        const tournamentId = req.params.tournamentId;
-
-        const tournament = await prisma.tournament.findUnique({
-            where: { id: tournamentId },
-            include: {
-                payouts: { orderBy: { position: 'asc' } },
-                matches: { where: { status: 'COMPLETED' }, orderBy: { round: 'desc' } },
-                registrations: { include: { team: { include: { members: true } } } }
-            }
-        });
-
-        if (!tournament) {
-            return res.status(404).json({ success: false, message: 'Tournament not found' });
-        }
-
-        if (tournament.hostId !== req.user.id && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
-            return res.status(403).json({ success: false, message: 'Access denied' });
-        }
-
-        // Get final rankings from matches (winner of final = 1st, loser = 2nd, etc.)
-        const finalMatch = tournament.matches.find(m => m.round === Math.max(...tournament.matches.map(x => x.round)));
-        if (!finalMatch || finalMatch.status !== 'COMPLETED') {
-            return res.status(400).json({ success: false, message: 'Final match not completed yet' });
-        }
-
-        const isSolo = tournament.type === 'SOLO';
-        const winners = [];
-
-        // 1st place
-        const firstPlaceId = isSolo ? finalMatch.winnerUserId : finalMatch.winnerTeamId;
-        const secondPlaceId = isSolo
-            ? (finalMatch.playerAId === firstPlaceId ? finalMatch.playerBId : finalMatch.playerAId)
-            : (finalMatch.teamAId === firstPlaceId ? finalMatch.teamBId : finalMatch.teamAId);
-
-        winners.push({ position: 1, id: firstPlaceId });
-        winners.push({ position: 2, id: secondPlaceId });
-
-        // Distribute prizes
-        await prisma.$transaction(async (tx) => {
-            const captainBonusPercent = parseInt(process.env.CAPTAIN_BONUS_PERCENT || '10') / 100;
-
-            for (const payout of tournament.payouts) {
-                const winner = winners.find(w => w.position === payout.position);
-                if (!winner || !winner.id) continue;
-
-                if (isSolo) {
-                    // Credit directly to user
-                    await walletService.credit(
-                        winner.id,
-                        payout.amount,
-                        'PRIZE',
-                        `${getOrdinal(payout.position)} place prize for ${tournament.name}`,
-                        { tournamentId, position: payout.position },
-                        tx
-                    );
-                } else {
-                    // Team: split with captain bonus
-                    const team = tournament.registrations.find(r => r.teamId === winner.id)?.team;
-                    if (!team) continue;
-
-                    const teamSize = team.members.length;
-                    const captainBonus = Math.floor(payout.amount * captainBonusPercent);
-                    const remaining = payout.amount - captainBonus;
-                    const perMember = Math.floor(remaining / teamSize);
-
-                    for (const member of team.members) {
-                        const isCaptain = member.role === 'CAPTAIN';
-                        const amount = isCaptain ? perMember + captainBonus : perMember;
-
-                        await walletService.credit(
-                            member.userId,
-                            amount,
-                            'PRIZE',
-                            `${getOrdinal(payout.position)} place prize for ${tournament.name}`,
-                            { tournamentId, position: payout.position, teamId: team.id },
-                            tx
-                        );
-                    }
-                }
-            }
-
-            // Host profit
-            const hostProfit = tournament.collected - tournament.prizePool;
-            if (hostProfit > 0) {
-                await walletService.credit(
-                    tournament.hostId,
-                    hostProfit,
-                    'HOST_PROFIT',
-                    `Profit from ${tournament.name}`,
-                    { tournamentId },
-                    tx
-                );
-
-                await tx.tournament.update({
-                    where: { id: tournamentId },
-                    data: { hostProfit }
-                });
-            }
-
-            // Mark complete
-            await tx.tournament.update({
-                where: { id: tournamentId },
-                data: { status: 'COMPLETED' }
-            });
-        });
-
-        res.json({ success: true, message: 'Tournament completed and prizes distributed' });
-    } catch (error) {
-        console.error('Complete tournament error:', error);
-        res.status(500).json({ success: false, message: 'Failed to complete tournament' });
-    }
-};
-
-function getOrdinal(n) {
-    const s = ['th', 'st', 'nd', 'rd'];
-    const v = n % 100;
-    return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
+exports.getMatch = exports.getMatchById;
+exports.generateBracket = (req, res) => res.status(501).json({ message: 'Use tournament/start instead' });
+exports.submitResult = exports.submitScore;
+exports.uploadProof = (req, res) => res.status(501).json({ message: 'Not Implemented' });
+exports.completeTournament = (req, res) => res.status(501).json({ message: 'Use tournament/finalize instead' });

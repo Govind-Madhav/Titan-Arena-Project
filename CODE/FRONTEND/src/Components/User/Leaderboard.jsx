@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { FaTrophy, FaSignOutAlt, FaSun, FaMoon, FaTwitter, FaInstagram, FaFacebookF, FaYoutube } from 'react-icons/fa';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../lib/api';
 
 const LeaderboardPage = () => {
   const [darkMode, setDarkMode] = useState(true);
@@ -18,7 +18,7 @@ const LeaderboardPage = () => {
     const fetchLeaderboard = async () => {
       try {
         const tournamentId = 1; // Replace with actual tournamentId or pass it dynamically
-        const response = await axios.get(`http://localhost:8080/api/player/view-leaderboard/${tournamentId}`);
+        const response = await api.get(`/player/view-leaderboard/${tournamentId}`);
         if (response.data && response.data.data) {
           setPlayers(response.data.data);  // Set players data
         } else {
@@ -81,29 +81,29 @@ const LeaderboardPage = () => {
         </div>
       </section>
 
-       {/* 📎 Footer */}
-                  <footer className={`${darkMode ? 'bg-gray-900' : 'bg-gray-100'} py-8 mt-12 border-t border-gray-800`}>
-                    <div className="container mx-auto px-6 flex flex-col md:flex-row justify-between items-center">
-                      <div className="text-center md:text-left mb-4 md:mb-0">
-                        <h3 className={`text-2xl font-bold ${darkMode ? 'text-yellow-400' : 'text-yellow-600'}`}>Titan E-sports</h3>
-                        <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>© 2025 Titan E-sports. All rights reserved.</p>
-                      </div>
-                      <div className="flex space-x-6">
-                        <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
-                          <FaTwitter />
-                        </a>
-                        <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
-                          <FaInstagram />
-                        </a>
-                        <a href="https://facebook.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
-                          <FaFacebookF />
-                        </a>
-                        <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
-                          <FaYoutube />
-                        </a>
-                      </div>
-                    </div>
-                  </footer>
+      {/* 📎 Footer */}
+      <footer className={`${darkMode ? 'bg-gray-900' : 'bg-gray-100'} py-8 mt-12 border-t border-gray-800`}>
+        <div className="container mx-auto px-6 flex flex-col md:flex-row justify-between items-center">
+          <div className="text-center md:text-left mb-4 md:mb-0">
+            <h3 className={`text-2xl font-bold ${darkMode ? 'text-yellow-400' : 'text-yellow-600'}`}>Titan E-sports</h3>
+            <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>© 2025 Titan E-sports. All rights reserved.</p>
+          </div>
+          <div className="flex space-x-6">
+            <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
+              <FaTwitter />
+            </a>
+            <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
+              <FaInstagram />
+            </a>
+            <a href="https://facebook.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
+              <FaFacebookF />
+            </a>
+            <a href="https://youtube.com" target="_blank" rel="noopener noreferrer" className={`transition text-xl ${darkMode ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-600 hover:text-yellow-600'}`}>
+              <FaYoutube />
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 };

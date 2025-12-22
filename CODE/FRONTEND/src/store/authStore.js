@@ -136,10 +136,27 @@ const useAuthStore = create(
                 }
             },
 
-            signup: async (email, password, username) => {
+            signup: async (data) => {
                 set({ isLoading: true })
                 try {
-                    const res = await api.post('/auth/signup', { email, password, username })
+                    await api.post('/auth/register', data) // Changed endpoint to /register as per controller
+                    // Response: { message: "Verification code sent..." }
+                    // Do NOT set auth state yet.
+                    set({ isLoading: false })
+                    return { success: true }
+                } catch (error) {
+                    set({ isLoading: false })
+                    return {
+                        success: false,
+                        message: error.response?.data?.message || 'Signup failed'
+                    }
+                }
+            },
+
+            verifyEmail: async (email, otp) => {
+                set({ isLoading: true })
+                try {
+                    const res = await api.post('/auth/verify-email', { email, otp })
                     const { user, accessToken, expiresAt } = res.data.data
 
                     set({
@@ -166,7 +183,7 @@ const useAuthStore = create(
                     set({ isLoading: false })
                     return {
                         success: false,
-                        message: error.response?.data?.message || 'Signup failed'
+                        message: error.response?.data?.message || 'Verification failed'
                     }
                 }
             },

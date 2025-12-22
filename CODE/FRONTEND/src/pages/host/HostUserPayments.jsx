@@ -9,41 +9,63 @@ import {
   CreditCard,
   Calendar,
   Search,
-  Wallet
+  Wallet,
+  ArrowUpRight,
+  ArrowDownLeft
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import Layout from '../../Components/layout/Layout';
 import { GradientText, SpotlightCard } from '../../Components/effects/ReactBits';
+import useAuthStore from '../../store/authStore';
 
 const HostUserPayments = () => {
   const [transactions, setTransactions] = useState([]);
+  const [walletStats, setWalletStats] = useState({
+    balance: 0,
+    locked: 0,
+    totalEarnings: 0
+  });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const hostId = sessionStorage.getItem('hostId');
+  const { user, isAuthenticated } = useAuthStore();
 
   useEffect(() => {
-    const fetchPayments = async () => {
-      if (!hostId || hostId === 'null') {
-        toast.error("Session expired! Please login again.");
-        return;
-      }
+    if (!isAuthenticated) {
+      navigate('/auth');
+      return;
+    }
 
+    const fetchData = async () => {
       setLoading(true);
       try {
-        const response = await axios.get(`http://localhost:8080/api/host/payments/${hostId}`);
-        setTransactions(Array.isArray(response.data) ? response.data : []);
+        // Fetch Wallet Stats
+        const walletRes = await api.get('/wallet/');
+        if (walletRes.data.success) {
+          const w = walletRes.data.data;
+          setWalletStats({
+            balance: w.balance || 0,
+            locked: w.locked || 0,
+            totalEarnings: 0 // TODO: Add backend support for total earnings calc
+          });
+        }
+
+        // Fetch Transactions
+        const txRes = await api.get('/wallet/transactions?limit=20');
+        if (txRes.data.success) {
+          setTransactions(txRes.data.data.transactions || []);
+        }
       } catch (error) {
         console.error(error);
-        toast.error('Failed to fetch payment details.');
+        toast.error('Failed to fetch wallet details.');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchPayments();
-  }, [hostId, navigate]);
+    fetchData();
+  }, [isAuthenticated, navigate]);
 
   return (
     <Layout userRole="HOST">
@@ -55,19 +77,19 @@ const HostUserPayments = () => {
               Payment <GradientText>History</GradientText>
             </h1>
             <p className="text-white/40 text-lg">
-              Track all transactions and entry fees for your tournaments.
+              Track all withdrawals and tournament earnings.
             </p>
           </div>
 
-          {/* Stats Overview (Mock Data for now) */}
+          {/* Stats Overview */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
             <SpotlightCard className="bg-titan-bg-card border-white/10 p-6 flex items-center gap-4">
               <div className="p-3 bg-green-500/10 rounded-xl text-green-400">
                 <DollarSign size={32} />
               </div>
               <div>
-                <p className="text-white/40 text-sm">Total Revenue</p>
-                <h3 className="text-2xl font-bold text-white">₹{transactions.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0).toLocaleString()}</h3>
+                <p className="text-white/40 text-sm">Available Balance</p>
+                <h3 className="text-2xl font-bold text-white">₹{(walletStats.balance / 100).toLocaleString()}</h3> {/* Assuming paise */}
               </div>
             </SpotlightCard>
             <SpotlightCard className="bg-titan-bg-card border-white/10 p-6 flex items-center gap-4">
@@ -84,8 +106,8 @@ const HostUserPayments = () => {
                 <Wallet size={32} />
               </div>
               <div>
-                <p className="text-white/40 text-sm">Pending Payouts</p>
-                <h3 className="text-2xl font-bold text-white">₹0</h3>
+                <p className="text-white/40 text-sm">Locked (Pending)</p>
+                <h3 className="text-2xl font-bold text-white">₹{(walletStats.locked / 100).toLocaleString()}</h3>
               </div>
             </SpotlightCard>
           </div>
@@ -101,7 +123,7 @@ const HostUserPayments = () => {
               <div className="text-center py-20 border border-dashed border-white/10 rounded-3xl">
                 <CreditCard className="mx-auto text-white/20 mb-4" size={48} />
                 <h3 className="text-xl font-bold text-white mb-2">No Transactions Found</h3>
-                <p className="text-white/40">No payments have been made for your tournaments yet.</p>
+                <p className="text-white/40">No payments have been made yet.</p>
               </div>
             ) : (
               <div className="bg-titan-bg-card/50 border border-white/10 rounded-2xl overflow-hidden">
@@ -109,29 +131,44 @@ const HostUserPayments = () => {
                   <table className="w-full text-left">
                     <thead>
                       <tr className="bg-white/5 border-b border-white/10">
-                        <th className="p-6 text-sm font-bold text-white/60">Transaction ID</th>
-                        <th className="p-6 text-sm font-bold text-white/60">Tournament ID</th>
-                        <th className="p-6 text-sm font-bold text-white/60">Player</th>
+                        <th className="p-6 text-sm font-bold text-white/60">Date</th>
+                        <th className="p-6 text-sm font-bold text-white/60">Type</th>
+                        <th className="p-6 text-sm font-bold text-white/60">Source</th>
                         <th className="p-6 text-sm font-bold text-white/60">Amount</th>
-                        <th className="p-6 text-sm font-bold text-white/60">Method</th>
                         <th className="p-6 text-sm font-bold text-white/60">Status</th>
+                        <th className="p-6 text-sm font-bold text-white/60">Details</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {transactions.map((tx) => (
-                        <tr key={tx.transactionId} className="hover:bg-white/5 transition-colors">
-                          <td className="p-6 text-sm font-mono text-white/40">{tx.transactionId}</td>
-                          <td className="p-6 text-sm text-white font-medium">{tx.tournamentId}</td>
-                          <td className="p-6 text-sm text-white/60">{tx.playerId}</td>
-                          <td className="p-6 text-sm font-bold text-green-400">₹{tx.amount}</td>
-                          <td className="p-6 text-sm text-white/60 capitalize">{tx.paymentMethod}</td>
+                        <tr key={tx.id} className="hover:bg-white/5 transition-colors">
+                          <td className="p-6 text-sm text-white/60">
+                            {new Date(tx.createdAt).toLocaleDateString()}
+                          </td>
                           <td className="p-6">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${tx.status
-                                ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                            <span className={`inline-flex items-center gap-1 text-sm font-medium ${tx.type === 'CREDIT' ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                              {tx.type === 'CREDIT' ? <ArrowDownLeft size={16} /> : <ArrowUpRight size={16} />}
+                              {tx.type}
+                            </span>
+                          </td>
+                          <td className="p-6 text-sm text-white/80 font-mono">{tx.source}</td>
+                          <td className={`p-6 text-sm font-bold ${tx.type === 'CREDIT' ? 'text-green-400' : 'text-white'
+                            }`}>
+                            ₹{(Math.abs(tx.amount) / 100).toFixed(2)}
+                          </td>
+                          <td className="p-6">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${tx.status === 'COMPLETED'
+                              ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                              : tx.status === 'PENDING'
+                                ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
                                 : 'bg-red-500/10 text-red-400 border border-red-500/20'
                               }`}>
-                              {tx.status ? 'Completed' : 'Failed'}
+                              {tx.status}
                             </span>
+                          </td>
+                          <td className="p-6 text-sm text-white/40 max-w-xs truncate">
+                            {tx.message}
                           </td>
                         </tr>
                       ))}

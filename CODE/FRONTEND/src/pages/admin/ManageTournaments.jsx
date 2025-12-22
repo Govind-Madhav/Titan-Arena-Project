@@ -17,7 +17,7 @@ import {
     XCircle
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import axios from 'axios';
+import api from '../../lib/api';
 import Layout from '../../Components/layout/Layout';
 import { GradientText, SpotlightCard } from '../../Components/effects/ReactBits';
 
@@ -33,7 +33,7 @@ const ManageTournaments = () => {
     const fetchTournaments = async () => {
         try {
             setLoading(true);
-            const res = await axios.get('http://localhost:8080/api/admin/get-tournaments');
+            const res = await api.get('/admin/tournaments');
             setTournaments(res.data.data || []);
         } catch (error) {
             console.error('Error fetching tournaments:', error);
@@ -46,7 +46,7 @@ const ManageTournaments = () => {
     const toggleStatus = async (id, currentStatus) => {
         try {
             setActionLoadingId(id);
-            await axios.put(`http://localhost:8080/api/admin/toggle-tournament-status/${id}?isActive=${!currentStatus}`);
+            await api.put(`/admin/toggle-tournament-status/${id}?isActive=${!currentStatus}`);
             toast.success(`Tournament ${!currentStatus ? 'activated' : 'deactivated'}`);
             fetchTournaments();
         } catch (error) {
@@ -61,7 +61,7 @@ const ManageTournaments = () => {
 
         try {
             setActionLoadingId(id);
-            await axios.delete(`http://localhost:8080/api/admin/delete-tournament/${id}`);
+            await api.delete(`/admin/delete-tournament/${id}`);
             toast.success('Tournament deleted');
             fetchTournaments();
         } catch (error) {
@@ -121,8 +121,8 @@ const ManageTournaments = () => {
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
                                         <div className="absolute top-3 right-3">
                                             <span className={`px-3 py-1 rounded-full text-xs font-bold border ${tournament.active
-                                                    ? 'bg-green-500/20 text-green-400 border-green-500/30'
-                                                    : 'bg-red-500/20 text-red-400 border-red-500/30'
+                                                ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                                                : 'bg-red-500/20 text-red-400 border-red-500/30'
                                                 }`}>
                                                 {tournament.active ? 'Active' : 'Offline'}
                                             </span>
@@ -155,8 +155,8 @@ const ManageTournaments = () => {
                                             onClick={() => toggleStatus(tournament.id, tournament.active)}
                                             disabled={actionLoadingId === tournament.id}
                                             className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${tournament.active
-                                                    ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
-                                                    : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
+                                                ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                                                : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
                                                 }`}
                                         >
                                             <Power size={16} />

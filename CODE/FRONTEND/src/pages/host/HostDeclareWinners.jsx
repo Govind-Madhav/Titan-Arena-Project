@@ -12,7 +12,7 @@ import {
   Medal,
   AlertCircle
 } from 'lucide-react';
-import axios from 'axios';
+import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import Layout from '../../Components/layout/Layout';
 import { GradientText, SpotlightCard } from '../../Components/effects/ReactBits';
@@ -69,8 +69,8 @@ const HostDeclareWinners = () => {
 
     setLoading(true);
     try {
-      const response = await axios.post(
-        `http://localhost:8080/api/host/announce-winners/${tournamentId}`,
+      const response = await api.post(
+        `/host/announce-winners/${tournamentId}`,
         winners
       );
 

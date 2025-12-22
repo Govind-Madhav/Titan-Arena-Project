@@ -13,7 +13,7 @@ import {
   Shield
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import Layout from '../../Components/layout/Layout';
 import { GradientText, SpotlightCard } from '../../Components/effects/ReactBits';
@@ -35,7 +35,7 @@ const HostManageUser = () => {
 
     try {
       setLoading(true);
-      const response = await axios.get(`http://localhost:8080/api/host/players/${inputTournamentId}`);
+      const response = await api.get(`/host/players/${inputTournamentId}`);
       if (response.data.status === 'success') {
         const playersWithStatus = response.data.data.map(player => ({
           ...player,
@@ -57,7 +57,7 @@ const HostManageUser = () => {
 
   const handleApprove = async (playerId) => {
     try {
-      await axios.put(`http://localhost:8080/api/host/approve-reject/${playerId}/${tournamentId}?isApproved=true`);
+      await api.put(`/host/approve-reject/${playerId}/${tournamentId}?isApproved=true`);
       setUsers(users.map(user => user.id === playerId ? { ...user, status: 'Approved' } : user));
       toast.success('Player approved');
     } catch (error) {
@@ -68,7 +68,7 @@ const HostManageUser = () => {
 
   const handleReject = async (playerId) => {
     try {
-      await axios.put(`http://localhost:8080/api/host/approve-reject/${playerId}/${tournamentId}?isApproved=false`);
+      await api.put(`/host/approve-reject/${playerId}/${tournamentId}?isApproved=false`);
       setUsers(users.map(user => user.id === playerId ? { ...user, status: 'Rejected' } : user));
       toast.success('Player rejected');
     } catch (error) {
@@ -154,8 +154,8 @@ const HostManageUser = () => {
                     <h4 className="font-heading font-bold text-lg text-white truncate">{user.fullName || 'Unknown Player'}</h4>
                     <p className="text-sm text-white/40 truncate">{user.email}</p>
                     <div className={`mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${user.status === 'Approved' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                        user.status === 'Rejected' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                          'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                      user.status === 'Rejected' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                        'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
                       }`}>
                       {user.status === 'Approved' && <CheckCircle size={12} />}
                       {user.status === 'Rejected' && <XCircle size={12} />}

@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Search, Filter, Shield, User } from 'lucide-react'
 import { Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import Layout from '../../Components/layout/Layout';
 import { GradientText } from '../../Components/effects/ReactBits';
@@ -32,14 +32,14 @@ const ManageUsersPage = () => {
 
   const fetchPendingUsers = async () => {
     try {
-      const res = await axios.get('http://localhost:8080/api/admin/pending-players');
+      const res = await api.get('/admin/pending-players');
       setPendingUsers(res.data.data || []);
     } catch (e) { console.error(e) }
   };
 
   const fetchApprovedUsers = async () => {
     try {
-      const res = await axios.get('http://localhost:8080/api/admin/verified-players');
+      const res = await api.get('/admin/verified-players');
       setApprovedUsers(res.data.data || []);
     } catch (e) { console.error(e) }
   };
@@ -47,7 +47,7 @@ const ManageUsersPage = () => {
   const handleApprove = async (id) => {
     try {
       setButtonLoadingId(id);
-      await axios.put(`http://localhost:8080/api/admin/approve-player/${id}`);
+      await api.put(`/admin/approve-player/${id}`);
       toast.success('Player approved successfully!');
       refreshData();
     } catch (error) {
@@ -60,7 +60,7 @@ const ManageUsersPage = () => {
   const handleReject = async (id) => {
     try {
       setButtonLoadingId(id);
-      await axios.delete(`http://localhost:8080/api/admin/delete-player/${id}`);
+      await api.delete(`/admin/delete-player/${id}`);
       toast.success('Player rejected and deleted!');
       refreshData();
     } catch (error) {

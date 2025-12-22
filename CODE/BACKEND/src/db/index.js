@@ -9,7 +9,8 @@ const schema = require('./schema');
 
 // Create MySQL connection pool
 const pool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
+    uri: process.env.DATABASE_URL, // Use connection string from env
+    host: process.env.DB_HOST || 'localhost', // Fallback if no URL
     port: parseInt(process.env.DB_PORT || '3306'),
     user: process.env.DB_USER || 'root',
     password: process.env.DB_PASSWORD || 'root1',

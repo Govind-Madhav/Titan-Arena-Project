@@ -21,6 +21,7 @@ router.put('/users/:id/role', adminController.updateUserRole);
 // Tournament management
 router.get('/tournaments', adminController.getAllTournaments);
 router.delete('/tournaments/:id', adminController.deleteTournament);
+router.put('/toggle-tournament-status/:id', adminController.toggleTournamentStatus);
 
 // Statistics/Dashboard
 router.get('/stats', adminController.getStats);

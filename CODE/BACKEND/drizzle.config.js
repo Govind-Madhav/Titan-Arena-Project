@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { defineConfig } = require('drizzle-kit');
 
 module.exports = defineConfig({
@@ -5,6 +6,7 @@ module.exports = defineConfig({
     out: './drizzle',
     dialect: 'mysql',
     dbCredentials: {
+        url: process.env.DATABASE_URL,
         host: process.env.DB_HOST || 'localhost',
         port: parseInt(process.env.DB_PORT || '3306'),
         user: process.env.DB_USER || 'root',

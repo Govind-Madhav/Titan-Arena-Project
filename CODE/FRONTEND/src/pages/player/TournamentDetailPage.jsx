@@ -69,7 +69,7 @@ export default function TournamentDetailPage() {
 
     const handleRegister = async () => {
         if (!isAuthenticated) {
-            navigate('/auth', { state: { from: location } })
+            navigate('/auth', { state: { from: location.pathname } })
             return
         }
 
