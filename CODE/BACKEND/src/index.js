@@ -32,11 +32,34 @@ app.set('trust proxy', 1);
 app.use(security.helmet);
 app.use(security.globalLimiter);
 
-// ✅ FIX: Environment-based CORS origins (never hardcode in production)
-const corsOrigins = process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'];
+// ✅ FIX: Robust CORS for Vercel (allows all subdomains/previews)
 app.use(cors({
-  origin: corsOrigins,
-  credentials: true // Important for cookies
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // Explicitly allow Localhost and Production Frontend
+    const allowedDefaults = [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:3000',
+      'https://titan-arena-ui.vercel.app'
+    ];
+
+    // Check if origin is in defaults OR ends with .vercel.app
+    if (allowedDefaults.includes(origin) || origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+
+    // Optional: Allow specific custom domains if needed
+    if (process.env.CORS_ORIGINS && process.env.CORS_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.warn('Blocked CORS for:', origin);
+    return callback(new Error('Not allowed by CORS'), false);
+  },
+  credentials: true
 }));
 
 app.use(require('cookie-parser')());

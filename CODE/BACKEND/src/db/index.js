@@ -8,8 +8,11 @@ const mysql = require('mysql2/promise');
 const schema = require('./schema');
 
 // Create MySQL connection pool (URI only - production-safe)
+// CRITICAL FIX: Prevent crash if env var is missing (common in Vercel first deploy)
+const dbUrl = process.env.DATABASE_URL || 'mysql://placeholder:placeholder@localhost:3306/placeholder';
+
 const pool = mysql.createPool({
-    uri: process.env.DATABASE_URL,
+    uri: dbUrl,
     waitForConnections: true,
     connectionLimit: 10,
 });
