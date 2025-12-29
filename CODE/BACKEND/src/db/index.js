@@ -7,21 +7,19 @@ const { drizzle } = require('drizzle-orm/mysql2');
 const mysql = require('mysql2/promise');
 const schema = require('./schema');
 
-// Create MySQL connection pool
+// Create MySQL connection pool (URI only - production-safe)
 const pool = mysql.createPool({
-    uri: process.env.DATABASE_URL, // Use connection string from env
-    host: process.env.DB_HOST || 'localhost', // Fallback if no URL
-    port: parseInt(process.env.DB_PORT || '3306'),
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || 'root1',
-    database: process.env.DB_NAME || 'esports_tournament',
+    uri: process.env.DATABASE_URL,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
 });
 
-// Create Drizzle instance
-const db = drizzle(pool, { schema, mode: 'default' });
+// Create Drizzle instance (STRICT MySQL MODE - prevents DEFAULT keyword injection)
+const db = drizzle(pool, {
+    schema,
+    mode: 'mysql', // CRITICAL: Prevents Postgres-style DEFAULT injection
+    logger: true,  // Enable for debugging, disable in production if noisy
+});
 
 module.exports = {
     db,

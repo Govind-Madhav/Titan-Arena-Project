@@ -82,6 +82,8 @@ app.use('/api/payment', require('./modules/payment/payment.routes'));
 app.use('/api/host', require('./modules/host/host.routes')); // Host Module
 app.use('/api/social', require('./modules/social/social.routes')); // New Social Module
 app.use('/api/stats', require('./modules/stats/stats.routes')); // Stats & Leaderboard
+app.use('/api/notifications', require('./modules/notification/notification.routes')); // Notifications
+app.use('/api/users', require('./modules/user/user.routes')); // User Profile Routes
 
 // Error handling middleware
 app.use((err, req, res, next) => {

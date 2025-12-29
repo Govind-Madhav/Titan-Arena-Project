@@ -1,0 +1,12 @@
+{
+    "email": "test@example.com",
+    "password": "Test1234!",
+    "username": "testuser123",
+    "legalName": "Test User",
+    "dateOfBirth": "2000-01-01",
+    "phone": "9876543210",
+    "country": "IN",
+    "state": "Maharashtra",
+    "city": "Mumbai",
+    "termsAccepted": true
+}

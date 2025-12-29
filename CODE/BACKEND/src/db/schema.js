@@ -63,7 +63,7 @@ const posts = mysqlTable('posts', {
 });
 
 // Users table
-const users = mysqlTable('user', {
+const users = mysqlTable('users', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     username: varchar('username', { length: 191 }).notNull().unique(),
     email: varchar('email', { length: 191 }).notNull().unique(),
@@ -132,10 +132,10 @@ const refreshTokens = mysqlTable('refreshToken', {
 const wallets = mysqlTable('wallet', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().unique().references(() => users.id),
-    balance: bigint('balance', { mode: 'number' }).notNull().default(0), // Updated to bigint
-    locked: bigint('locked', { mode: 'number' }).notNull().default(0), // Updated to bigint
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    balance: bigint('balance', { mode: 'number' }).notNull(),
+    locked: bigint('locked', { mode: 'number' }).notNull(),
+    createdAt: datetime('createdAt').notNull(),
+    updatedAt: datetime('updatedAt').notNull(),
 });
 
 // Transactions table

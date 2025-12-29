@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
+    "dev": "npx kill-port 5001 && nodemon src/index.js",
     "worker": "node workers/firebase-sync.worker.js",
     "worker:dev": "nodemon workers/firebase-sync.worker.js",
     "prisma:generate": "prisma generate",

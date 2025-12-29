@@ -61,7 +61,7 @@ exports.signup = async (req, res) => {
     try {
         const data = signupSchema.parse(req.body);
 
-        // Check existing user
+        // Check existing user in database
         const existingUsers = await db.select()
             .from(users)
             .where(or(
@@ -76,83 +76,41 @@ exports.signup = async (req, res) => {
             });
         }
 
-        let userId;
+        // Check if there's already a pending registration for this email
+        const { getRedisClient } = require('../../config/redis.config');
+        const redis = getRedisClient();
+        const pendingKey = `pending_registration:${data.email}`;
+        const existing = await redis.get(pendingKey);
 
-        // 2. Transactional Creation
-        try {
-            await db.transaction(async (tx) => {
-                // Generate UID (Atomic)
-                const { uid: platformUid, regionCode } = await uidService.generatePlatformUid(data.country, tx);
-
-                // Create User
-                const [result] = await tx.insert(users).values({
-                    id: crypto.randomUUID(), // Generate UUID for user ID
-                    platformUid: platformUid,
-                    username: data.username, // Mandatory now
-                    email: data.email,
-                    passwordHash: await bcrypt.hash(data.password, 12), // Use 12 rounds for bcrypt
-                    legalName: data.legalName,
-                    dateOfBirth: new Date(data.dateOfBirth),
-                    phone: data.phone,
-                    countryCode: uidService.getCallingCode(data.country).toString(), // derived
-                    state: data.state,
-                    city: data.city,
-                    regionCode: regionCode,
-                    role: data.role || 'PLAYER',
-                    hostStatus: 'NOT_VERIFIED',
-                    emailVerified: false,
-                    isBanned: false,
-                    registrationCompleted: false,
-                    termsAccepted: data.termsAccepted,
-                    passwordUpdatedAt: new Date(), // Security
-                    lastLoginAt: new Date(),    // Auto-login context
-                    createdAt: new Date(),
-                    updatedAt: new Date()
-                });
-
-                // Drizzle-orm insert returns an array of results, or a single result depending on driver.
-                // For SQLite, it might be { changes: 1, lastInsertRowid: 1 }. For Postgres, it returns the inserted rows.
-                // We need the actual ID. If `id` is explicitly set (as with `crypto.randomUUID()`), we can use that.
-                // If the DB generates it, we'd need to fetch it or rely on driver-specific return values.
-                // Assuming `id: crypto.randomUUID()` makes `userId` directly available.
-                userId = result.id; // If `id` is explicitly set in values, it's available.
-
-                // Create Wallet
-                await tx.insert(wallets).values({
-                    userId: userId,
-                    balance: 0,
-                    locked: 0
-                });
-
-                // Create Profile
-                await tx.insert(playerProfiles).values({
-                    userId: userId,
-                    ign: data.username, // Sync IGN with Username
-                    realName: data.legalName,
-                    dateOfBirth: new Date(data.dateOfBirth),
-                    country: data.country,
-                    state: data.state,
-                    city: data.city,
-                    completionPercentage: 10
-                });
+        if (existing) {
+            return res.status(400).json({
+                success: false,
+                message: 'A verification email has already been sent. Please check your inbox or wait 24 hours to register again.'
             });
-        } catch (error) {
-            // Handle Race Condition (Duplicate Entry caught by DB constraint)
-            if (error.code === 'ER_DUP_ENTRY' || error.message?.includes('duplicate key')) { // Generic check for duplicate key errors
-                if (error.sqlMessage?.includes('username') || error.message?.includes('username')) {
-                    const suggestions = generateSuggestions(data.username);
-                    return res.status(409).json({
-                        success: false,
-                        message: 'Gamertag already taken',
-                        suggestions
-                    });
-                }
-                if (error.sqlMessage?.includes('email') || error.message?.includes('email')) {
-                    return res.status(409).json({ success: false, message: 'Email already registered' });
-                }
-            }
-            throw error;
         }
+
+        // Hash password before storing
+        const passwordHash = await bcrypt.hash(data.password, 12);
+
+        // Store pending registration in Redis (24 hour TTL)
+        const pendingData = {
+            email: data.email,
+            passwordHash: passwordHash,
+            username: data.username,
+            legalName: data.legalName,
+            dateOfBirth: data.dateOfBirth,
+            phone: data.phone,
+            country: data.country,
+            state: data.state,
+            city: data.city,
+            termsAccepted: data.termsAccepted,
+            role: data.role || 'PLAYER',
+            timestamp: new Date().toISOString()
+        };
+
+        await redis.set(pendingKey, JSON.stringify(pendingData), {
+            EX: 86400 // 24 hours
+        });
 
         // Generate & Send OTP
         try {
@@ -160,12 +118,17 @@ exports.signup = async (req, res) => {
             await emailService.sendVerificationEmail(data.email, otp, data.username);
         } catch (emailError) {
             console.error('Failed to send verification email:', emailError);
-            // User created, allow them to resend OTP later.
+            // Clean up pending registration if email fails
+            await redis.del(pendingKey);
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to send verification email. Please try again.'
+            });
         }
 
         res.status(201).json({
             success: true,
-            message: 'Verification code sent to email. Please verify to complete registration.',
+            message: 'Verification code sent to email. Please verify within 24 hours to complete registration.',
         });
 
     } catch (error) {
@@ -521,89 +484,123 @@ exports.verifyEmail = async (req, res) => {
             });
         }
 
-        // Verify OTP via Redis
-        // Throws error if invalid or max attempts reached
+        // Verify OTP via Redis (throws error if invalid)
         await otpService.verifyOtp(email, otp);
 
-        const result = await db.select()
+        // Get pending registration from Redis
+        const { getRedisClient } = require('../../config/redis.config');
+        const redis = getRedisClient();
+        const pendingKey = `pending_registration:${email}`;
+        const pendingDataStr = await redis.get(pendingKey);
+
+        if (!pendingDataStr) {
+            return res.status(400).json({
+                success: false,
+                message: 'Registration expired or not found. Please sign up again.'
+            });
+        }
+
+        const data = JSON.parse(pendingDataStr);
+
+        // Check if user was already created (edge case: duplicate verification)
+        const existingUser = await db.select()
             .from(users)
             .where(eq(users.email, email))
             .limit(1);
 
-        const user = result[0];
-
-        if (!user) {
-            return res.status(400).json({
-                success: false,
-                message: 'User not found'
+        if (existingUser[0]) {
+            // User already exists, just clean up Redis and return success
+            await redis.del(pendingKey);
+            return res.status(200).json({
+                success: true,
+                message: 'Email already verified. Please login to continue.'
             });
         }
 
-        if (user.emailVerified) {
-            // Already verified, just log them in? 
-            // Or simple message. Let's issue token if they verify again? 
-            // Usually if already verified, we shouldn't ask for OTP again unless it's a login flow.
-            // But strict flow says: Verify -> Token.
-            // If they are verified, maybe they are logging in?
-            // Let's allow token issuance if they passed OTP check successfully.
+        // Create user in database with transaction
+        let userId;
+        try {
+            await db.transaction(async (tx) => {
+                // Generate UID (Atomic)
+                const { uid: platformUid, regionCode } = await uidService.generatePlatformUid(data.country, tx);
+
+                // Generate user ID
+                userId = crypto.randomUUID();
+
+                // Create User
+                await tx.insert(users).values({
+                    id: userId,
+                    platformUid: platformUid,
+                    username: data.username,
+                    email: data.email,
+                    passwordHash: data.passwordHash, // Already hashed
+                    legalName: data.legalName,
+                    dateOfBirth: new Date(data.dateOfBirth),
+                    phone: data.phone,
+                    countryCode: uidService.getCallingCode(data.country).toString(),
+                    state: data.state,
+                    city: data.city,
+                    regionCode: regionCode,
+                    role: data.role || 'PLAYER',
+                    hostStatus: 'NOT_VERIFIED',
+                    emailVerified: true, // Verified immediately
+                    isBanned: false,
+                    registrationCompleted: true,
+                    termsAccepted: data.termsAccepted,
+                    passwordUpdatedAt: new Date(),
+                    lastLoginAt: new Date(),
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                });
+
+                // Create Wallet
+                const now = new Date();
+                await tx.insert(wallets).values({
+                    id: crypto.randomUUID(),
+                    userId: userId,
+                    balance: 0,
+                    locked: 0,
+                    createdAt: now,
+                    updatedAt: now
+                });
+
+                // Create Profile
+                await tx.insert(playerProfiles).values({
+                    userId: userId,
+                    ign: data.username,
+                    realName: data.legalName,
+                    dateOfBirth: new Date(data.dateOfBirth),
+                    country: data.country,
+                    state: data.state,
+                    city: data.city,
+                    completionPercentage: 10
+                });
+            });
+        } catch (error) {
+            // Handle duplicate entry errors
+            if (error.code === 'ER_DUP_ENTRY' || error.message?.includes('duplicate key')) {
+                if (error.sqlMessage?.includes('username') || error.message?.includes('username')) {
+                    return res.status(409).json({
+                        success: false,
+                        message: 'Gamertag already taken. Please sign up again with a different username.'
+                    });
+                }
+                if (error.sqlMessage?.includes('email') || error.message?.includes('email')) {
+                    return res.status(409).json({
+                        success: false,
+                        message: 'Email already registered'
+                    });
+                }
+            }
+            throw error;
         }
 
-        // Update user as verified
-        if (!user.emailVerified) {
-            await db.update(users)
-                .set({
-                    emailVerified: true,
-                    registrationCompleted: true
-                    // Legacy fields removed from schema
-                })
-                .where(eq(users.id, user.id));
-        }
-
-        // Generate tokens (Login success)
-        const accessToken = generateAccessToken(user.id);
-        const refreshToken = generateRefreshToken(user.id);
-
-        // Store refresh token
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 7);
-
-        await db.insert(refreshTokens).values({
-            token: refreshToken,
-            userId: user.id,
-            expiresAt
-        });
-
-        // Set refresh token as httpOnly cookie
-        res.cookie('refreshToken', refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-            path: '/'
-        });
-
-        // Calculate token expiry times
-        const accessTokenExpiry = new Date();
-        accessTokenExpiry.setMinutes(accessTokenExpiry.getMinutes() + 15);
-
-        // Fetch updated user stats for response if needed, or just basic info
-        const updatedUser = {
-            id: user.id,
-            email: user.email,
-            username: user.username,
-            role: user.role,
-            emailVerified: true,
-            hostStatus: user.hostStatus
-        };
+        // Delete pending registration from Redis
+        await redis.del(pendingKey);
 
         res.json({
             success: true,
-            message: 'Email verified successfully! Login complete.',
-            data: {
-                user: updatedUser,
-                accessToken,
-                expiresAt: accessTokenExpiry.toISOString()
-            }
+            message: 'Email verified successfully! Please login to continue.'
         });
     } catch (error) {
         console.error('Verify email error:', error.message);
@@ -626,34 +623,41 @@ exports.resendVerification = async (req, res) => {
             });
         }
 
-        const result = await db.select()
-            .from(users)
-            .where(eq(users.email, email))
-            .limit(1);
+        // Check if there's a pending registration in Redis
+        const { getRedisClient } = require('../../config/redis.config');
+        const redis = getRedisClient();
+        const pendingKey = `pending_registration:${email}`;
+        const pendingDataStr = await redis.get(pendingKey);
 
-        const user = result[0];
+        if (!pendingDataStr) {
+            // Check if user already exists and is verified
+            const result = await db.select()
+                .from(users)
+                .where(eq(users.email, email))
+                .limit(1);
 
-        if (!user) {
+            if (result[0]?.emailVerified) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Email already verified. Please login.'
+                });
+            }
+
             return res.status(404).json({
                 success: false,
-                message: 'User not found'
+                message: 'No pending registration found. Please sign up first.'
             });
         }
 
-        if (user.emailVerified) {
-            return res.status(400).json({
-                success: false,
-                message: 'Email already verified'
-            });
-        }
+        const data = JSON.parse(pendingDataStr);
 
-        // Generate & Send OTP
-        const otp = await otpService.generateOtp(user.email);
-        await emailService.sendVerificationEmail(user.email, otp, user.username);
+        // Generate & Send new OTP
+        const otp = await otpService.generateOtp(email);
+        await emailService.sendVerificationEmail(email, otp, data.username);
 
         res.json({
             success: true,
-            message: 'Verification email sent successfully'
+            message: 'Verification code sent successfully'
         });
     } catch (error) {
         console.error('Resend verification error:', error);

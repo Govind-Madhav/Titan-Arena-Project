@@ -47,6 +47,11 @@ exports.getLeaderboard = async (req, res) => {
         })
             .from(users)
             .leftJoin(playerProfiles, eq(users.id, playerProfiles.userId))
+            .where(
+                req.query.country
+                    ? eq(playerProfiles.country, req.query.country)
+                    : undefined
+            )
             .orderBy(desc(users.createdAt)) // Placeholder for Points
             .limit(50);
 

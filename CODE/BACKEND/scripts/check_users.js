@@ -1,21 +1,13 @@
-
+require('dotenv').config();
 const { db } = require('../src/db');
-const { users } = require('../src/db/schema');
+const { sql } = require('drizzle-orm');
 
-const checkUsers = async () => {
+(async () => {
     try {
-        console.log('🔍 Checking registered users...');
-        const allUsers = await db.select().from(users);
-        if (allUsers.length === 0) {
-            console.log('❌ No users found.');
-        } else {
-            console.log(JSON.stringify(allUsers, null, 2));
-        }
-        process.exit(0);
-    } catch (error) {
-        console.error('Check failed:', error);
-        process.exit(1);
+        const users = await db.execute(sql`SELECT id, username, email, emailVerified FROM users`);
+        console.log('Current users:', JSON.stringify(users[0], null, 2));
+    } catch (e) {
+        console.error('Error:', e.message);
     }
-};
-
-checkUsers();
+    process.exit(0);
+})();

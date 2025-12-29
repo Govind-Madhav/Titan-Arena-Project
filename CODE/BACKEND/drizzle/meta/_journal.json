@@ -8,6 +8,13 @@
       "when": 1766854533219,
       "tag": "0000_wooden_serpent_society",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1767020094252,
+      "tag": "0001_secret_wraith",
+      "breakpoints": true
     }
   ]
 }
