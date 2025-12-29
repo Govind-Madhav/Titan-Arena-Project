@@ -31,7 +31,7 @@ app.use(security.helmet);
 app.use(security.globalLimiter);
 
 // ✅ FIX: Environment-based CORS origins (never hardcode in production)
-const corsOrigins = process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:3000'];
+const corsOrigins = process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'];
 app.use(cors({
   origin: corsOrigins,
   credentials: true // Important for cookies
@@ -81,6 +81,7 @@ app.use('/api/wallet', require('./modules/wallet/wallet.routes')); // Wallet Rou
 app.use('/api/payment', require('./modules/payment/payment.routes'));
 app.use('/api/host', require('./modules/host/host.routes')); // Host Module
 app.use('/api/social', require('./modules/social/social.routes')); // New Social Module
+app.use('/api/stats', require('./modules/stats/stats.routes')); // Stats & Leaderboard
 
 // Error handling middleware
 app.use((err, req, res, next) => {

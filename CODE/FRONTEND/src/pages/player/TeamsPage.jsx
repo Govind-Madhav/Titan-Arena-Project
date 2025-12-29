@@ -52,32 +52,7 @@ export default function TeamsPage() {
         }
     }
 
-    // Mock data
-    const mockTeams = [
-        {
-            id: '1',
-            name: 'Phoenix Squad',
-            captain: { id: '1', username: 'ProGamer99' },
-            members: [
-                { id: '1', user: { id: '1', username: 'ProGamer99' }, role: 'CAPTAIN' },
-                { id: '2', user: { id: '2', username: 'SniperKing' }, role: 'MEMBER' },
-                { id: '3', user: { id: '3', username: 'RushMaster' }, role: 'MEMBER' },
-            ],
-            _count: { members: 3 }
-        },
-        {
-            id: '2',
-            name: 'Elite Warriors',
-            captain: { id: '4', username: 'TeamLead' },
-            members: [
-                { id: '4', user: { id: '4', username: 'TeamLead' }, role: 'CAPTAIN' },
-                { id: '5', user: { id: '5', username: 'Striker01' }, role: 'MEMBER' },
-            ],
-            _count: { members: 2 }
-        },
-    ]
-
-    const displayTeams = teams.length > 0 ? teams : mockTeams
+    const displayTeams = teams;
 
     return (
         <div className="min-h-screen bg-titan-bg py-8 px-4">

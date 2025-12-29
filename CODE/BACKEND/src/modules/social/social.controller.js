@@ -4,8 +4,8 @@
  */
 
 const { db } = require('../../db');
-const { posts, users, playerProfiles } = require('../../db/schema');
-const { eq, desc, and, isNull } = require('drizzle-orm');
+const { posts, users, playerProfiles, hostProfiles } = require('../../db/schema');
+const { eq, desc, and, isNull, sql } = require('drizzle-orm');
 
 // 1. Create Post
 const createPost = async (req, res) => {
@@ -17,11 +17,24 @@ const createPost = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Content is required' });
         }
 
+        // Strict Check: TOURNAMENT_UPDATE only for Hosts
+        if (type === 'TOURNAMENT_UPDATE') {
+            const hostProfile = await db.select()
+                .from(hostProfiles)
+                .where(eq(hostProfiles.userId, userId))
+                .limit(1);
+
+            if (!hostProfile[0] || hostProfile[0].status !== 'ACTIVE') {
+                return res.status(403).json({ success: false, message: 'Only active Hosts can post Tournament Updates.' });
+            }
+        }
+
         await db.insert(posts).values({
             userId,
             content,
             mediaUrl,
-            type
+            type,
+            // likesCount defaults to 0
         });
 
         res.status(201).json({ success: true, message: 'Post created successfully' });
@@ -42,16 +55,19 @@ const getFeed = async (req, res) => {
             likesCount: posts.likesCount,
             createdAt: posts.createdAt,
             // User Info
-            username: users.username,
+            userId: users.id, // Explicitly select for frontend key
+            username: sql`COALESCE(${playerProfiles.ign}, ${users.username})`, // Prefer IGN for display
             avatarUrl: playerProfiles.avatarUrl,
             role: users.role,
-            isHost: users.hostStatus === 'VERIFIED' ? true : false,
+            isHost: sql`CASE WHEN ${hostProfiles.status} = 'ACTIVE' THEN TRUE ELSE FALSE END`, // Proper Derived Flag
+            hostCode: hostProfiles.hostCode,
             // Check if post is deleted
-            isDeleted: posts.isDeleted // though we filter below
+            isDeleted: posts.isDeleted
         })
             .from(posts)
             .innerJoin(users, eq(posts.userId, users.id))
             .leftJoin(playerProfiles, eq(users.id, playerProfiles.userId))
+            .leftJoin(hostProfiles, eq(users.id, hostProfiles.userId)) // New Join
             .where(eq(posts.isDeleted, false))
             .orderBy(desc(posts.createdAt))
             .limit(50); // Hard limit for MVP

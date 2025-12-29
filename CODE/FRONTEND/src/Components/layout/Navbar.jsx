@@ -30,12 +30,25 @@ const NotificationDropdown = () => {
 
     useEffect(() => {
         const fetchNotifications = async () => {
-            if (isOpen) {
-                const res = await getNotifications();
-                if (res.success) setNotifications(res.data);
-            }
+            const res = await getNotifications();
+            if (res.success) setNotifications(res.data);
         }
+
+        // Initial fetch
         fetchNotifications();
+
+        // Poll every 30s
+        const interval = setInterval(fetchNotifications, 30000);
+        return () => clearInterval(interval);
+    }, [getNotifications]);
+
+    // Refetch when opening to ensure read status is accurate
+    useEffect(() => {
+        if (isOpen) {
+            getNotifications().then(res => {
+                if (res.success) setNotifications(res.data);
+            });
+        }
     }, [isOpen, getNotifications]);
 
     // Close on click outside

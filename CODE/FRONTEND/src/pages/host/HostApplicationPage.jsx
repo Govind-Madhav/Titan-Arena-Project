@@ -3,18 +3,27 @@
  * This code is proprietary and confidential.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../../lib/api'; // Assuming this is your axios instance
-import toast from 'react-hot-toast';
+import api from '../../lib/api';
+import toast from 'react-hot-toast'; // Kept toast
 import { Shield, FileText, Link, Send } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 const HostApplicationPage = () => {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const [formData, setFormData] = useState({
         notes: '',
         documentsUrl: ''
     });
+
+    useEffect(() => {
+        if (user?.isHost || user?.hostStatus === 'VERIFIED') {
+            toast.success('You are already a Host!');
+            navigate('/dashboard');
+        }
+    }, [user, navigate]);
     const [loading, setLoading] = useState(false);
 
     const handleChange = (e) => {

@@ -6,10 +6,10 @@
 const express = require('express');
 const router = express.Router();
 const socialController = require('./social.controller');
-const { authenticate } = require('../../middleware/auth.middleware');
+const { authenticate, authOptional } = require('../../middleware/auth.middleware');
 
-// Public Feed? No, protected for now to encourage signup
-router.get('/feed', authenticate, socialController.getFeed);
+// Public Feed (Read-Only for Guests)
+router.get('/feed', authOptional, socialController.getFeed);
 
 // Write Access
 router.post('/posts', authenticate, socialController.createPost);

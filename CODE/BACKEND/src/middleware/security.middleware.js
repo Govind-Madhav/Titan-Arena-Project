@@ -33,22 +33,22 @@ const initLimiters = () => {
     try {
         const redisClient = getClientOrFail();
 
-        // Global: 100 req / 15 mins
+        // Global: 500 req / 15 mins
         globalRateLimiter = new RateLimiterRedis({
             storeClient: redisClient,
             keyPrefix: 'middleware_global',
-            points: 100, // 100 requests
-            duration: 15 * 60, // per 15 minutes by default
-            blockDuration: 0, // No extra block, just limits
+            points: 500, // Increased from 100
+            duration: 15 * 60, // per 15 minutes
+            blockDuration: 0,
         });
 
-        // Auth: 5 req / 1 hour (Protect against credential stuffing)
+        // Auth: 20 req / 15 mins (Allow normal retries)
         authRateLimiter = new RateLimiterRedis({
             storeClient: redisClient,
             keyPrefix: 'middleware_auth',
-            points: 5,
-            duration: 60 * 60, // 1 hour
-            blockDuration: 60 * 15, // Block for 15 mins if exceeded
+            points: 20, // Increased from 5/hour to 20/15m
+            duration: 15 * 60, // 15 mins
+            blockDuration: 60 * 5, // Block for 5 mins if exceeded
         });
 
     } catch (e) {

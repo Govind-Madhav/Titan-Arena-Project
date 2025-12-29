@@ -7,12 +7,13 @@ import React, { useEffect, useState } from 'react';
 import api from '../../lib/api';
 import CreatePost from '../../Components/social/CreatePost';
 import { formatDistanceToNow } from 'date-fns';
-import { Heart, MessageCircle, MoreHorizontal, Trash2, ShieldCheck, Zap } from 'lucide-react';
+import { Heart, MessageCircle, ShieldCheck, Zap, Trash2, LogIn } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import toast from 'react-hot-toast';
+import { Link } from 'react-router-dom';
 
 const FeedPage = () => {
-    const { user } = useAuthStore();
+    const { user, isAuthenticated } = useAuthStore();
     const [posts, setPosts] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -42,12 +43,34 @@ const FeedPage = () => {
         }
     };
 
+    const handleInteraction = () => {
+        if (!isAuthenticated) {
+            toast.error('Please login to interact', {
+                icon: '🔒',
+                style: {
+                    background: '#1a1b2e',
+                    color: '#fff',
+                    border: '1px solid rgba(255,255,255,0.1)'
+                }
+            });
+            return;
+        }
+        // Logic for like/comment would go here
+    };
+
     return (
         <div className="min-h-screen bg-titan-bg p-4 md:p-8">
             <div className="max-w-2xl mx-auto">
-                <h1 className="text-3xl font-display font-bold text-white mb-8">Community Feed</h1>
+                <div className="flex justify-between items-center mb-8">
+                    <h1 className="text-3xl font-display font-bold text-white">Community Feed</h1>
+                    {!isAuthenticated && (
+                        <Link to="/auth" className="text-sm font-semibold text-titan-purple hover:text-white transition-colors flex items-center gap-2">
+                            <LogIn size={16} /> Login to Post
+                        </Link>
+                    )}
+                </div>
 
-                <CreatePost onPostCreated={fetchFeed} />
+                {isAuthenticated && <CreatePost onPostCreated={fetchFeed} />}
 
                 {loading ? (
                     <div className="text-center py-12 text-white/40 animate-pulse">Loading feed...</div>
@@ -62,12 +85,12 @@ const FeedPage = () => {
                                 <div className="flex justify-between items-start mb-4">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-titan-purple to-blue-600 p-[1px]">
-                                            <div className="w-full h-full rounded-full bg-black overflow-hidden">
+                                            <div className="w-full h-full rounded-full bg-black overflow-hidden relative">
                                                 {post.avatarUrl ? (
                                                     <img src={post.avatarUrl} alt={post.username} className="w-full h-full object-cover" />
                                                 ) : (
-                                                    <div className="w-full h-full flex items-center justify-center font-bold text-white">
-                                                        {post.username[0].toUpperCase()}
+                                                    <div className="w-full h-full flex items-center justify-center font-bold text-white bg-white/10">
+                                                        {post.username?.[0]?.toUpperCase() || '?'}
                                                     </div>
                                                 )}
                                             </div>
@@ -105,11 +128,17 @@ const FeedPage = () => {
                                 )}
 
                                 <div className="flex items-center gap-6 pt-4 border-t border-white/5">
-                                    <button className="flex items-center gap-2 text-white/40 hover:text-pink-500 transition-colors group">
+                                    <button
+                                        onClick={handleInteraction}
+                                        className="flex items-center gap-2 text-white/40 hover:text-pink-500 transition-colors group"
+                                    >
                                         <Heart size={18} className="group-hover:scale-110 transition-transform" />
                                         <span className="text-sm">{post.likesCount}</span>
                                     </button>
-                                    <button className="flex items-center gap-2 text-white/40 hover:text-blue-400 transition-colors">
+                                    <button
+                                        onClick={handleInteraction}
+                                        className="flex items-center gap-2 text-white/40 hover:text-blue-400 transition-colors"
+                                    >
                                         <MessageCircle size={18} />
                                         <span className="text-sm">Comment</span>
                                     </button>

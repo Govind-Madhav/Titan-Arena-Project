@@ -135,11 +135,7 @@ function App() {
           />
           <Route
             path="/feed"
-            element={
-              <ProtectedRoute>
-                <FeedPage />
-              </ProtectedRoute>
-            }
+            element={<FeedPage />}
           />
         </Route>
 

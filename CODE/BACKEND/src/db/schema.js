@@ -38,6 +38,30 @@ const hostProfiles = mysqlTable('host_profiles', {
     createdAt: timestamp('created_at').defaultNow()
 });
 
+// Host Applications (Phase 3 Strict)
+const hostApplications = mysqlTable('host_applications', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
+    status: mysqlEnum('status', ['PENDING', 'APPROVED', 'REJECTED']).default('PENDING').notNull(),
+    documentsUrl: text('documents_url'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow(),
+    reviewedAt: timestamp('reviewed_at'),
+    reviewedBy: varchar('reviewed_by', { length: 191 }).references(() => users.id)
+});
+
+// Posts (Phase 4 Strict)
+const posts = mysqlTable('posts', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
+    content: text('content').notNull(),
+    type: mysqlEnum('type', ['GENERAL', 'ACHIEVEMENT', 'TOURNAMENT_UPDATE']).notNull(),
+    mediaUrl: text('media_url'),
+    likesCount: int('likes_count').default(0),
+    isDeleted: boolean('is_deleted').default(false),
+    createdAt: timestamp('created_at').defaultNow()
+});
+
 // Users table
 const users = mysqlTable('user', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -383,29 +407,7 @@ const disputes = mysqlTable('dispute', {
     statusIdx: index('dispute_status_idx').on(table.status),
 }));
 
-// Host Applications (Phase 3)
-const hostApplications = mysqlTable('host_applications', {
-    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
-    status: mysqlEnum('status', ['PENDING', 'APPROVED', 'REJECTED']).default('PENDING').notNull(),
-    documentsUrl: varchar('documents_url', { length: 500 }),
-    notes: text('notes'),
-    createdAt: timestamp('created_at').defaultNow(),
-    reviewedAt: timestamp('reviewed_at'),
-    reviewedBy: varchar('reviewed_by', { length: 191 }) // Admin ID
-});
 
-// Community Posts (Phase 4)
-const posts = mysqlTable('posts', {
-    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
-    content: text('content').notNull(),
-    type: mysqlEnum('type', ['GENERAL', 'ACHIEVEMENT', 'TOURNAMENT_UPDATE']).default('GENERAL').notNull(),
-    mediaUrl: varchar('media_url', { length: 500 }),
-    likesCount: int('likes_count').default(0),
-    isDeleted: boolean('is_deleted').default(false),
-    createdAt: timestamp('created_at').defaultNow()
-});
 
 module.exports = {
     uidCounters,

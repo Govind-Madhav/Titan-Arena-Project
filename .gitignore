@@ -49,3 +49,6 @@ lerna-debug.log*
 
 # Secrets
 CODE/BACKEND/Firebase/*.json
+
+# Session Logs
+session_summary.md

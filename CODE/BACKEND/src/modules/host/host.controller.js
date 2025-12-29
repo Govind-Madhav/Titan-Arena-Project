@@ -4,7 +4,7 @@
  */
 
 const { db } = require('../../db');
-const { hostApplications, users } = require('../../db/schema');
+const { hostApplications, hostProfiles, users } = require('../../db/schema');
 const { eq, and } = require('drizzle-orm');
 
 // Apply for Host Status
@@ -28,7 +28,17 @@ const applyForHost = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Please verify your email before applying.' });
         }
 
-        // 2. Check for existing pending application
+        // 2. Eligibility: Check if already a Host
+        const existingProfile = await db.select()
+            .from(hostProfiles)
+            .where(eq(hostProfiles.userId, userId))
+            .limit(1);
+
+        if (existingProfile.length > 0) {
+            return res.status(409).json({ success: false, message: 'You are already a registered Host.' });
+        }
+
+        // 3. Check for existing pending application
         const existingApp = await db.select()
             .from(hostApplications)
             .where(and(
@@ -38,10 +48,10 @@ const applyForHost = async (req, res) => {
             .limit(1);
 
         if (existingApp.length > 0) {
-            return res.status(400).json({ success: false, message: 'You already have a pending application.' });
+            return res.status(409).json({ success: false, message: 'You already have a pending application.' });
         }
 
-        // 3. Create Application
+        // 4. Create Application
         await db.insert(hostApplications).values({
             userId,
             status: 'PENDING',
@@ -59,6 +69,7 @@ const applyForHost = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to submit application' });
     }
 };
+
 
 module.exports = {
     applyForHost

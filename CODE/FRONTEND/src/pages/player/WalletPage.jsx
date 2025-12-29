@@ -83,15 +83,7 @@ export default function WalletPage() {
         }
     }
 
-    // Mock transactions
-    const mockTransactions = [
-        { id: '1', type: 'DEPOSIT', amount: 100000, message: 'Deposit via UPI', createdAt: new Date().toISOString() },
-        { id: '2', type: 'ENTRY_FEE', amount: -5000, message: 'Entry fee for BGMI Pro League', createdAt: new Date(Date.now() - 86400000).toISOString() },
-        { id: '3', type: 'PRIZE', amount: 15000, message: '2nd place in Valorant Cup', createdAt: new Date(Date.now() - 172800000).toISOString() },
-        { id: '4', type: 'REFUND', amount: 2500, message: 'Tournament canceled refund', createdAt: new Date(Date.now() - 259200000).toISOString() },
-    ]
-
-    const displayTransactions = transactions.length > 0 ? transactions : mockTransactions
+    const displayTransactions = transactions;
 
     return (
         <div className="min-h-screen bg-titan-bg py-8 px-4">
