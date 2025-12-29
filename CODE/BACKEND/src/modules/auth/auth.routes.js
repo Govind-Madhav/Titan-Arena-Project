@@ -14,6 +14,7 @@ const { forgotPasswordLimiter, resetPasswordLimiter } = require('../../middlewar
 // Public routes
 router.post('/register', authLimiter, authController.signup); // Alias for compatibility
 router.post('/signup', authLimiter, authController.signup);
+router.post('/check-availability', authLimiter, authController.checkAvailability); // Real-time validation route
 router.post('/login', authLimiter, authController.login);
 router.post('/refresh', authController.refresh);
 router.post('/logout', authRequired, authController.logout);

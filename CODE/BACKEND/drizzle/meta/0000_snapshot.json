@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "e27ab7a8-4c42-4cb3-a3f5-2bbc2aaab53f",
+  "id": "bcdb017e-3b8a-4683-9766-98871bdf155d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "uid_counters": {
@@ -44,19 +44,12 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "user": {
-      "name": "user",
+    "users": {
+      "name": "users",
       "columns": {
         "id": {
           "name": "id",
           "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "platformUid": {
-          "name": "platformUid",
-          "type": "varchar(20)",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -81,6 +74,21 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "player_code": {
+          "name": "player_code",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "is_admin": {
+          "name": "is_admin",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
         },
         "legalName": {
           "name": "legalName",
@@ -163,6 +171,13 @@
           "autoincrement": false,
           "default": "'NOT_VERIFIED'"
         },
+        "platformUid": {
+          "name": "platformUid",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "isBanned": {
           "name": "isBanned",
           "type": "boolean",
@@ -194,6 +209,28 @@
           "notNull": true,
           "autoincrement": false,
           "default": false
+        },
+        "passwordUpdatedAt": {
+          "name": "passwordUpdatedAt",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lastLoginAt": {
+          "name": "lastLoginAt",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "failedLoginCount": {
+          "name": "failedLoginCount",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
         },
         "bio": {
           "name": "bio",
@@ -265,37 +302,43 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "user_id": {
-          "name": "user_id",
+        "users_id": {
+          "name": "users_id",
           "columns": [
             "id"
           ]
         }
       },
       "uniqueConstraints": {
-        "user_platformUid_unique": {
-          "name": "user_platformUid_unique",
-          "columns": [
-            "platformUid"
-          ]
-        },
-        "user_username_unique": {
-          "name": "user_username_unique",
+        "users_username_unique": {
+          "name": "users_username_unique",
           "columns": [
             "username"
           ]
         },
-        "user_email_unique": {
-          "name": "user_email_unique",
+        "users_email_unique": {
+          "name": "users_email_unique",
           "columns": [
             "email"
+          ]
+        },
+        "users_player_code_unique": {
+          "name": "users_player_code_unique",
+          "columns": [
+            "player_code"
+          ]
+        },
+        "users_platformUid_unique": {
+          "name": "users_platformUid_unique",
+          "columns": [
+            "platformUid"
           ]
         }
       },
       "checkConstraint": {}
     },
-    "refreshToken": {
-      "name": "refreshToken",
+    "refreshtoken": {
+      "name": "refreshtoken",
       "columns": {
         "id": {
           "name": "id",
@@ -343,18 +386,32 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "refreshtoken_userId_users_id_fk": {
+          "name": "refreshtoken_userId_users_id_fk",
+          "tableFrom": "refreshtoken",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
-        "refreshToken_id": {
-          "name": "refreshToken_id",
+        "refreshtoken_id": {
+          "name": "refreshtoken_id",
           "columns": [
             "id"
           ]
         }
       },
       "uniqueConstraints": {
-        "refreshToken_token_unique": {
-          "name": "refreshToken_token_unique",
+        "refreshtoken_token_unique": {
+          "name": "refreshtoken_token_unique",
           "columns": [
             "token"
           ]
@@ -384,36 +441,46 @@
           "type": "bigint",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": 0
+          "autoincrement": false
         },
         "locked": {
           "name": "locked",
           "type": "bigint",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": 0
+          "autoincrement": false
         },
         "createdAt": {
           "name": "createdAt",
           "type": "datetime",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP"
+          "autoincrement": false
         },
         "updatedAt": {
           "name": "updatedAt",
           "type": "datetime",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+          "autoincrement": false
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "wallet_userId_users_id_fk": {
+          "name": "wallet_userId_users_id_fk",
+          "tableFrom": "wallet",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "wallet_id": {
           "name": "wallet_id",
@@ -472,14 +539,14 @@
         },
         "amount": {
           "name": "amount",
-          "type": "int",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
         "balanceAfter": {
           "name": "balanceAfter",
-          "type": "int",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
@@ -495,13 +562,6 @@
         "message": {
           "name": "message",
           "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "meta": {
-          "name": "meta",
-          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -560,7 +620,34 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "transaction_userId_users_id_fk": {
+          "name": "transaction_userId_users_id_fk",
+          "tableFrom": "transaction",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "transaction_walletId_wallet_id_fk": {
+          "name": "transaction_walletId_wallet_id_fk",
+          "tableFrom": "transaction",
+          "tableTo": "wallet",
+          "columnsFrom": [
+            "walletId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "transaction_id": {
           "name": "transaction_id",
@@ -572,8 +659,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "kycRequest": {
-      "name": "kycRequest",
+    "kycrequest": {
+      "name": "kycrequest",
       "columns": {
         "id": {
           "name": "id",
@@ -650,18 +737,32 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "kycrequest_userId_users_id_fk": {
+          "name": "kycrequest_userId_users_id_fk",
+          "tableFrom": "kycrequest",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
-        "kycRequest_id": {
-          "name": "kycRequest_id",
+        "kycrequest_id": {
+          "name": "kycrequest_id",
           "columns": [
             "id"
           ]
         }
       },
       "uniqueConstraints": {
-        "kycRequest_userId_unique": {
-          "name": "kycRequest_userId_unique",
+        "kycrequest_userId_unique": {
+          "name": "kycrequest_userId_unique",
           "columns": [
             "userId"
           ]
@@ -727,7 +828,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "team_captainId_users_id_fk": {
+          "name": "team_captainId_users_id_fk",
+          "tableFrom": "team",
+          "tableTo": "users",
+          "columnsFrom": [
+            "captainId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "team_id": {
           "name": "team_id",
@@ -739,8 +854,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "teamMember": {
-      "name": "teamMember",
+    "teammember": {
+      "name": "teammember",
       "columns": {
         "id": {
           "name": "id",
@@ -797,10 +912,37 @@
           "isUnique": true
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "teammember_userId_users_id_fk": {
+          "name": "teammember_userId_users_id_fk",
+          "tableFrom": "teammember",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "teammember_teamId_team_id_fk": {
+          "name": "teammember_teamId_team_id_fk",
+          "tableFrom": "teammember",
+          "tableTo": "team",
+          "columnsFrom": [
+            "teamId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
-        "teamMember_id": {
-          "name": "teamMember_id",
+        "teammember_id": {
+          "name": "teammember_id",
           "columns": [
             "id"
           ]
@@ -863,14 +1005,14 @@
         },
         "entryFee": {
           "name": "entryFee",
-          "type": "int",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
         "prizePool": {
           "name": "prizePool",
-          "type": "int",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -937,7 +1079,7 @@
         },
         "collected": {
           "name": "collected",
-          "type": "int",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
@@ -945,7 +1087,7 @@
         },
         "hostProfit": {
           "name": "hostProfit",
-          "type": "int",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
@@ -991,7 +1133,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "tournament_hostId_users_id_fk": {
+          "name": "tournament_hostId_users_id_fk",
+          "tableFrom": "tournament",
+          "tableTo": "users",
+          "columnsFrom": [
+            "hostId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "tournament_id": {
           "name": "tournament_id",
@@ -1082,7 +1238,21 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "notification_userId_users_id_fk": {
+          "name": "notification_userId_users_id_fk",
+          "tableFrom": "notification",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
         "notification_id": {
           "name": "notification_id",
@@ -1094,8 +1264,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "auditLog": {
-      "name": "auditLog",
+    "auditlog": {
+      "name": "auditlog",
       "columns": {
         "id": {
           "name": "id",
@@ -1162,12 +1332,33 @@
             "userId"
           ],
           "isUnique": false
+        },
+        "auditLog_createdAt_idx": {
+          "name": "auditLog_createdAt_idx",
+          "columns": [
+            "createdAt"
+          ],
+          "isUnique": false
         }
       },
-      "foreignKeys": {},
+      "foreignKeys": {
+        "auditlog_userId_users_id_fk": {
+          "name": "auditlog_userId_users_id_fk",
+          "tableFrom": "auditlog",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {
-        "auditLog_id": {
-          "name": "auditLog_id",
+        "auditlog_id": {
+          "name": "auditlog_id",
           "columns": [
             "id"
           ]
@@ -1551,8 +1742,8 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "playerProfile": {
-      "name": "playerProfile",
+    "playerprofile": {
+      "name": "playerprofile",
       "columns": {
         "id": {
           "name": "id",
@@ -1717,16 +1908,16 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "playerProfile_id": {
-          "name": "playerProfile_id",
+        "playerprofile_id": {
+          "name": "playerprofile_id",
           "columns": [
             "id"
           ]
         }
       },
       "uniqueConstraints": {
-        "playerProfile_userId_unique": {
-          "name": "playerProfile_userId_unique",
+        "playerprofile_userId_unique": {
+          "name": "playerprofile_userId_unique",
           "columns": [
             "userId"
           ]
@@ -1734,8 +1925,8 @@
       },
       "checkConstraint": {}
     },
-    "playerGameProfile": {
-      "name": "playerGameProfile",
+    "playergameprofile": {
+      "name": "playergameprofile",
       "columns": {
         "id": {
           "name": "id",
@@ -1830,8 +2021,575 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "playerGameProfile_id": {
-          "name": "playerGameProfile_id",
+        "playergameprofile_id": {
+          "name": "playergameprofile_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "adminassignment": {
+      "name": "adminassignment",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "adminId": {
+          "name": "adminId",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "userId": {
+          "name": "userId",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "assignedBy": {
+          "name": "assignedBy",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "assignedAt": {
+          "name": "assignedAt",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "revokedAt": {
+          "name": "revokedAt",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "adminAssignment_adminId_idx": {
+          "name": "adminAssignment_adminId_idx",
+          "columns": [
+            "adminId"
+          ],
+          "isUnique": false
+        },
+        "adminAssignment_userId_idx": {
+          "name": "adminAssignment_userId_idx",
+          "columns": [
+            "userId"
+          ],
+          "isUnique": false
+        },
+        "adminAssignment_active_idx": {
+          "name": "adminAssignment_active_idx",
+          "columns": [
+            "userId",
+            "revokedAt"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "adminassignment_adminId_users_id_fk": {
+          "name": "adminassignment_adminId_users_id_fk",
+          "tableFrom": "adminassignment",
+          "tableTo": "users",
+          "columnsFrom": [
+            "adminId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "adminassignment_userId_users_id_fk": {
+          "name": "adminassignment_userId_users_id_fk",
+          "tableFrom": "adminassignment",
+          "tableTo": "users",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "adminassignment_assignedBy_users_id_fk": {
+          "name": "adminassignment_assignedBy_users_id_fk",
+          "tableFrom": "adminassignment",
+          "tableTo": "users",
+          "columnsFrom": [
+            "assignedBy"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "adminassignment_id": {
+          "name": "adminassignment_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "dispute": {
+      "name": "dispute",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "matchId": {
+          "name": "matchId",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "raisedById": {
+          "name": "raisedById",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "evidenceUrl": {
+          "name": "evidenceUrl",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'OPEN'"
+        },
+        "resolution": {
+          "name": "resolution",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "resolvedAt": {
+          "name": "resolvedAt",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "datetime",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "dispute_matchId_idx": {
+          "name": "dispute_matchId_idx",
+          "columns": [
+            "matchId"
+          ],
+          "isUnique": false
+        },
+        "dispute_raisedById_idx": {
+          "name": "dispute_raisedById_idx",
+          "columns": [
+            "raisedById"
+          ],
+          "isUnique": false
+        },
+        "dispute_status_idx": {
+          "name": "dispute_status_idx",
+          "columns": [
+            "status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "dispute_matchId_match_id_fk": {
+          "name": "dispute_matchId_match_id_fk",
+          "tableFrom": "dispute",
+          "tableTo": "match",
+          "columnsFrom": [
+            "matchId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "dispute_raisedById_users_id_fk": {
+          "name": "dispute_raisedById_users_id_fk",
+          "tableFrom": "dispute",
+          "tableTo": "users",
+          "columnsFrom": [
+            "raisedById"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "dispute_id": {
+          "name": "dispute_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "user_counters": {
+      "name": "user_counters",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_number": {
+          "name": "last_number",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "user_counters_key": {
+          "name": "user_counters_key",
+          "columns": [
+            "key"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "host_profiles": {
+      "name": "host_profiles",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "host_code": {
+          "name": "host_code",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "enum('PENDING','ACTIVE','SUSPENDED','REVOKED')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PENDING'"
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "verified_by": {
+          "name": "verified_by",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "host_profiles_id": {
+          "name": "host_profiles_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "host_profiles_user_id_unique": {
+          "name": "host_profiles_user_id_unique",
+          "columns": [
+            "user_id"
+          ]
+        },
+        "host_profiles_host_code_unique": {
+          "name": "host_profiles_host_code_unique",
+          "columns": [
+            "host_code"
+          ]
+        }
+      },
+      "checkConstraint": {}
+    },
+    "host_applications": {
+      "name": "host_applications",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "enum('PENDING','APPROVED','REJECTED')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'PENDING'"
+        },
+        "documents_url": {
+          "name": "documents_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reviewed_by": {
+          "name": "reviewed_by",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "host_applications_user_id_users_id_fk": {
+          "name": "host_applications_user_id_users_id_fk",
+          "tableFrom": "host_applications",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "host_applications_reviewed_by_users_id_fk": {
+          "name": "host_applications_reviewed_by_users_id_fk",
+          "tableFrom": "host_applications",
+          "tableTo": "users",
+          "columnsFrom": [
+            "reviewed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "host_applications_id": {
+          "name": "host_applications_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "posts": {
+      "name": "posts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "enum('GENERAL','ACHIEVEMENT','TOURNAMENT_UPDATE')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "media_url": {
+          "name": "media_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "likes_count": {
+          "name": "likes_count",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
+        },
+        "is_deleted": {
+          "name": "is_deleted",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "posts_user_id_users_id_fk": {
+          "name": "posts_user_id_users_id_fk",
+          "tableFrom": "posts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "posts_id": {
+          "name": "posts_id",
           "columns": [
             "id"
           ]

@@ -118,7 +118,7 @@ const users = mysqlTable('users', {
 }));
 
 // Refresh Tokens table
-const refreshTokens = mysqlTable('refreshToken', {
+const refreshTokens = mysqlTable('refreshtoken', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     token: varchar('token', { length: 500 }).notNull().unique(),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
@@ -160,7 +160,7 @@ const transactions = mysqlTable('transaction', {
 }));
 
 // KYC Requests table
-const kycRequests = mysqlTable('kycRequest', {
+const kycRequests = mysqlTable('kycrequest', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().unique().references(() => users.id),
     documentType: varchar('documentType', { length: 100 }).notNull(),
@@ -186,7 +186,7 @@ const teams = mysqlTable('team', {
 }));
 
 // Team Members table
-const teamMembers = mysqlTable('teamMember', {
+const teamMembers = mysqlTable('teammember', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     teamId: varchar('teamId', { length: 191 }).notNull().references(() => teams.id),
@@ -242,7 +242,7 @@ const notifications = mysqlTable('notification', {
 }));
 
 // Audit Logs table
-const auditLogs = mysqlTable('auditLog', {
+const auditLogs = mysqlTable('auditlog', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     action: varchar('action', { length: 100 }).notNull(), // TOURNAMENT_START, MATCH_OVERRIDE, etc.
@@ -257,7 +257,7 @@ const auditLogs = mysqlTable('auditLog', {
 }));
 
 // Admin Assignments Table (Enterprise Delegation History)
-const adminAssignments = mysqlTable('adminAssignment', {
+const adminAssignments = mysqlTable('adminassignment', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     adminId: varchar('adminId', { length: 191 }).notNull().references(() => users.id), // The Manager
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),   // The Managed User/Host
@@ -330,7 +330,7 @@ const matches = mysqlTable('match', {
 }));
 
 // Player Profiles table (Core Identity)
-const playerProfiles = mysqlTable('playerProfile', {
+const playerProfiles = mysqlTable('playerprofile', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().unique(), // Foreign Key to users
 
@@ -369,7 +369,7 @@ const playerProfiles = mysqlTable('playerProfile', {
 }));
 
 // Player Game Profiles table (Multi-Game)
-const playerGameProfiles = mysqlTable('playerGameProfile', {
+const playerGameProfiles = mysqlTable('playergameprofile', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull(),
 

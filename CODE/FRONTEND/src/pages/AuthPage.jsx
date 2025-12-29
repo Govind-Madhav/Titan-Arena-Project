@@ -15,6 +15,7 @@ import Navbar from '../Components/layout/Navbar'
 import { countries } from '../lib/countries'
 import { AsYouType } from 'libphonenumber-js'
 import { getAllStates, getDistrictsByState } from '../lib/india-locations';
+import api from '../lib/api'; // Import API client
 
 export default function AuthPage() {
 
@@ -52,6 +53,10 @@ export default function AuthPage() {
     const [otp, setOtp] = useState('')
     const [resendCooldown, setResendCooldown] = useState(0)
 
+    // Availability State
+    const [usernameAvailable, setUsernameAvailable] = useState(null); // null, true, false
+    const [isCheckingUsername, setIsCheckingUsername] = useState(false);
+
     const { login, signup, verifyEmail, resendVerification, isLoading } = useAuthStore()
     const navigate = useNavigate()
     const location = useLocation()
@@ -84,6 +89,29 @@ export default function AuthPage() {
             return () => clearTimeout(timer)
         }
     }, [resendCooldown])
+
+    // Debounced Username Check
+    useEffect(() => {
+        if (isLogin || !formData.username || formData.username.length < 3) {
+            setUsernameAvailable(null);
+            return;
+        }
+
+        const timer = setTimeout(async () => {
+            setIsCheckingUsername(true);
+            try {
+                const res = await api.post('/auth/check-availability', { username: formData.username });
+                setUsernameAvailable(res.data.data.usernameAvailable);
+            } catch (error) {
+                console.error('Check failed', error);
+                setUsernameAvailable(null);
+            } finally {
+                setIsCheckingUsername(false);
+            }
+        }, 500); // 500ms debounce
+
+        return () => clearTimeout(timer);
+    }, [formData.username, isLogin]);
 
     const handleBeforeNextStep = async (stepCalled) => {
         if (stepCalled === 1) {
@@ -363,10 +391,19 @@ export default function AuthPage() {
                                                             placeholder="Gamertag / Username"
                                                             value={formData.username}
                                                             onChange={handleChange}
-                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
+                                                            className={`w-full bg-white/10 border ${usernameAvailable === false ? 'border-red-500 focus:border-red-500' : (usernameAvailable === true ? 'border-green-500 focus:border-green-500' : 'border-white/10')} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
                                                             autoFocus
                                                             required
                                                         />
+                                                        {isCheckingUsername ? (
+                                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+                                                        ) : (
+                                                            usernameAvailable === true ? (
+                                                                <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />
+                                                            ) : usernameAvailable === false ? (
+                                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 font-bold text-xs">TAKEN</div>
+                                                            ) : null
+                                                        )}
                                                     </div>
                                                     <div className="relative group">
                                                         <FileText className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />

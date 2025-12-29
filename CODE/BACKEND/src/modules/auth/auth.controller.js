@@ -810,6 +810,46 @@ exports.forgotPassword = async (req, res) => {
     }
 };
 
+// Check availability (Real-time validation)
+exports.checkAvailability = async (req, res) => {
+    try {
+        const { username, email } = req.body;
+
+        const result = {
+            usernameAvailable: true,
+            emailAvailable: true
+        };
+
+        if (username) {
+            const user = await db.select({ id: users.id })
+                .from(users)
+                .where(eq(users.username, username))
+                .limit(1);
+            if (user.length > 0) result.usernameAvailable = false;
+        }
+
+        if (email) {
+            const user = await db.select({ id: users.id })
+                .from(users)
+                .where(eq(users.email, email))
+                .limit(1);
+            if (user.length > 0) result.emailAvailable = false;
+        }
+
+        res.json({
+            success: true,
+            data: result
+        });
+
+    } catch (error) {
+        console.error('Check availability error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to check availability'
+        });
+    }
+};
+
 // Reset Password
 exports.resetPassword = async (req, res) => {
     try {

@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('dotenv').config({ override: true });
 const { db } = require('../src/db');
 const { sql } = require('drizzle-orm');
 

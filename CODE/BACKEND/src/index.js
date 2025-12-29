@@ -10,6 +10,8 @@ const cors = require('cors');
 // Initialize Firebase and Redis
 const { initializeFirebase, checkFirebaseHealth, closeFirebase } = require('./config/firebase.config');
 const { createRedisClient, checkRedisHealth, closeRedis } = require('./config/redis.config');
+const { db } = require('./db');
+const { sql } = require('drizzle-orm');
 
 
 // Import routes
@@ -90,6 +92,16 @@ const initializeServices = async () => {
         await createRedisClient();
       }
     } catch (e) { console.warn('Redis Init Warning:', e.message); }
+
+    // Check Database Connection
+    try {
+      await db.execute(sql`SELECT 1`);
+      console.log('✅ Database: Connected and ready');
+    } catch (e) {
+      console.error('❌ Database Init Warning:', e.message);
+      // We don't throw here to allow partial startup if DB is momentarily down, 
+      // but typically DB is critical.
+    }
 
     servicesInitialized = true;
     console.log('✅ Services initialized');
