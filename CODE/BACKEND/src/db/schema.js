@@ -3,12 +3,16 @@
  * This code is proprietary and confidential.
  */
 
-const { mysqlTable, varchar, boolean, datetime, int, text, index, uniqueIndex, primaryKey, bigint } = require('drizzle-orm/mysql-core');
+const { mysqlTable, varchar, boolean, datetime, int, text, index, uniqueIndex, primaryKey, bigint, timestamp, mysqlEnum } = require('drizzle-orm/mysql-core');
 const { sql } = require('drizzle-orm');
 const crypto = require('crypto');
 
 // Users table
 // UID Counters table
+// ⚠️ CONCURRENCY WARNING:
+// Do not blindly SELECT and UPDATE this table. You MUST use atomic increments:
+// UPDATE uid_counters SET lastValue = LAST_INSERT_ID(lastValue + 1) WHERE ...
+// SELECT LAST_INSERT_ID();
 const uidCounters = mysqlTable('uid_counters', {
     regionCode: varchar('region_code', { length: 2 }).notNull(),
     year: int('year').notNull(),
@@ -17,40 +21,67 @@ const uidCounters = mysqlTable('uid_counters', {
     pk: primaryKey({ columns: [table.regionCode, table.year] }),
 }));
 
+// User Counters (ID Generation)
+const userCounters = mysqlTable('user_counters', {
+    key: varchar('key', { length: 20 }).primaryKey(), // 'PLAYER_CODE', 'HOST_CODE', 'ADMIN_CODE'
+    lastNumber: int('last_number').notNull().default(0)
+});
+
+// Host Profiles (Operational Extension)
+const hostProfiles = mysqlTable('host_profiles', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().unique(), // FK to users.id
+    hostCode: varchar('host_code', { length: 20 }).unique().notNull(), // HTxxxx
+    status: mysqlEnum('status', ['PENDING', 'ACTIVE', 'SUSPENDED', 'REVOKED']).default('PENDING').notNull(),
+    verifiedAt: timestamp('verified_at'),
+    verifiedBy: varchar('verified_by', { length: 191 }), // FK to users.id (Admin)
+    createdAt: timestamp('created_at').defaultNow()
+});
+
 // Users table
 const users = mysqlTable('user', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    platformUid: varchar('platformUid', { length: 20 }).notNull().unique(),
     username: varchar('username', { length: 191 }).notNull().unique(),
     email: varchar('email', { length: 191 }).notNull().unique(),
-    passwordHash: varchar('password_hash', { length: 255 }).notNull(), // Renamed from password
+    passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+
+    // New Identity Fields (Final Architecture)
+    playerCode: varchar('player_code', { length: 20 }).unique(), // PLxxxx (Nullable until migration)
+    isAdmin: boolean('is_admin').default(false),
 
     // Legal & Private Info
     legalName: varchar('legalName', { length: 255 }).notNull(),
-    dateOfBirth: datetime('dateOfBirth').notNull(), // Using datetime for compatibility, though date is preferred if supported
+    dateOfBirth: datetime('dateOfBirth').notNull(),
     phone: varchar('phone', { length: 20 }),
     phoneVerified: boolean('phoneVerified').notNull().default(false),
+    phoneVisibility: varchar('phoneVisibility', { length: 20 }).notNull().default('private'),
 
     // Location
-    countryCode: varchar('country_code', { length: 3 }).notNull(), // Renamed from country
+    countryCode: varchar('country_code', { length: 3 }).notNull(),
     state: varchar('state', { length: 100 }).notNull(),
     city: varchar('city', { length: 100 }),
     regionCode: varchar('regionCode', { length: 2 }).notNull(),
 
     // Status Flags
-    role: varchar('role', { length: 50 }).notNull().default('PLAYER'),
-    hostStatus: varchar('hostStatus', { length: 50 }).notNull().default('NOT_VERIFIED'),
+    // DEPRECATED (Migration Only): role, hostStatus, platformUid
+    role: varchar('role', { length: 50 }).notNull().default('PLAYER'), // -> use isAdmin / hostProfiles
+    hostStatus: varchar('hostStatus', { length: 50 }).notNull().default('NOT_VERIFIED'), // -> use hostProfiles.status
+    // Keeping platformUid briefly - mapped to old UID logic
+    platformUid: varchar('platformUid', { length: 20 }).unique(), // -> use playerCode
+
     isBanned: boolean('isBanned').notNull().default(false),
     emailVerified: boolean('emailVerified').notNull().default(false),
     registrationCompleted: boolean('registrationCompleted').notNull().default(false),
     termsAccepted: boolean('termsAccepted').notNull().default(false),
 
+    // Enterprise Security Fields
+    passwordUpdatedAt: datetime('passwordUpdatedAt'),
+    lastLoginAt: datetime('lastLoginAt'),
+    failedLoginCount: int('failedLoginCount').default(0),
+
     // Profile
     bio: text('bio'),
     avatarUrl: varchar('avatarUrl', { length: 500 }),
-
-    // Auth & Security
-    // Removed verificationToken and verificationExpiry as redundant with Redis OTP
 
     createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
@@ -66,7 +97,7 @@ const users = mysqlTable('user', {
 const refreshTokens = mysqlTable('refreshToken', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     token: varchar('token', { length: 500 }).notNull().unique(),
-    userId: varchar('userId', { length: 191 }).notNull(),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     expiresAt: datetime('expiresAt').notNull(),
     createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => ({
@@ -76,7 +107,7 @@ const refreshTokens = mysqlTable('refreshToken', {
 // Wallets table
 const wallets = mysqlTable('wallet', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('userId', { length: 191 }).notNull().unique(),
+    userId: varchar('userId', { length: 191 }).notNull().unique().references(() => users.id),
     balance: bigint('balance', { mode: 'number' }).notNull().default(0), // Updated to bigint
     locked: bigint('locked', { mode: 'number' }).notNull().default(0), // Updated to bigint
     createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -86,15 +117,14 @@ const wallets = mysqlTable('wallet', {
 // Transactions table
 const transactions = mysqlTable('transaction', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('userId', { length: 191 }).notNull(),
-    walletId: varchar('walletId', { length: 191 }).notNull(),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
+    walletId: varchar('walletId', { length: 191 }).notNull().references(() => wallets.id),
     type: varchar('type', { length: 50 }).notNull(), // CREDIT or DEBIT
     source: varchar('source', { length: 50 }).notNull(), // TOURNAMENT_ENTRY, WINNING, HOST_EARNING, WITHDRAWAL, DEPOSIT
-    amount: int('amount').notNull(),
-    balanceAfter: int('balanceAfter').notNull().default(0), // Ledger snapshot
+    amount: bigint('amount', { mode: 'number' }).notNull(),
+    balanceAfter: bigint('balanceAfter', { mode: 'number' }).notNull().default(0), // Ledger snapshot
     tournamentId: varchar('tournamentId', { length: 191 }),
     message: varchar('message', { length: 255 }),
-    meta: text('meta'), // Legacy metadata field, keeping for compatibility
     metadata: text('metadata'), // New JSON metadata field (using text for MySQL compatibility if json not supported perfectly in all versions, or use json mode)
     status: varchar('status', { length: 50 }).notNull().default('COMPLETED'),
     createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -108,7 +138,7 @@ const transactions = mysqlTable('transaction', {
 // KYC Requests table
 const kycRequests = mysqlTable('kycRequest', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('userId', { length: 191 }).notNull().unique(),
+    userId: varchar('userId', { length: 191 }).notNull().unique().references(() => users.id),
     documentType: varchar('documentType', { length: 100 }).notNull(),
     proofUrl: varchar('proofUrl', { length: 500 }).notNull(),
     selfieUrl: varchar('selfieUrl', { length: 500 }).notNull(),
@@ -123,7 +153,7 @@ const kycRequests = mysqlTable('kycRequest', {
 const teams = mysqlTable('team', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     name: varchar('name', { length: 191 }).notNull(),
-    captainId: varchar('captainId', { length: 191 }).notNull(),
+    captainId: varchar('captainId', { length: 191 }).notNull().references(() => users.id),
     maxMembers: int('maxMembers').notNull().default(5),
     createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
@@ -134,8 +164,8 @@ const teams = mysqlTable('team', {
 // Team Members table
 const teamMembers = mysqlTable('teamMember', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('userId', { length: 191 }).notNull(),
-    teamId: varchar('teamId', { length: 191 }).notNull(),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
+    teamId: varchar('teamId', { length: 191 }).notNull().references(() => teams.id),
     role: varchar('role', { length: 50 }).notNull().default('MEMBER'),
     createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => ({
@@ -151,9 +181,9 @@ const tournaments = mysqlTable('tournament', {
     description: text('description'),
     type: varchar('type', { length: 50 }).notNull(),
     teamSize: int('teamSize'),
-    hostId: varchar('hostId', { length: 191 }).notNull(),
-    entryFee: int('entryFee').notNull(),
-    prizePool: int('prizePool').notNull(),
+    hostId: varchar('hostId', { length: 191 }).notNull().references(() => users.id),
+    entryFee: bigint('entryFee', { mode: 'number' }).notNull(),
+    prizePool: bigint('prizePool', { mode: 'number' }).notNull(),
     minTeamsRequired: int('minTeamsRequired').notNull(),
     insufficientRegPolicy: varchar('insufficientRegPolicy', { length: 50 }).notNull().default('CANCEL'),
     status: varchar('status', { length: 50 }).notNull().default('UPCOMING'), // CREATED, REGISTRATION, ONGOING, COMPLETED, CANCELLED
@@ -162,8 +192,8 @@ const tournaments = mysqlTable('tournament', {
     winnerId: varchar('winnerId', { length: 191 }),
     startTime: datetime('startTime').notNull(),
     registrationEnd: datetime('registrationEnd').notNull(),
-    collected: int('collected').notNull().default(0),
-    hostProfit: int('hostProfit').notNull().default(0),
+    collected: bigint('collected', { mode: 'number' }).notNull().default(0),
+    hostProfit: bigint('hostProfit', { mode: 'number' }).notNull().default(0),
     createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
 }, (table) => ({
@@ -175,7 +205,7 @@ const tournaments = mysqlTable('tournament', {
 // Notifications table
 const notifications = mysqlTable('notification', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('userId', { length: 191 }).notNull(),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     title: varchar('title', { length: 255 }).notNull(),
     message: text('message').notNull(),
     type: varchar('type', { length: 50 }).notNull().default('INFO'),
@@ -190,7 +220,7 @@ const notifications = mysqlTable('notification', {
 // Audit Logs table
 const auditLogs = mysqlTable('auditLog', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('userId', { length: 191 }).notNull(),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     action: varchar('action', { length: 100 }).notNull(), // TOURNAMENT_START, MATCH_OVERRIDE, etc.
     targetId: varchar('targetId', { length: 191 }), // ID of the object being acted upon
     details: text('details'), // JSON string
@@ -199,6 +229,23 @@ const auditLogs = mysqlTable('auditLog', {
 }, (table) => ({
     targetIdIdx: index('auditLog_targetId_idx').on(table.targetId),
     userIdIdx: index('auditLog_userId_idx').on(table.userId),
+    createdAtIdx: index('auditLog_createdAt_idx').on(table.createdAt), // Enterprise: Time-based lookup
+}));
+
+// Admin Assignments Table (Enterprise Delegation History)
+const adminAssignments = mysqlTable('adminAssignment', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    adminId: varchar('adminId', { length: 191 }).notNull().references(() => users.id), // The Manager
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),   // The Managed User/Host
+    assignedBy: varchar('assignedBy', { length: 191 }).notNull().references(() => users.id), // Super Admin who did it
+    assignedAt: datetime('assignedAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    revokedAt: datetime('revokedAt'), // Null = Active, Timestamp = History
+}, (table) => ({
+    adminIdIdx: index('adminAssignment_adminId_idx').on(table.adminId),
+    userIdIdx: index('adminAssignment_userId_idx').on(table.userId),
+    // NOTE: MySQL cannot enforce partial uniqueness (WHERE revokedAt IS NULL).
+    // Active assignment uniqueness is enforced via transactional locking in logic.
+    activeAssignmentIdx: index('adminAssignment_active_idx').on(table.userId, table.revokedAt), // Optimization for "Who manages this user now?"
 }));
 
 // Games table
@@ -258,6 +305,108 @@ const matches = mysqlTable('match', {
     winnerIdIdx: index('match_winnerId_idx').on(table.winnerId),
 }));
 
+// Player Profiles table (Core Identity)
+const playerProfiles = mysqlTable('playerProfile', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('userId', { length: 191 }).notNull().unique(), // Foreign Key to users
+
+    // Identity
+    ign: varchar('ign', { length: 191 }), // In-Game Name
+    realName: varchar('realName', { length: 255 }),
+    dateOfBirth: datetime('dateOfBirth'),
+    avatarUrl: varchar('avatarUrl', { length: 500 }),
+    bio: text('bio'),
+
+    // Location
+    country: varchar('country', { length: 100 }),
+    state: varchar('state', { length: 100 }),
+    city: varchar('city', { length: 100 }),
+    preferredServer: varchar('preferredServer', { length: 50 }), // Asia, SEA, MiddleEast
+
+    // Contact (Discord)
+    discordId: varchar('discordId', { length: 100 }),
+    discordVisibility: varchar('discordVisibility', { length: 20 }).default('private'), // public, team, private
+
+    // Preferences
+    skillLevel: varchar('skillLevel', { length: 50 }), // Beginner, SemiPro, Pro
+    playStyle: varchar('playStyle', { length: 50 }), // Aggressive, Tactical, Balanced
+
+    // Availability
+    availableDays: varchar('availableDays', { length: 50 }), // Weekdays, Weekends, Both
+    availableTime: varchar('availableTime', { length: 50 }), // Morning, Evening, Night
+
+    // System
+    completionPercentage: int('completionPercentage').default(0),
+    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+}, (table) => ({
+    userIdIdx: uniqueIndex('playerProfile_userId_idx').on(table.userId),
+    ignIdx: index('playerProfile_ign_idx').on(table.ign),
+}));
+
+// Player Game Profiles table (Multi-Game)
+const playerGameProfiles = mysqlTable('playerGameProfile', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('userId', { length: 191 }).notNull(),
+
+    game: varchar('game', { length: 50 }).notNull(), // BGMI, Valorant, CS2, FreeFire
+    inGameName: varchar('inGameName', { length: 191 }).notNull(),
+    inGameId: varchar('inGameId', { length: 191 }).notNull(),
+
+    verificationStatus: varchar('verificationStatus', { length: 50 }).default('PENDING'), // PENDING, VERIFIED, REJECTED
+    verifiedBy: varchar('verifiedBy', { length: 191 }), // Admin ID
+
+    meta: text('meta'), // JSON: rank, tier, level
+
+    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+}, (table) => ({
+    userIdIdx: index('playerGameProfile_userId_idx').on(table.userId),
+    gameIdIdx: index('playerGameProfile_game_inGameId_idx').on(table.game, table.inGameId),
+}));
+
+// Disputes table
+const disputes = mysqlTable('dispute', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    matchId: varchar('matchId', { length: 191 }).notNull().references(() => matches.id),
+    raisedById: varchar('raisedById', { length: 191 }).notNull().references(() => users.id),
+    reason: text('reason').notNull(),
+    evidenceUrl: varchar('evidenceUrl', { length: 500 }),
+    status: varchar('status', { length: 50 }).notNull().default('OPEN'), // OPEN, RESOLVED, REJECTED
+    resolution: text('resolution'),
+    resolvedAt: datetime('resolvedAt'),
+    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+}, (table) => ({
+    matchIdIdx: index('dispute_matchId_idx').on(table.matchId),
+    raisedByIdIdx: index('dispute_raisedById_idx').on(table.raisedById),
+    statusIdx: index('dispute_status_idx').on(table.status),
+}));
+
+// Host Applications (Phase 3)
+const hostApplications = mysqlTable('host_applications', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
+    status: mysqlEnum('status', ['PENDING', 'APPROVED', 'REJECTED']).default('PENDING').notNull(),
+    documentsUrl: varchar('documents_url', { length: 500 }),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow(),
+    reviewedAt: timestamp('reviewed_at'),
+    reviewedBy: varchar('reviewed_by', { length: 191 }) // Admin ID
+});
+
+// Community Posts (Phase 4)
+const posts = mysqlTable('posts', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
+    content: text('content').notNull(),
+    type: mysqlEnum('type', ['GENERAL', 'ACHIEVEMENT', 'TOURNAMENT_UPDATE']).default('GENERAL').notNull(),
+    mediaUrl: varchar('media_url', { length: 500 }),
+    likesCount: int('likes_count').default(0),
+    isDeleted: boolean('is_deleted').default(false),
+    createdAt: timestamp('created_at').defaultNow()
+});
+
 module.exports = {
     uidCounters,
     users,
@@ -272,5 +421,13 @@ module.exports = {
     auditLogs,
     games,
     registrations,
-    matches
+    matches,
+    playerProfiles,
+    playerGameProfiles,
+    adminAssignments,
+    disputes,
+    userCounters,
+    hostProfiles,
+    hostApplications, // New
+    posts // New
 };

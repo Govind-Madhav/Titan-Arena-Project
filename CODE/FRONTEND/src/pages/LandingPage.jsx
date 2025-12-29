@@ -470,18 +470,22 @@ function CTASection() {
                     whileInView={{ opacity: 1, scale: 1 }}
                     viewport={{ once: true }}
                 >
-                    <GlowBorder className="p-12 text-center">
-                        <Crown size={48} className="text-titan-purple mx-auto mb-6" />
-                        <h2 className="font-display text-3xl sm:text-4xl font-bold mb-4">
-                            Ready to become a <GradientText>Champion</GradientText>?
-                        </h2>
-                        <p className="text-white/60 max-w-xl mx-auto mb-8">
-                            Create your account, build your team, and compete in tournaments
-                            with players from around the world.
-                        </p>
-                        <Link to="/auth" className="btn-neon text-lg px-10 py-4 cursor-target">
-                            Get Started Free
-                        </Link>
+                    <GlowBorder className="text-center">
+                        <div className="p-12">
+                            <Crown size={48} className="text-titan-purple mx-auto mb-6" />
+                            <h2 className="font-display text-3xl sm:text-4xl font-bold mb-4">
+                                Ready to become a <GradientText>Champion</GradientText>?
+                            </h2>
+                            <p className="text-white/60 max-w-xl mx-auto mb-8">
+                                Create your account, build your team, and compete in tournaments
+                                with players from around the world.
+                            </p>
+                            <div className="pt-2">
+                                <Link to="/auth" className="btn-neon text-lg px-10 py-4 cursor-target inline-block">
+                                    Get Started Free
+                                </Link>
+                            </div>
+                        </div>
                     </GlowBorder>
                 </motion.div>
             </div>

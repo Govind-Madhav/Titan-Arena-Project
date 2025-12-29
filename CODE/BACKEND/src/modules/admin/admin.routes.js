@@ -6,26 +6,38 @@
 const express = require('express');
 const router = express.Router();
 const adminController = require('./admin.controller');
-const { authRequired } = require('../../middleware/auth.middleware');
-const { requireAdmin, requireSuperAdmin } = require('../../middleware/role.middleware');
+const { authRequired: authenticate, authorize } = require('../../middleware/auth.middleware');
 
-router.use(authRequired, requireAdmin());
-
-// Dashboard
-router.get('/dashboard', adminController.getDashboard);
+// All admin routes require ADMIN role
+router.use(authenticate, authorize('ADMIN'));
 
 // User management
-router.get('/users', adminController.listUsers);
-router.patch('/users/:id/ban', adminController.banUser);
-router.patch('/users/:id/unban', adminController.unbanUser);
-router.patch('/users/:id/role', requireSuperAdmin(), adminController.updateUserRole);
+router.get('/users', adminController.getAllUsers);
+router.get('/admins', adminController.getAdmins); // New endpoint
+router.get('/pending-players', adminController.getPendingPlayers);
+router.get('/verified-players', adminController.getVerifiedPlayers);
+router.put('/approve-player/:id', adminController.approvePlayer);
+router.delete('/delete-player/:id', adminController.deletePlayer);
 
-// Withdrawals
-router.get('/withdrawals', adminController.listWithdrawals);
-router.patch('/withdrawals/:id/approve', adminController.approveWithdrawal);
-router.patch('/withdrawals/:id/reject', adminController.rejectWithdrawal);
+router.get('/users/:id', adminController.getUserById);
+router.put('/users/:id', adminController.updateUser);
+// router.delete('/users/:id', adminController.deleteUser);
+router.put('/users/:id/role', adminController.updateUserRole);
 
-// Audit logs
-router.get('/audit-logs', adminController.getAuditLogs);
+// Tournament management
+router.get('/tournaments', adminController.getAllTournaments);
+router.delete('/tournaments/:id', adminController.deleteTournament);
+router.put('/toggle-tournament-status/:id', adminController.toggleTournamentStatus);
+
+// Statistics/Dashboard
+router.get('/stats', adminController.getStats);
+
+// Super Admin Operations
+router.post('/reassign-workload', authorize('SUPERADMIN'), adminController.reassignWorkload);
+
+// Host Application Management (Phase 3)
+router.get('/applications', adminController.getPendingHostApplications);
+router.post('/applications/:applicationId/approve', adminController.approveHostApplication);
+router.post('/applications/:applicationId/reject', adminController.rejectHostApplication);
 
 module.exports = router;

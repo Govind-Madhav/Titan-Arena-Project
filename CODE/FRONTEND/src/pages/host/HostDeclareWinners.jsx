@@ -70,8 +70,8 @@ const HostDeclareWinners = () => {
     setLoading(true);
     try {
       const response = await api.post(
-        `/host/announce-winners/${tournamentId}`,
-        winners
+        `/tournaments/${tournamentId}/winners`,
+        { winners }
       );
 
       if (response.data.status === 'success') {

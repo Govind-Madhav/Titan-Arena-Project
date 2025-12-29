@@ -11,7 +11,7 @@ import useAuthStore from '../../store/authStore'
 import { Particles } from '../../Components/effects/ReactBits'
 
 export default function ProfilePage() {
-    const { user, getDashboard } = useAuthStore()
+    const { user, getDashboard, getProfile } = useAuthStore()
     const [loading, setLoading] = useState(true)
     const [dashboardData, setDashboardData] = useState({
         tournamentsJoined: 0,
@@ -26,6 +26,9 @@ export default function ProfilePage() {
 
     useEffect(() => {
         const fetchData = async () => {
+            // Fetch latest profile data to ensure local state is synced
+            await getProfile()
+
             const result = await getDashboard()
             if (result.success) {
                 setDashboardData(result.data)
@@ -33,7 +36,7 @@ export default function ProfilePage() {
             setLoading(false)
         }
         fetchData()
-    }, [getDashboard])
+    }, [getDashboard, getProfile])
 
     // Calculate K/D Ratio (Mock calculation since we don't have kills/deaths in schema yet)
     // We'll use Win/Loss ratio as a proxy for "Performance Ratio" for now
@@ -87,7 +90,7 @@ export default function ProfilePage() {
                                     <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
                                 ) : (
                                     <span className="font-display font-bold text-4xl md:text-5xl text-white/90">
-                                        {user?.username?.charAt(0).toUpperCase()}
+                                        {(user?.ign || user?.username || 'P').charAt(0).toUpperCase()}
                                     </span>
                                 )}
                             </div>
@@ -138,7 +141,7 @@ export default function ProfilePage() {
                         ) : (
                             <>
                                 <h1 className="font-display font-bold text-3xl md:text-5xl text-white mb-2">
-                                    {user?.username}
+                                    {user?.ign || user?.username}
                                 </h1>
                                 <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-white/60 mb-4">
                                     <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 text-sm">
@@ -162,9 +165,9 @@ export default function ProfilePage() {
 
                     {!isEditing && (
                         <div className="flex gap-4">
-                            <button onClick={() => setIsEditing(true)} className="btn-secondary px-6 flex items-center gap-2">
+                            <Link to="/settings" className="btn-secondary px-6 flex items-center gap-2">
                                 <Edit size={16} /> Edit Profile
-                            </button>
+                            </Link>
                             <Link to="/wallet" className="btn-ghost px-6">Wallet</Link>
                         </div>
                     )}

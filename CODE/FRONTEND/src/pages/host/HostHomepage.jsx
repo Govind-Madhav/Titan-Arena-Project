@@ -3,7 +3,7 @@
  * This code is proprietary and confidential.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -23,17 +23,33 @@ import useAuthStore from '../../store/authStore';
 import { GradientText, SpotlightCard } from '../../Components/effects/ReactBits';
 
 const HostDashboard = () => {
-  const { user } = useAuthStore();
+  const { user, getHostDashboard } = useAuthStore();
+  const [stats, setStats] = useState({
+    activeTournaments: 0,
+    totalPlayers: 0,
+    prizePool: 0,
+    successRate: "0%"
+  });
+  const [loading, setLoading] = useState(true);
 
-  // Mock Stats - In real app, fetch from API
-  const stats = {
-    activeTournaments: 8,
-    totalPlayers: 450,
-    prizePool: 150000,
-    successRate: "98%"
-  };
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const result = await getHostDashboard();
+        if (result && result.success && result.data && result.data.stats) {
+          setStats(result.data.stats);
+        }
+      } catch (error) {
+        console.error("Dashboard fetch error", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchStats();
+  }, [getHostDashboard]);
 
   const formatCurrency = (amount) => {
+    if (typeof amount !== 'number') return '₹0';
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
@@ -70,28 +86,28 @@ const HostDashboard = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
             <StatsCard
               title="Active Tournaments"
-              value={stats.activeTournaments}
+              value={loading ? "..." : stats.activeTournaments}
               icon={Trophy}
               color="text-yellow-400"
               border="border-yellow-500/20"
             />
             <StatsCard
               title="Total Players"
-              value={stats.totalPlayers}
+              value={loading ? "..." : stats.totalPlayers}
               icon={Users}
               color="text-blue-400"
-              trend="+15% this month"
+              trend=""
             />
             <StatsCard
               title="Prize Pool"
-              value={formatCurrency(stats.prizePool)}
+              value={loading ? "..." : formatCurrency(stats.prizePool)}
               icon={DollarSign}
               color="text-green-400"
-              trend="+22% revenue"
+              trend=""
             />
             <StatsCard
               title="Success Rate"
-              value={stats.successRate}
+              value={loading ? "..." : (stats.successRate || "100%")}
               icon={Activity}
               color="text-purple-400"
             />

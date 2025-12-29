@@ -254,31 +254,33 @@ export default function TournamentDetailPage() {
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.2 }}
                         >
-                            <GlowBorder className="p-6">
-                                <h3 className="font-heading text-lg font-semibold mb-4">Join Tournament</h3>
-                                <div className="space-y-3 mb-6">
-                                    <div className="flex justify-between">
-                                        <span className="text-white/60">Entry Fee</span>
-                                        <span className="font-heading font-bold">{formatCurrency(tournament.entryFee)}</span>
+                            <GlowBorder>
+                                <div className="p-6 sm:p-8">
+                                    <h3 className="font-heading text-lg font-semibold mb-6">Join Tournament</h3>
+                                    <div className="space-y-4 mb-8">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-white/60">Entry Fee</span>
+                                            <span className="font-heading font-bold text-lg">{formatCurrency(tournament.entryFee)}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-white/60">Format</span>
+                                            <span className="font-heading font-bold">{tournament.type}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-white/60">Game</span>
+                                            <span className="font-heading font-bold">{tournament.game}</span>
+                                        </div>
                                     </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-white/60">Format</span>
-                                        <span className="font-heading font-bold">{tournament.type}</span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                        <span className="text-white/60">Game</span>
-                                        <span className="font-heading font-bold">{tournament.game}</span>
-                                    </div>
+                                    <button
+                                        onClick={handleRegister}
+                                        disabled={registering || tournament.status !== 'UPCOMING'}
+                                        className="btn-neon w-full py-4 text-lg font-bold tracking-wide disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {registering ? 'Registering...' :
+                                            tournament.status !== 'UPCOMING' ? 'Registration Closed' :
+                                                'Register Now'}
+                                    </button>
                                 </div>
-                                <button
-                                    onClick={handleRegister}
-                                    disabled={registering || tournament.status !== 'UPCOMING'}
-                                    className="btn-neon w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {registering ? 'Registering...' :
-                                        tournament.status !== 'UPCOMING' ? 'Registration Closed' :
-                                            'Register Now'}
-                                </button>
                             </GlowBorder>
                         </motion.div>
 

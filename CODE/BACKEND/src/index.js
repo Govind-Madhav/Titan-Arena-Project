@@ -13,18 +13,19 @@ const { createRedisClient, checkRedisHealth, closeRedis } = require('./config/re
 
 
 // Import routes
-const authRoutes = require('./routes/auth.routes');
-const userRoutes = require('./routes/user.routes');
-const tournamentRoutes = require('./routes/tournament.routes');
-const paymentRoutes = require('./routes/payment.routes');
+const authRoutes = require('./modules/auth/auth.routes');
+const userRoutes = require('./modules/user/user.routes');
+const tournamentRoutes = require('./modules/tournament/tournament.routes');
 const walletRoutes = require('./modules/wallet/wallet.routes');
-const adminRoutes = require('./routes/admin.routes');
-const gameRoutes = require('./routes/game.routes');
+const adminRoutes = require('./modules/admin/admin.routes');
 
 const app = express();
 
 // Middleware
 const security = require('./middleware/security.middleware');
+
+// Enable if you're behind a reverse proxy (Heroku, Bluemix, AWS ELB, Nginx, etc)
+app.set('trust proxy', 1);
 
 app.use(security.helmet);
 app.use(security.globalLimiter);
@@ -39,7 +40,13 @@ app.use(cors({
 app.use(require('cookie-parser')());
 
 // ✅ FIX: Explicit JSON size limit to prevent memory abuse
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '100kb' })); // Reduced to 100kb as per recommendation
+
+// ✅ FIX: Preventing HTTP Parameter Pollution (HPP)
+app.use(security.hpp);
+
+// Note: Blind XSS sanitization middleware removed per strict security review.
+// Input validation (Zod) and Output encoding (React/Engine) is the correct defense.
 
 // Health check
 app.get('/api/health', async (req, res) => {
@@ -65,14 +72,15 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/tournaments', tournamentRoutes);
-app.use('/api/payments', paymentRoutes);
-app.use('/api/wallet', walletRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/games', gameRoutes);
-app.use('/api/matches', require('./modules/match/match.routes'));
+app.use('/api/auth', require('./modules/auth/auth.routes'));
+app.use('/api/admin', require('./modules/admin/admin.routes'));
+app.use('/api/tournaments', require('./modules/tournament/tournament.routes'));
+app.use('/api/games', require('./modules/game/game.routes'));
+app.use('/api/teams', require('./modules/team/team.routes'));
+app.use('/api/wallet', require('./modules/wallet/wallet.routes')); // Wallet Routes
+app.use('/api/payment', require('./modules/payment/payment.routes'));
+app.use('/api/host', require('./modules/host/host.routes')); // Host Module
+app.use('/api/social', require('./modules/social/social.routes')); // New Social Module
 
 // Error handling middleware
 app.use((err, req, res, next) => {

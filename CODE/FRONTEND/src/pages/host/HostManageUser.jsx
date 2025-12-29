@@ -35,11 +35,21 @@ const HostManageUser = () => {
 
     try {
       setLoading(true);
-      const response = await api.get(`/host/players/${inputTournamentId}`);
-      if (response.data.status === 'success') {
-        const playersWithStatus = response.data.data.map(player => ({
-          ...player,
-          status: 'Pending' // Default status initially if not provided by backend
+      // Use correct endpoint: /tournaments/:id/participants
+      const response = await api.get(`/tournaments/${inputTournamentId}/participants`);
+      // Check response structure carefully: response.data.success or just response.data
+      const data = response.data;
+      if (data.success) {
+        // Backend returns "data" as array of registrations (with player info)
+        // Mapped to flat structure for UI
+        const playersWithStatus = (data.data || []).map(reg => ({
+          id: reg.userId, // Use userId as the identifier for actions
+          participantId: reg.id, // Registration ID for updates
+          username: reg.user?.username,
+          fullName: reg.user?.username, // Fallback if no real name
+          email: reg.user?.email,
+          imageUrl: reg.playerProfile?.avatarUrl,
+          status: reg.status || 'PENDING'
         }));
         setUsers(playersWithStatus);
         setTournamentId(inputTournamentId);
@@ -49,16 +59,20 @@ const HostManageUser = () => {
       }
     } catch (error) {
       console.error(error);
-      toast.error('Error fetching players');
+      toast.error('Error fetching players. Check ID.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleApprove = async (playerId) => {
+  const handleApprove = async (userObj) => {
     try {
-      await api.put(`/host/approve-reject/${playerId}/${tournamentId}?isApproved=true`);
-      setUsers(users.map(user => user.id === playerId ? { ...user, status: 'Approved' } : user));
+      // Use registration ID (participantId) for update
+      const pid = userObj.participantId;
+      if (!pid) return;
+
+      await api.put(`/tournaments/${tournamentId}/participants/${pid}/status`, { status: 'CONFIRMED' });
+      setUsers(users.map(u => u.participantId === pid ? { ...u, status: 'CONFIRMED' } : u));
       toast.success('Player approved');
     } catch (error) {
       console.error(error);
@@ -66,10 +80,13 @@ const HostManageUser = () => {
     }
   };
 
-  const handleReject = async (playerId) => {
+  const handleReject = async (userObj) => {
     try {
-      await api.put(`/host/approve-reject/${playerId}/${tournamentId}?isApproved=false`);
-      setUsers(users.map(user => user.id === playerId ? { ...user, status: 'Rejected' } : user));
+      const pid = userObj.participantId;
+      if (!pid) return;
+
+      await api.put(`/tournaments/${tournamentId}/participants/${pid}/status`, { status: 'REJECTED' });
+      setUsers(users.map(u => u.participantId === pid ? { ...u, status: 'REJECTED' } : u));
       toast.success('Player rejected');
     } catch (error) {
       console.error(error);
@@ -153,28 +170,28 @@ const HostManageUser = () => {
                   <div className="flex-1 min-w-0">
                     <h4 className="font-heading font-bold text-lg text-white truncate">{user.fullName || 'Unknown Player'}</h4>
                     <p className="text-sm text-white/40 truncate">{user.email}</p>
-                    <div className={`mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${user.status === 'Approved' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
-                      user.status === 'Rejected' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                    <div className={`mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${user.status === 'CONFIRMED' ? 'bg-green-500/10 text-green-400 border-green-500/20' :
+                      user.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
                         'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
                       }`}>
-                      {user.status === 'Approved' && <CheckCircle size={12} />}
-                      {user.status === 'Rejected' && <XCircle size={12} />}
-                      {user.status === 'Pending' && <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
+                      {user.status === 'CONFIRMED' && <CheckCircle size={12} />}
+                      {user.status === 'REJECTED' && <XCircle size={12} />}
+                      {user.status === 'PENDING' && <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
                       {user.status}
                     </div>
                   </div>
                 </div>
 
-                {user.status === 'Pending' && (
+                {user.status === 'PENDING' && (
                   <div className="flex border-t border-white/5 divide-x divide-white/5 mt-auto">
                     <button
-                      onClick={() => handleApprove(user.id)}
+                      onClick={() => handleApprove(user)}
                       className="flex-1 py-3 bg-green-500/5 hover:bg-green-500/20 text-green-400/80 hover:text-green-400 transition-colors font-medium text-sm flex items-center justify-center gap-2"
                     >
                       <CheckCircle size={16} /> Approve
                     </button>
                     <button
-                      onClick={() => handleReject(user.id)}
+                      onClick={() => handleReject(user)}
                       className="flex-1 py-3 bg-red-500/5 hover:bg-red-500/20 text-red-400/80 hover:text-red-400 transition-colors font-medium text-sm flex items-center justify-center gap-2"
                     >
                       <XCircle size={16} /> Reject

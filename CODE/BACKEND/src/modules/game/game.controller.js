@@ -5,19 +5,22 @@
 
 const { db } = require('../../db');
 const { games } = require('../../db/schema');
-const { eq } = require('drizzle-orm');
+const { eq, asc } = require('drizzle-orm');
 
-// Get all games
-exports.getGames = async (req, res) => {
+// Get all active games
+exports.getAllGames = async (req, res) => {
     try {
-        const allGames = await db.select().from(games).where(eq(games.isActive, true));
+        const result = await db.select()
+            .from(games)
+            .where(eq(games.isActive, true))
+            .orderBy(asc(games.name));
 
         res.json({
             success: true,
-            data: allGames
+            data: result
         });
     } catch (error) {
-        console.error('Get games error:', error);
+        console.error('Get all games error:', error);
         res.status(500).json({
             success: false,
             message: 'Failed to fetch games'
@@ -25,14 +28,16 @@ exports.getGames = async (req, res) => {
     }
 };
 
-// Get game by slug
+// Get single game by slug
 exports.getGameBySlug = async (req, res) => {
     try {
         const { slug } = req.params;
-        const result = await db.select().from(games).where(eq(games.slug, slug)).limit(1);
-        const game = result[0];
+        const result = await db.select()
+            .from(games)
+            .where(eq(games.slug, slug))
+            .limit(1);
 
-        if (!game) {
+        if (!result.length) {
             return res.status(404).json({
                 success: false,
                 message: 'Game not found'
@@ -41,10 +46,10 @@ exports.getGameBySlug = async (req, res) => {
 
         res.json({
             success: true,
-            data: game
+            data: result[0]
         });
     } catch (error) {
-        console.error('Get game error:', error);
+        console.error('Get game by slug error:', error);
         res.status(500).json({
             success: false,
             message: 'Failed to fetch game'

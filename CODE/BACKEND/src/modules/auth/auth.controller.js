@@ -4,7 +4,7 @@
  */
 
 const { db } = require('../../db');
-const { users, wallets, refreshTokens } = require('../../db/schema');
+const { users, wallets, refreshTokens, playerProfiles, hostProfiles } = require('../../db/schema');
 const { eq, or, and, gt } = require('drizzle-orm');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -29,6 +29,7 @@ const signupSchema = z.object({
     country: z.string().min(2, 'Country is required'),
     state: z.string().min(2, 'State is required'),
     city: z.string().optional(),
+    username: z.string().min(3, 'Username must be at least 3 characters'), // Mandatory Gamertag/Username
     termsAccepted: z.boolean().refine(val => val === true, 'You must accept the terms and conditions'),
     role: z.enum(['PLAYER', 'ADMIN', 'SUPERADMIN']).optional().default('PLAYER')
 });
@@ -56,7 +57,6 @@ const generateRefreshToken = (userId) => {
 };
 
 // Signup
-// Signup
 exports.signup = async (req, res) => {
     try {
         const data = signupSchema.parse(req.body);
@@ -76,79 +76,98 @@ exports.signup = async (req, res) => {
             });
         }
 
-        // Hash password
-        const hashedPassword = await bcrypt.hash(data.password, 12);
+        let userId;
 
-        // Create user with wallet in transaction
-        const result = await db.transaction(async (tx) => {
-            // Generate Platform UID (Atomic)
-            const { uid, regionCode } = await uidService.generatePlatformUid(data.country, tx);
+        // 2. Transactional Creation
+        try {
+            await db.transaction(async (tx) => {
+                // Generate UID (Atomic)
+                const { uid: platformUid, regionCode } = await uidService.generatePlatformUid(data.country, tx);
 
-            // Generate Public Username
-            const username = await uidService.generatePublicUsername();
+                // Create User
+                const [result] = await tx.insert(users).values({
+                    id: crypto.randomUUID(), // Generate UUID for user ID
+                    platformUid: platformUid,
+                    username: data.username, // Mandatory now
+                    email: data.email,
+                    passwordHash: await bcrypt.hash(data.password, 12), // Use 12 rounds for bcrypt
+                    legalName: data.legalName,
+                    dateOfBirth: new Date(data.dateOfBirth),
+                    phone: data.phone,
+                    countryCode: uidService.getCallingCode(data.country).toString(), // derived
+                    state: data.state,
+                    city: data.city,
+                    regionCode: regionCode,
+                    role: data.role || 'PLAYER',
+                    hostStatus: 'NOT_VERIFIED',
+                    emailVerified: false,
+                    isBanned: false,
+                    registrationCompleted: false,
+                    termsAccepted: data.termsAccepted,
+                    passwordUpdatedAt: new Date(), // Security
+                    lastLoginAt: new Date(),    // Auto-login context
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                });
 
-            const userId = crypto.randomUUID();
-            const now = new Date();
+                // Drizzle-orm insert returns an array of results, or a single result depending on driver.
+                // For SQLite, it might be { changes: 1, lastInsertRowid: 1 }. For Postgres, it returns the inserted rows.
+                // We need the actual ID. If `id` is explicitly set (as with `crypto.randomUUID()`), we can use that.
+                // If the DB generates it, we'd need to fetch it or rely on driver-specific return values.
+                // Assuming `id: crypto.randomUUID()` makes `userId` directly available.
+                userId = result.id; // If `id` is explicitly set in values, it's available.
 
-            await tx.insert(users).values({
-                id: userId,
-                platformUid: uid,
-                username: username,
-                email: data.email,
-                passwordHash: hashedPassword,
+                // Create Wallet
+                await tx.insert(wallets).values({
+                    userId: userId,
+                    balance: 0,
+                    locked: 0
+                });
 
-                legalName: data.legalName,
-                dateOfBirth: new Date(data.dateOfBirth),
-                phone: data.phone,
-                countryCode: data.country, // Assuming frontend still sends "country" but value is code, or we map it. For now, map field.
-                state: data.state,
-                city: data.city,
-                regionCode: regionCode,
-
-                role: data.role,
-                hostStatus: 'NOT_VERIFIED',
-                emailVerified: false,
-                isBanned: false,
-
-                registrationCompleted: false,
-                termsAccepted: data.termsAccepted,
-
-                createdAt: now,
-                updatedAt: now
+                // Create Profile
+                await tx.insert(playerProfiles).values({
+                    userId: userId,
+                    ign: data.username, // Sync IGN with Username
+                    realName: data.legalName,
+                    dateOfBirth: new Date(data.dateOfBirth),
+                    country: data.country,
+                    state: data.state,
+                    city: data.city,
+                    completionPercentage: 10
+                });
             });
-
-            await tx.insert(wallets).values({
-                userId: userId,
-                balance: 0,
-                locked: 0
-            });
-
-            return {
-                id: userId,
-                email: data.email,
-                username: username
-            };
-        });
+        } catch (error) {
+            // Handle Race Condition (Duplicate Entry caught by DB constraint)
+            if (error.code === 'ER_DUP_ENTRY' || error.message?.includes('duplicate key')) { // Generic check for duplicate key errors
+                if (error.sqlMessage?.includes('username') || error.message?.includes('username')) {
+                    const suggestions = generateSuggestions(data.username);
+                    return res.status(409).json({
+                        success: false,
+                        message: 'Gamertag already taken',
+                        suggestions
+                    });
+                }
+                if (error.sqlMessage?.includes('email') || error.message?.includes('email')) {
+                    return res.status(409).json({ success: false, message: 'Email already registered' });
+                }
+            }
+            throw error;
+        }
 
         // Generate & Send OTP
         try {
-            const otp = await otpService.generateOtp(result.email);
-            await emailService.sendVerificationEmail(result.email, otp, result.username);
-            // Note: Updated emailService to accept OTP instead of token if needed, 
-            // or we just reuse the message but send OTP as the 'token' arg if text allows.
-            // Assuming emailService.sendVerificationEmail(email, code, name).
+            const otp = await otpService.generateOtp(data.email);
+            await emailService.sendVerificationEmail(data.email, otp, data.username);
         } catch (emailError) {
             console.error('Failed to send verification email:', emailError);
-            // We might want to rollback or just let them resend?
-            // "User created but email failed" -> They can use "Resend OTP".
-            // So we return success with warning or just success.
+            // User created, allow them to resend OTP later.
         }
 
         res.status(201).json({
             success: true,
             message: 'Verification code sent to email. Please verify to complete registration.',
-            // No token issued
         });
+
     } catch (error) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({
@@ -176,12 +195,24 @@ exports.login = async (req, res) => {
             email: users.email,
             passwordHash: users.passwordHash,
             username: users.username,
+            platformUid: users.platformUid,
+            playerCode: users.playerCode,
+            isAdmin: users.isAdmin, // New
             role: users.role,
             hostStatus: users.hostStatus,
             isBanned: users.isBanned,
-            emailVerified: users.emailVerified
+            emailVerified: users.emailVerified,
+            // Host Profile
+            hostProfileStatus: hostProfiles.status,
+            hostCode: hostProfiles.hostCode,
+            // Profile fields
+            bio: playerProfiles.bio,
+            avatarUrl: playerProfiles.avatarUrl,
+            ign: playerProfiles.ign
         })
             .from(users)
+            .leftJoin(playerProfiles, eq(users.id, playerProfiles.userId)) // Join
+            .leftJoin(hostProfiles, eq(users.id, hostProfiles.userId)) // Join Host Profile
             .where(eq(users.email, data.email))
             .limit(1);
 
@@ -216,12 +247,22 @@ exports.login = async (req, res) => {
             });
         }
 
-        const accessToken = generateAccessToken(user.id);
-        const refreshToken = generateRefreshToken(user.id);
+        // 4. Token & Session
+        const tokenPayload = {
+            id: user.id,
+            uid: user.id, // Legacy
+            username: user.username,
+            role: user.isAdmin ? (user.role === 'SUPERADMIN' ? 'SUPERADMIN' : 'ADMIN') : 'PLAYER', // Logic map
+            isAdmin: user.isAdmin,
+            isHost: user.hostProfileStatus === 'ACTIVE',
+            playerCode: user.playerCode
+        };
 
-        // Store refresh token
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 7);
+        const token = jwt.sign(
+            tokenPayload,
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
 
         await db.insert(refreshTokens).values({
             token: refreshToken,
@@ -250,9 +291,18 @@ exports.login = async (req, res) => {
                     id: user.id,
                     email: user.email,
                     username: user.username,
-                    role: user.role,
+                    playerCode: user.playerCode,
+                    platformUid: user.playerCode, // Legacy Mapping
+                    role: tokenPayload.role,
+                    isAdmin: user.isAdmin,
+                    isHost: tokenPayload.isHost,
+                    hostCode: user.hostCode,
                     hostStatus: user.hostStatus,
-                    emailVerified: user.emailVerified
+                    emailVerified: user.emailVerified,
+                    // valid profile fields
+                    bio: user.bio,
+                    avatarUrl: user.avatarUrl,
+                    ign: user.ign
                 },
                 accessToken,
                 expiresAt: accessTokenExpiry.toISOString()
@@ -411,6 +461,7 @@ exports.getMe = async (req, res) => {
                 id: users.id,
                 email: users.email,
                 username: users.username,
+                platformUid: users.platformUid, // Added Public UID
                 role: users.role,
                 hostStatus: users.hostStatus,
                 isBanned: users.isBanned,
@@ -696,4 +747,126 @@ exports.updateProfile = async (req, res) => {
             message: 'Failed to update profile'
         });
     }
+};
+
+// Forgot Password
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+
+        // Generic response
+        const genericResponse = {
+            success: true,
+            message: 'If an account exists with this email, a verification code has been sent.'
+        };
+
+        const result = await db.select()
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+
+        const user = result[0];
+
+        // Fail silently if user not found (Enumeration Protection)
+        if (!user) {
+            // Fake delay to mimic processing time? Optional.
+            return res.json(genericResponse);
+        }
+
+        try {
+            // Generate OTP with scope 'reset'
+            const otp = await otpService.generateOtp(user.email, 'reset');
+            await emailService.sendPasswordResetEmail(user.email, otp, user.username);
+        } catch (err) {
+            console.error('Forgot Password Dispatch Error:', err);
+            // If checking rate limit error, maybe return 429?
+            // "Please wait before requesting another code." comes from service.
+            if (err.message.includes('wait')) {
+                return res.status(429).json({ success: false, message: err.message });
+            }
+            // Otherwise stick to generic success to avoid leaking faults
+        }
+
+        res.json(genericResponse);
+
+    } catch (error) {
+        console.error('Forgot password error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'An unexpected error occurred.'
+        });
+    }
+};
+
+// Reset Password
+exports.resetPassword = async (req, res) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+
+        if (!email || !otp || !newPassword) {
+            return res.status(400).json({ success: false, message: 'All fields are required' });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+        }
+
+        // Verify OTP (Scope: Reset)
+        try {
+            await otpService.verifyOtp(email, otp, 'reset');
+        } catch (err) {
+            return res.status(400).json({ success: false, message: err.message });
+        }
+
+        // Check user
+        const result = await db.select()
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+
+        const user = result[0];
+        if (!user) {
+            return res.status(400).json({ success: false, message: 'User not found' });
+        }
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+        // Update Password
+        await db.update(users)
+            .set({ passwordHash: hashedPassword })
+            .where(eq(users.id, user.id));
+
+        // Invalidate all sessions (Delete refresh tokens)
+        await db.delete(refreshTokens).where(eq(refreshTokens.userId, user.id));
+
+        // Clear cookie if present
+        res.clearCookie('refreshToken');
+
+        res.json({
+            success: true,
+            message: 'Password reset successfully. Please login with your new password.'
+        });
+
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to reset password'
+        });
+    }
+};
+
+// Helper: Generate Username Suggestions
+const generateSuggestions = (baseTag) => {
+    const suggestions = [];
+    const randomSuffix = () => Math.floor(Math.random() * 1000);
+    suggestions.push(`${baseTag}${randomSuffix()}`);
+    suggestions.push(`${baseTag}_${randomSuffix()}`);
+    suggestions.push(`${baseTag}XP`);
+    return suggestions;
 };

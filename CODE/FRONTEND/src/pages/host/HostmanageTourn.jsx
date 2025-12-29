@@ -38,21 +38,24 @@ const ManageTournamentsPage = () => {
   const [loading, setLoading] = useState(true);
 
   const navigate = useNavigate();
-  const hostId = sessionStorage.getItem('hostId');
+  const { user } = useAuthStore(); // Use global user state if needed
 
   useEffect(() => {
     fetchData();
-  }, [hostId]);
+  }, []);
 
   const fetchData = async () => {
-    if (!hostId) return;
     try {
       setLoading(true);
+      // Fetch "My Tournaments" directly from the dashboard/host endpoint
+      // Using /tournaments/host/dashboard which returns { tournaments, stats }
       const [tournRes, gameRes] = await Promise.all([
-        api.get(`/tournaments/host/${hostId}`),
+        api.get('/tournaments/host/dashboard'),
         api.get('/games')
       ]);
-      setTournaments(tournRes.data.data || []);
+
+      // The endpoint returns { data: { tournaments: [], stats: {} } }
+      setTournaments(tournRes.data.data.tournaments || []);
       setGames(gameRes.data.data || []);
     } catch (err) {
       console.error(err);

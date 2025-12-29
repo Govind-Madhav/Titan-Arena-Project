@@ -139,7 +139,7 @@ const useAuthStore = create(
             signup: async (data) => {
                 set({ isLoading: true })
                 try {
-                    await api.post('/auth/register', data) // Changed endpoint to /register as per controller
+                    await api.post('/auth/signup', data) // Corrected: endpoint is /signup
                     // Response: { message: "Verification code sent..." }
                     // Do NOT set auth state yet.
                     set({ isLoading: false })
@@ -234,11 +234,78 @@ const useAuthStore = create(
 
             getNotifications: async () => {
                 try {
-                    const res = await api.get('/auth/notifications')
+                    const res = await api.get('/notifications')
                     return { success: true, data: res.data.data }
                 } catch (error) {
                     console.error('Get notifications error:', error)
                     return { success: false, error }
+                }
+            },
+
+            // --- Profile Management ---
+
+            getProfile: async () => {
+                try {
+                    const res = await api.get('/users/me/profile')
+                    const fullProfile = res.data.data
+
+                    // Update local state with fetched profile data
+                    set(state => ({
+                        user: {
+                            ...state.user,
+                            ...fullProfile.profile, // bio, avatarUrl, ign, etc.
+                            // Ensure core user fields are preserved or updated if needed
+                            email: fullProfile.email || state.user.email,
+                            username: fullProfile.username || state.user.username
+                        }
+                    }))
+
+                    return { success: true, data: fullProfile }
+                } catch (error) {
+                    console.error('Get profile error:', error)
+                    return { success: false, message: error.response?.data?.message }
+                }
+            },
+
+            updateProfile: async (data) => {
+                try {
+                    const res = await api.patch('/users/me/profile', data)
+
+                    // Optionally update local user state if core fields changed
+                    set(state => ({ user: { ...state.user, ...data } }))
+
+                    return { success: true, message: res.data.message }
+                } catch (error) {
+                    console.error('Update profile error:', error)
+                    return { success: false, message: error.response?.data?.message }
+                }
+            },
+
+            addGameProfile: async (data) => {
+                try {
+                    const res = await api.post('/users/me/games', data)
+                    return { success: true, message: res.data.message }
+                } catch (error) {
+                    return { success: false, message: error.response?.data?.message }
+                }
+            },
+
+            removeGameProfile: async (id) => {
+                try {
+                    const res = await api.delete(`/users/me/games/${id}`)
+                    return { success: true, message: res.data.message }
+                } catch (error) {
+                    return { success: false, message: error.response?.data?.message }
+                }
+            },
+
+            getHostDashboard: async () => {
+                try {
+                    const res = await api.get('/tournaments/host/dashboard')
+                    return { success: true, data: res.data.data }
+                } catch (error) {
+                    console.error('Get host dashboard error:', error);
+                    return { success: false, message: error.response?.data?.message || 'Failed to fetch host stats' }
                 }
             },
 
@@ -275,6 +342,38 @@ const useAuthStore = create(
                     }
 
                     return false
+                }
+            },
+
+            forgotPassword: async (email) => {
+                set({ isLoading: true })
+                try {
+                    // Always returns success (200) for security
+                    await api.post('/auth/forgot-password', { email })
+                    set({ isLoading: false })
+                    return { success: true }
+                } catch (error) {
+                    set({ isLoading: false })
+                    // Check for rate limit
+                    if (error.response?.status === 429) {
+                        return { success: false, message: error.response.data.message }
+                    }
+                    return { success: false, message: 'Something went wrong. Please try again.' }
+                }
+            },
+
+            resetPassword: async (email, otp, newPassword) => {
+                set({ isLoading: true })
+                try {
+                    await api.post('/auth/reset-password', { email, otp, newPassword })
+                    set({ isLoading: false })
+                    return { success: true }
+                } catch (error) {
+                    set({ isLoading: false })
+                    return {
+                        success: false,
+                        message: error.response?.data?.message || 'Password reset failed'
+                    }
                 }
             },
 

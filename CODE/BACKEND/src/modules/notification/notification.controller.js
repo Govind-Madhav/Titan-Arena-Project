@@ -3,33 +3,46 @@
  * This code is proprietary and confidential.
  */
 
-const prisma = require('../../config/prisma');
+const { db } = require('../../db');
+const { notifications } = require('../../db/schema');
+const { eq, and, desc, count } = require('drizzle-orm');
 
 // Get notifications
 exports.getNotifications = async (req, res) => {
     try {
         const { page = 1, limit = 20, unreadOnly } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
+        const take = parseInt(limit);
 
-        const where = { userId: req.user.id };
-        if (unreadOnly === 'true') where.isRead = false;
+        const conditions = [eq(notifications.userId, req.user.id)];
+        if (unreadOnly === 'true') {
+            conditions.push(eq(notifications.isRead, false));
+        }
 
-        const [notifications, total, unreadCount] = await Promise.all([
-            prisma.notification.findMany({
-                where,
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: parseInt(limit)
-            }),
-            prisma.notification.count({ where }),
-            prisma.notification.count({ where: { userId: req.user.id, isRead: false } })
+        // Parallel queries for data and counts
+        const [data, totalResult, unreadResult] = await Promise.all([
+            db.select()
+                .from(notifications)
+                .where(and(...conditions))
+                .orderBy(desc(notifications.createdAt))
+                .limit(take)
+                .offset(skip),
+            db.select({ count: count() })
+                .from(notifications)
+                .where(and(...conditions)),
+            db.select({ count: count() })
+                .from(notifications)
+                .where(and(eq(notifications.userId, req.user.id), eq(notifications.isRead, false)))
         ]);
+
+        const total = totalResult[0]?.count || 0;
+        const unreadCount = unreadResult[0]?.count || 0;
 
         res.json({
             success: true,
-            data: notifications,
+            data,
             unreadCount,
-            pagination: { page: parseInt(page), limit: parseInt(limit), total }
+            pagination: { page: parseInt(page), limit: take, total }
         });
     } catch (error) {
         console.error('Get notifications error:', error);
@@ -40,10 +53,12 @@ exports.getNotifications = async (req, res) => {
 // Mark as read
 exports.markAsRead = async (req, res) => {
     try {
-        await prisma.notification.updateMany({
-            where: { id: req.params.id, userId: req.user.id },
-            data: { isRead: true }
-        });
+        await db.update(notifications)
+            .set({ isRead: true })
+            .where(and(
+                eq(notifications.id, req.params.id),
+                eq(notifications.userId, req.user.id)
+            ));
 
         res.json({ success: true, message: 'Marked as read' });
     } catch (error) {
@@ -55,10 +70,12 @@ exports.markAsRead = async (req, res) => {
 // Mark all as read
 exports.markAllAsRead = async (req, res) => {
     try {
-        await prisma.notification.updateMany({
-            where: { userId: req.user.id, isRead: false },
-            data: { isRead: true }
-        });
+        await db.update(notifications)
+            .set({ isRead: true })
+            .where(and(
+                eq(notifications.userId, req.user.id),
+                eq(notifications.isRead, false)
+            ));
 
         res.json({ success: true, message: 'All notifications marked as read' });
     } catch (error) {
@@ -69,7 +86,15 @@ exports.markAllAsRead = async (req, res) => {
 
 // Helper: Send notification (used by other modules)
 exports.send = async (userId, title, message, type = 'INFO', meta = null) => {
-    return prisma.notification.create({
-        data: { userId, title, message, type, meta }
+    // Note: Drizzle insert returns result object, not the created record by default in MySQL
+    // But since this is an internal helper, returning the promise resolution is usually fine
+    // Or we can query the inserted record if needed. Here we just await insertion.
+    const metaString = meta ? JSON.stringify(meta) : null;
+    return db.insert(notifications).values({
+        userId,
+        title,
+        message,
+        type,
+        meta: metaString
     });
 };

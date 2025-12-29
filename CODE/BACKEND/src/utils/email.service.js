@@ -5,35 +5,26 @@
 
 const nodemailer = require('nodemailer');
 
-// Create transporter
-const createTransporter = () => {
-    console.log('Configuring email transporter...');
-    console.log('SMTP Config:', {
-        host: process.env.SMTP_HOST,
-        port: process.env.SMTP_PORT,
-        user: process.env.SMTP_USER ? 'Set' : 'Missing',
-        pass: process.env.SMTP_PASS ? 'Set' : 'Missing'
-    });
+// Singleton Transporter
+let transporter = null;
 
-    // Explicitly load .env from root
-    const path = require('path');
-    require('dotenv').config({ path: path.join(__dirname, '../../.env') });
+const getTransporter = () => {
+    if (transporter) return transporter;
 
     console.log('Configuring email transporter...');
-    console.log('SMTP Config:', {
-        host: process.env.SMTP_HOST,
-        port: process.env.SMTP_PORT,
-        user: process.env.SMTP_USER, // Print value to debug (will verify later)
-        passLength: process.env.SMTP_PASS ? process.env.SMTP_PASS.length : 0
+
+    // Secure Logging: Log presence of credentials, never the values
+    console.log('SMTP credentials present:', {
+        user: !!process.env.SMTP_USER,
+        pass: !!process.env.SMTP_PASS
     });
 
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-        console.error('CRITICAL: SMTP_USER or SMTP_PASS is missing directly from process.env');
-        const error = new Error('Missing SMTP credentials in process.env');
-        require('fs').writeFileSync('email-error.log', JSON.stringify({ message: error.message, env: process.env }, null, 2));
+        console.error('CRITICAL: SMTP_USER or SMTP_PASS is missing in environment variables');
+        // Do not dump env to disk.
     }
 
-    return nodemailer.createTransport({
+    transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
         port: parseInt(process.env.SMTP_PORT) || 587,
         secure: process.env.SMTP_SECURE === 'true',
@@ -42,18 +33,42 @@ const createTransporter = () => {
             pass: process.env.SMTP_PASS
         }
     });
+
+    return transporter;
+};
+
+// Helper: Sanitize inputs to prevent HTML injection
+const sanitize = (str) => {
+    if (!str) return '';
+    return String(str).replace(/[&<>"'/]/g, function (s) {
+        return {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+            '/': '&#x2F;'
+        }[s];
+    });
 };
 
 // Send verification email
 exports.sendVerificationEmail = async (email, token, username) => {
-    const transporter = createTransporter();
+    const transport = getTransporter();
+    const cleanUsername = sanitize(username);
 
-    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${token}`;
+    // For OTP, we display the code directly. The argument 'token' is actually the OTP.
+    const otp = token;
+
+    // Logging email destination only for operational tracing
+    console.log(`📧 Sending verification email to ${email}`);
 
     const mailOptions = {
         from: `"TITAN ARENA" <${process.env.SMTP_USER}>`,
         to: email,
+        replyTo: 'no-reply@titanarena.com',
         subject: '🎮 Verify Your TITAN ARENA Account',
+        text: `Welcome, ${cleanUsername}! Your verification code is: ${otp}`,
         html: `
             <!DOCTYPE html>
             <html>
@@ -67,11 +82,11 @@ exports.sendVerificationEmail = async (email, token, username) => {
                     .card { background: linear-gradient(145deg, #1a1a2e, #16162a); border-radius: 16px; padding: 40px; border: 1px solid rgba(139, 92, 246, 0.2); }
                     h2 { color: #ffffff; margin-top: 0; }
                     p { color: #a0a0a0; line-height: 1.6; }
-                    .button { display: inline-block; background: linear-gradient(135deg, #8B5CF6, #6366F1); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; margin: 20px 0; }
-                    .button:hover { opacity: 0.9; }
-                    .code { font-size: 24px; font-weight: bold; color: #8B5CF6; letter-spacing: 4px; }
+                    .code-container { background: rgba(139, 92, 246, 0.1); border: 1px dashed rgba(139, 92, 246, 0.5); padding: 20px; text-align: center; margin: 25px 0; border-radius: 8px; }
+                    .code { font-size: 32px; font-weight: 800; color: #8B5CF6; letter-spacing: 8px; font-family: 'Courier New', monospace; mso-line-height-rule: exactly; line-height: 1; display: inline-block;}
                     .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
                     .highlight { color: #8B5CF6; }
+                    .warning { font-size: 12px; color: #ff6b6b; margin-top: 15px; }
                 </style>
             </head>
             <body>
@@ -80,22 +95,24 @@ exports.sendVerificationEmail = async (email, token, username) => {
                         <h1>TITAN <span>ARENA</span></h1>
                     </div>
                     <div class="card">
-                        <h2>Welcome, ${username}! 🎮</h2>
-                        <p>Thanks for signing up for TITAN ARENA. To complete your registration and start competing in tournaments, please verify your email address.</p>
+                        <h2>Welcome, ${cleanUsername}! 🎮</h2>
+                        <p>Thanks for signing up for TITAN ARENA. Use the secure code below to complete your identity verification.</p>
                         
-                        <div style="text-align: center;">
-                            <a href="${verificationUrl}" class="button">Verify Email Address</a>
+                        <div class="code-container">
+                            <span class="code">${otp}</span>
                         </div>
                         
-                        <p style="font-size: 14px; margin-top: 20px;">Or copy and paste this link in your browser:</p>
-                        <p style="font-size: 12px; word-break: break-all; color: #8B5CF6;">${verificationUrl}</p>
+                        <p style="font-size: 14px; text-align: center;">This code will expire in 15 minutes.</p>
                         
-                        <p style="font-size: 14px; color: #666;">This link will expire in <span class="highlight">24 hours</span>.</p>
-                        
+                        <div style="text-align: center;">
+                            <p class="warning">⚠️ Do not share this code with anyone. Admin will never ask for it.</p>
+                        </div>
+
+
                         <p>If you didn't create an account, you can safely ignore this email.</p>
                     </div>
                     <div class="footer">
-                        <p>© 2024 TITAN ARENA. All rights reserved.</p>
+                        <p>© 2025 TITAN ARENA. All rights reserved.</p>
                         <p>This is an automated message, please do not reply.</p>
                     </div>
                 </div>
@@ -105,49 +122,30 @@ exports.sendVerificationEmail = async (email, token, username) => {
     };
 
     try {
-        await transporter.sendMail(mailOptions);
+        await transport.sendMail(mailOptions);
         console.log(`Verification email sent to ${email}`);
         return true;
     } catch (error) {
-        console.error('Email send error:', error);
-
-        // Deep debug
-        const fs = require('fs');
-        const path = require('path');
-        const envPath = path.join(__dirname, '../../.env');
-        let fileContent = 'File not found';
-        try {
-            if (fs.existsSync(envPath)) {
-                fileContent = fs.readFileSync(envPath, 'utf8');
-            }
-        } catch (e) { fileContent = 'Error reading file: ' + e.message; }
-
-        const debugInfo = {
-            error: error,
-            envPath: envPath,
-            envFileExists: fs.existsSync(envPath),
-            envFileContentPeek: fileContent.substring(0, 50) + '...', // First 50 chars only
-            processEnvSMTP: {
-                user: process.env.SMTP_USER,
-                passLength: process.env.SMTP_PASS ? process.env.SMTP_PASS.length : 0
-            }
-        };
-
-        fs.writeFileSync('email-error.log', JSON.stringify(debugInfo, null, 2));
+        console.error('Email send error:', {
+            message: error.message,
+            code: error.code,
+            smtpConfigured: !!process.env.SMTP_USER
+        });
         throw error;
     }
 };
 
 // Send password reset email
-exports.sendPasswordResetEmail = async (email, token, username) => {
-    const transporter = createTransporter();
-
-    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${token}`;
+exports.sendPasswordResetEmail = async (email, otp, username) => {
+    const transport = getTransporter();
+    const cleanUsername = sanitize(username);
 
     const mailOptions = {
         from: `"TITAN ARENA" <${process.env.SMTP_USER}>`,
         to: email,
-        subject: '🔐 Reset Your TITAN ARENA Password',
+        replyTo: 'no-reply@titanarena.com',
+        subject: '🔐 Your Password Reset Code – Valid for 5 minutes',
+        text: `Hi ${cleanUsername}, your password reset code is: ${otp}. Do not share this code. It expires in 5 minutes.`, // Text fallback
         html: `
             <!DOCTYPE html>
             <html>
@@ -161,9 +159,10 @@ exports.sendPasswordResetEmail = async (email, token, username) => {
                     .card { background: linear-gradient(145deg, #1a1a2e, #16162a); border-radius: 16px; padding: 40px; border: 1px solid rgba(139, 92, 246, 0.2); }
                     h2 { color: #ffffff; margin-top: 0; }
                     p { color: #a0a0a0; line-height: 1.6; }
-                    .button { display: inline-block; background: linear-gradient(135deg, #8B5CF6, #6366F1); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+                    .code { display: block; background: rgba(139, 92, 246, 0.1); border: 1px dashed #8B5CF6; color: #ffffff; font-family: 'Courier New', monospace; font-size: 32px; letter-spacing: 4px; padding: 20px; text-align: center; margin: 30px 0; border-radius: 8px; font-weight: bold; }
                     .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
                     .highlight { color: #8B5CF6; }
+                    .warning { color: #ef4444; font-size: 13px; margin-top: 20px; text-align: center; }
                 </style>
             </head>
             <body>
@@ -173,18 +172,18 @@ exports.sendPasswordResetEmail = async (email, token, username) => {
                     </div>
                     <div class="card">
                         <h2>Password Reset Request 🔐</h2>
-                        <p>Hi ${username}, you requested to reset your password. Click the button below to create a new password.</p>
+                        <p>Hi ${cleanUsername}, we received a request to reset your password. Use the code below to proceed.</p>
                         
-                        <div style="text-align: center;">
-                            <a href="${resetUrl}" class="button">Reset Password</a>
-                        </div>
+                        <div class="code">${otp}</div>
                         
-                        <p style="font-size: 14px; color: #666;">This link will expire in <span class="highlight">1 hour</span>.</p>
+                        <p style="font-size: 14px; color: #666;">This code will expire in <span class="highlight">5 minutes</span>.</p>
+                        
+                        <p class="warning">⚠️ Do not share this code. We will never ask for it.</p>
                         
                         <p>If you didn't request this, you can safely ignore this email.</p>
                     </div>
                     <div class="footer">
-                        <p>© 2024 TITAN ARENA. All rights reserved.</p>
+                        <p>© 2025 TITAN ARENA. All rights reserved.</p>
                     </div>
                 </div>
             </body>
@@ -193,11 +192,15 @@ exports.sendPasswordResetEmail = async (email, token, username) => {
     };
 
     try {
-        await transporter.sendMail(mailOptions);
-        console.log(`Password reset email sent to ${email}`);
+        await transport.sendMail(mailOptions);
+        console.log(`Password reset OTP sent to ${email}`);
         return true;
     } catch (error) {
-        console.error('Email send error:', error);
+        console.error('Email send error:', {
+            message: error.message,
+            code: error.code,
+            smtpConfigured: !!process.env.SMTP_USER
+        });
         throw error;
     }
 };

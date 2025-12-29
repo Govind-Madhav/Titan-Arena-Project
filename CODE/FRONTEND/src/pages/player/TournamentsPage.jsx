@@ -83,7 +83,7 @@ export default function TournamentsPage() {
         { id: '6', name: 'BGMI Rookie Cup', game: 'BGMI', prizePool: 20000, entryFee: 500, status: 'UPCOMING', startTime: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(), type: 'DUO', _count: { registrations: 80 } },
     ]
 
-    const displayTournaments = filteredTournaments.length > 0 ? filteredTournaments : mockTournaments
+    const displayTournaments = filteredTournaments
 
     return (
         <div className="min-h-screen bg-titan-bg py-8 px-4">

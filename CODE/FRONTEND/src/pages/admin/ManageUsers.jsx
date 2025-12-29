@@ -165,6 +165,8 @@ const ManageUsersPage = () => {
                 <thead className="bg-white/5 text-white/40 uppercase text-xs">
                   <tr>
                     <th className="px-6 py-4 font-medium">Player</th>
+                    <th className="px-6 py-4 font-medium">Role</th>
+                    <th className="px-6 py-4 font-medium">UID</th>
                     <th className="px-6 py-4 font-medium">Status</th>
                     <th className="px-6 py-4 font-medium">Joined</th>
                     <th className="px-6 py-4 font-medium text-right">Actions</th>
@@ -181,6 +183,19 @@ const ManageUsersPage = () => {
                             <p className="text-xs text-white/40">{user.email}</p>
                           </div>
                         </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${user.role === 'ADMIN' ? 'bg-purple-500/20 text-purple-400' : 'bg-white/5 text-white/60'}`}>
+                          {user.role}
+                        </span>
+                        {user.hostStatus === 'VERIFIED' && (
+                          <span className="ml-2 px-2 py-1 rounded text-xs font-bold bg-pink-500/20 text-pink-400 border border-pink-500/20">
+                            HOST
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className="font-mono text-titan-cyan text-sm">{user.platformUid || '-'}</span>
                       </td>
                       <td className="px-6 py-4">
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-500/10 text-green-500 text-xs font-bold">

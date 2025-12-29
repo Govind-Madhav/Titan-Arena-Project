@@ -16,12 +16,15 @@ import {
     ArrowUpRight,
     TrendingUp,
     AlertCircle,
-    CheckCircle
+    Replace,
+    UserCog,
+    FileText // Added
 } from 'lucide-react'
 import Layout from '../../Components/layout/Layout'
 import useAuthStore from '../../store/authStore'
 import { SpotlightCard, GradientText } from '../../Components/effects/ReactBits'
 import api from '../../lib/api'
+import toast from 'react-hot-toast'
 
 // Start of Admin Dashboard Component
 const AdminDashboard = () => {
@@ -34,17 +37,70 @@ const AdminDashboard = () => {
         pendingKYC: 0
     })
 
-    // Mock fetching stats - in real app, call API
+    // Super Admin State
+    const [admins, setAdmins] = useState([]);
+    const [fromAdmin, setFromAdmin] = useState('');
+    const [toAdmin, setToAdmin] = useState('');
+    const [reassignLoading, setReassignLoading] = useState(false);
+
+    // Fetch Real Stats
     useEffect(() => {
-        // api.get('/admin/stats').then...
-        setStats({
-            totalUsers: 1250,
-            totalTournaments: 142,
-            activeHosts: 45,
-            revenue: 250000,
-            pendingKYC: 12
-        })
-    }, [])
+        const fetchStats = async () => {
+            try {
+                const res = await api.get('/admin/stats');
+                const data = res.data.data;
+                setStats({
+                    totalUsers: data.users || 0,
+                    totalTournaments: data.tournaments || 0,
+                    activeHosts: 0,
+                    revenue: 0,
+                    pendingKYC: 0
+                });
+            } catch (error) {
+                console.error("Failed to fetch admin stats", error);
+            }
+        };
+        fetchStats();
+
+        // Fetch Admins if Super Admin
+        if (user?.role === 'SUPERADMIN') {
+            const fetchAdmins = async () => {
+                try {
+                    const res = await api.get('/admin/admins');
+                    setAdmins(res.data.data);
+                } catch (error) {
+                    console.error("Failed to fetch admins", error);
+                }
+            };
+            fetchAdmins();
+        }
+    }, [user?.role])
+
+    const handleReassign = async () => {
+        if (!fromAdmin || !toAdmin) {
+            toast.error("Please select both admins");
+            return;
+        }
+        if (fromAdmin === toAdmin) {
+            toast.error("Source and Target cannot be the same");
+            return;
+        }
+
+        try {
+            setReassignLoading(true);
+            await api.post('/admin/reassign-workload', {
+                fromAdminId: fromAdmin,
+                toAdminId: toAdmin
+            });
+            toast.success("Workload reassigned successfully");
+            setFromAdmin('');
+            setToAdmin('');
+        } catch (error) {
+            toast.error(error.response?.data?.message || "Failed to reassign");
+        } finally {
+            setReassignLoading(false);
+        }
+    };
 
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('en-IN', {
@@ -85,18 +141,19 @@ const AdminDashboard = () => {
                             value={stats.totalUsers.toLocaleString()}
                             icon={Users}
                             color="text-blue-400"
-                            trend="+12% this week"
+                            trend=""
                         />
                         <StatsCard
+
                             title="Platform Revenue"
                             value={formatCurrency(stats.revenue)}
                             icon={DollarSign}
                             color="text-green-400"
-                            trend="+8.5% this month"
+                            trend=""
                         />
                         <StatsCard
                             title="Active Tournaments"
-                            value="24"
+                            value={stats.totalTournaments.toLocaleString()}
                             icon={Trophy}
                             color="text-purple-400"
                         />
@@ -108,6 +165,90 @@ const AdminDashboard = () => {
                             border="border-yellow-500/30"
                         />
                     </div>
+
+                    {/* SUPER ADMIN SECTION */}
+                    {user?.role === 'SUPERADMIN' && (
+                        <div className="mb-12 bg-red-900/10 border border-red-500/20 rounded-2xl p-8 relative overflow-hidden">
+                            <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
+                                <Shield size={120} />
+                            </div>
+                            <h2 className="font-heading text-2xl font-bold mb-6 flex items-center gap-2 text-red-100">
+                                <UserCog className="text-red-500" />
+                                Super Admin Controls
+                            </h2>
+
+                            <div className="grid md:grid-cols-2 gap-8">
+                                <div>
+                                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                                        <Replace size={18} className="text-titan-purple" />
+                                        Emergency Workload Reassignment
+                                    </h3>
+                                    <p className="text-sm text-white/50 mb-6">
+                                        Transfer all managed users/hosts from one Admin to another. Use this in case of admin unavailability.
+                                    </p>
+
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-xs text-white/40 mb-1">Transfer From</label>
+                                                <select
+                                                    value={fromAdmin}
+                                                    onChange={(e) => setFromAdmin(e.target.value)}
+                                                    className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-red-500 focus:outline-none"
+                                                >
+                                                    <option value="">Select Admin (Current Load)</option>
+                                                    {admins.map(a => (
+                                                        <option key={a.id} value={a.id}>
+                                                            {a.username} ({a.managedUsersCount || 0} users)
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs text-white/40 mb-1">Transfer To</label>
+                                                <select
+                                                    value={toAdmin}
+                                                    onChange={(e) => setToAdmin(e.target.value)}
+                                                    className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
+                                                >
+                                                    <option value="">Select Target Admin</option>
+                                                    {admins.filter(a => a.id !== fromAdmin).map(a => (
+                                                        <option key={a.id} value={a.id}>
+                                                            {a.username} ({a.managedUsersCount || 0} users)
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={handleReassign}
+                                            disabled={reassignLoading || !fromAdmin || !toAdmin}
+                                            className="w-full py-3 bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 text-red-100 rounded-lg font-bold transition-all flex items-center justify-center gap-2"
+                                        >
+                                            {reassignLoading ? 'Processing...' : 'Execute Transfer'}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="border-l border-white/5 pl-8 hidden md:block">
+                                    <h3 className="text-lg font-bold text-white mb-4">System Status</h3>
+                                    <div className="space-y-2 text-sm text-white/60">
+                                        <div className="flex justify-between">
+                                            <span>Active Admins</span>
+                                            <span className="text-white">{admins.length}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Server Load</span>
+                                            <span className="text-green-400">Normal</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Security Level</span>
+                                            <span className="text-red-400 font-bold">MAXIMUM</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Management Sections */}
                     <div className="grid lg:grid-cols-3 gap-8">
@@ -136,6 +277,14 @@ const AdminDashboard = () => {
                                         borderColor="border-purple-500/20"
                                     />
                                     <ActionCard
+                                        to="/manageApplications"
+                                        title="Host Applications"
+                                        desc="Review pending host requests."
+                                        icon={FileText}
+                                        color="bg-yellow-500/10 hover:bg-yellow-500/20"
+                                        borderColor="border-yellow-500/20"
+                                    />
+                                    <ActionCard
                                         to="/manageTourn"
                                         title="Tournament Oversight"
                                         desc="Monitor and control active events."
@@ -152,30 +301,9 @@ const AdminDashboard = () => {
                                     System Activity
                                 </h2>
                                 <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-6">
-                                    <div className="space-y-4">
-                                        {[
-                                            { action: 'New Host Application', user: 'CyberCafe_Delhi', time: '10 mins ago', status: 'pending' },
-                                            { action: 'Tournament Created', user: 'ProGamingHub', time: '25 mins ago', status: 'success' },
-                                            { action: 'User Reported', user: 'ToxicPlayer123', time: '1 hour ago', status: 'warning' },
-                                            { action: 'Withdrawal Request', user: 'WinnerGeneric', time: '2 hours ago', status: 'pending' }
-                                        ].map((log, i) => (
-                                            <div key={i} className="flex items-center justify-between p-3 hover:bg-white/5 rounded-lg transition-colors">
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-2 h-2 rounded-full ${log.status === 'success' ? 'bg-green-500' :
-                                                        log.status === 'warning' ? 'bg-red-500' : 'bg-yellow-500'
-                                                        }`} />
-                                                    <div>
-                                                        <p className="font-medium text-white">{log.action}</p>
-                                                        <p className="text-sm text-white/40">by {log.user}</p>
-                                                    </div>
-                                                </div>
-                                                <span className="text-xs text-white/30">{log.time}</span>
-                                            </div>
-                                        ))}
+                                    <div className="text-center py-8 text-white/20 italic">
+                                        No recent system activity.
                                     </div>
-                                    <button className="w-full mt-4 py-2 text-sm text-titan-purple hover:text-white transition-colors">
-                                        View Full Audit Logs
-                                    </button>
                                 </div>
                             </section>
                         </div>
@@ -190,15 +318,15 @@ const AdminDashboard = () => {
                                 <div className="space-y-3">
                                     <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
                                         <span className="text-sm">Pending KYC Requests</span>
-                                        <span className="font-bold text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded">12</span>
+                                        <span className="font-bold text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded">0</span>
                                     </div>
                                     <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
                                         <span className="text-sm">Reported Matches</span>
-                                        <span className="font-bold text-red-400 bg-red-400/10 px-2 py-1 rounded">3</span>
+                                        <span className="font-bold text-red-400 bg-red-400/10 px-2 py-1 rounded">0</span>
                                     </div>
                                     <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
                                         <span className="text-sm">Withdrawal Requests</span>
-                                        <span className="font-bold text-blue-400 bg-blue-400/10 px-2 py-1 rounded">45</span>
+                                        <span className="font-bold text-blue-400 bg-blue-400/10 px-2 py-1 rounded">0</span>
                                     </div>
                                 </div>
                             </div>

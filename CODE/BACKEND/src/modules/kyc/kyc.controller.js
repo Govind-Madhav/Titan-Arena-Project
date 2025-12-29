@@ -3,7 +3,9 @@
  * This code is proprietary and confidential.
  */
 
-const prisma = require('../../config/prisma');
+const { db } = require('../../db');
+const { kycRequests, users, auditLogs } = require('../../db/schema');
+const { eq, and, desc, count, sql } = require('drizzle-orm');
 const { z } = require('zod');
 
 // Apply for host verification
@@ -27,15 +29,15 @@ exports.applyForHost = async (req, res) => {
         }
 
         // Upsert KYC request
-        const kyc = await prisma.$transaction(async (tx) => {
-            const kycRequest = await tx.kYCRequest.upsert({
-                where: { userId: req.user.id },
-                create: {
-                    userId: req.user.id,
-                    ...data,
-                    status: 'PENDING'
-                },
-                update: {
+        await db.transaction(async (tx) => {
+            // MySQL Insert on Duplicate Update
+            await tx.insert(kycRequests).values({
+                userId: req.user.id,
+                ...data,
+                status: 'PENDING',
+                adminNotes: null // Clear notes on re-submission
+            }).onDuplicateKeyUpdate({
+                set: {
                     ...data,
                     status: 'PENDING',
                     adminNotes: null
@@ -43,18 +45,14 @@ exports.applyForHost = async (req, res) => {
             });
 
             // Update user host status
-            await tx.user.update({
-                where: { id: req.user.id },
-                data: { hostStatus: 'PENDING_REVIEW' }
-            });
-
-            return kycRequest;
+            await tx.update(users)
+                .set({ hostStatus: 'PENDING_REVIEW' })
+                .where(eq(users.id, req.user.id));
         });
 
         res.status(201).json({
             success: true,
-            message: 'KYC application submitted for review',
-            data: kyc
+            message: 'KYC application submitted for review'
         });
     } catch (error) {
         if (error instanceof z.ZodError) {
@@ -75,9 +73,12 @@ exports.applyForHost = async (req, res) => {
 // Get host status
 exports.getHostStatus = async (req, res) => {
     try {
-        const kyc = await prisma.kYCRequest.findUnique({
-            where: { userId: req.user.id }
-        });
+        const result = await db.select()
+            .from(kycRequests)
+            .where(eq(kycRequests.userId, req.user.id))
+            .limit(1);
+
+        const kyc = result[0];
 
         res.json({
             success: true,
@@ -106,39 +107,48 @@ exports.listKYCRequests = async (req, res) => {
     try {
         const { status = 'PENDING', page = 1, limit = 20 } = req.query;
         const skip = (parseInt(page) - 1) * parseInt(limit);
+        const take = parseInt(limit);
 
-        const where = {};
-        if (status) where.status = status;
+        const conditions = [];
+        if (status) conditions.push(eq(kycRequests.status, status));
 
-        const [requests, total] = await Promise.all([
-            prisma.kYCRequest.findMany({
-                where,
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            username: true,
-                            hostStatus: true,
-                            createdAt: true
-                        }
-                    }
-                },
-                orderBy: { createdAt: 'desc' },
-                skip,
-                take: parseInt(limit)
-            }),
-            prisma.kYCRequest.count({ where })
+        const [requests, totalResult] = await Promise.all([
+            db.select({
+                id: kycRequests.id,
+                status: kycRequests.status,
+                documentType: kycRequests.documentType,
+                proofUrl: kycRequests.proofUrl,
+                createdAt: kycRequests.createdAt,
+                user: {
+                    id: users.id,
+                    email: users.email,
+                    username: users.username,
+                    hostStatus: users.hostStatus,
+                    createdAt: users.createdAt
+                }
+            })
+                .from(kycRequests)
+                .innerJoin(users, eq(kycRequests.userId, users.id))
+                .where(and(...conditions))
+                .orderBy(desc(kycRequests.createdAt))
+                .limit(take)
+                .offset(skip),
+
+            db.select({ count: count() })
+                .from(kycRequests)
+                .where(and(...conditions))
         ]);
+
+        const total = totalResult[0]?.count || 0;
 
         res.json({
             success: true,
             data: requests,
             pagination: {
                 page: parseInt(page),
-                limit: parseInt(limit),
+                limit: take,
                 total,
-                totalPages: Math.ceil(total / parseInt(limit))
+                totalPages: Math.ceil(total / take)
             }
         });
     } catch (error) {
@@ -155,38 +165,28 @@ exports.approveKYC = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const kyc = await prisma.kYCRequest.findUnique({
-            where: { id },
-            include: { user: true }
-        });
-
-        if (!kyc) {
-            return res.status(404).json({
-                success: false,
-                message: 'KYC request not found'
-            });
+        const kycResult = await db.select().from(kycRequests).where(eq(kycRequests.id, id)).limit(1);
+        if (!kycResult.length) {
+            return res.status(404).json({ success: false, message: 'KYC request not found' });
         }
+        const kyc = kycResult[0];
 
-        await prisma.$transaction(async (tx) => {
-            await tx.kYCRequest.update({
-                where: { id },
-                data: { status: 'VERIFIED' }
-            });
+        await db.transaction(async (tx) => {
+            await tx.update(kycRequests)
+                .set({ status: 'VERIFIED' })
+                .where(eq(kycRequests.id, id));
 
-            await tx.user.update({
-                where: { id: kyc.userId },
-                data: { hostStatus: 'VERIFIED' }
-            });
+            await tx.update(users)
+                .set({ hostStatus: 'VERIFIED' })
+                .where(eq(users.id, kyc.userId));
 
             // Create audit log
-            await tx.auditLog.create({
-                data: {
-                    adminId: req.user.id,
-                    action: 'KYC_APPROVED',
-                    entity: 'kyc',
-                    entityId: id,
-                    meta: { userId: kyc.userId }
-                }
+            await tx.insert(auditLogs).values({
+                adminId: req.user.id,
+                userId: req.user.id, // AssignedBy logic implies current admin
+                action: 'KYC_APPROVED',
+                targetId: id, // entityId
+                details: JSON.stringify({ userId: kyc.userId })
             });
         });
 
@@ -216,40 +216,31 @@ exports.rejectKYC = async (req, res) => {
             });
         }
 
-        const kyc = await prisma.kYCRequest.findUnique({
-            where: { id }
-        });
-
-        if (!kyc) {
-            return res.status(404).json({
-                success: false,
-                message: 'KYC request not found'
-            });
+        const kycResult = await db.select().from(kycRequests).where(eq(kycRequests.id, id)).limit(1);
+        if (!kycResult.length) {
+            return res.status(404).json({ success: false, message: 'KYC request not found' });
         }
+        const kyc = kycResult[0];
 
-        await prisma.$transaction(async (tx) => {
-            await tx.kYCRequest.update({
-                where: { id },
-                data: {
+        await db.transaction(async (tx) => {
+            await tx.update(kycRequests)
+                .set({
                     status: 'REJECTED',
                     adminNotes: reason
-                }
-            });
+                })
+                .where(eq(kycRequests.id, id));
 
-            await tx.user.update({
-                where: { id: kyc.userId },
-                data: { hostStatus: 'REJECTED' }
-            });
+            await tx.update(users)
+                .set({ hostStatus: 'REJECTED' })
+                .where(eq(users.id, kyc.userId));
 
             // Create audit log
-            await tx.auditLog.create({
-                data: {
-                    adminId: req.user.id,
-                    action: 'KYC_REJECTED',
-                    entity: 'kyc',
-                    entityId: id,
-                    meta: { userId: kyc.userId, reason }
-                }
+            await tx.insert(auditLogs).values({
+                adminId: req.user.id,
+                userId: req.user.id,
+                action: 'KYC_REJECTED',
+                targetId: id,
+                details: JSON.stringify({ userId: kyc.userId, reason })
             });
         });
 

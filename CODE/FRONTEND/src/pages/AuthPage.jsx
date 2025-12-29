@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Mail, Lock, User, Eye, EyeOff, ArrowRight, Gamepad2, Check, Calendar, Phone, MapPin, FileText } from 'lucide-react'
+import Stepper, { Step } from '../Components/Stepper'
 import toast from 'react-hot-toast'
 import useAuthStore from '../store/authStore'
 import { Particles } from '../Components/effects/ReactBits'
@@ -23,7 +24,17 @@ export default function AuthPage() {
     const [rememberMe, setRememberMe] = useState(false)
 
     // Wizard State
-    const [step, setStep] = useState(1) // 1: Personal, 2: Security, 3: Verification
+    // Wizard State
+    // Stepper handles its own state, but we might want to know it or just rely on content
+    // We can remove 'step' state if we don't need it outside, or keep it to sync if needed.
+    // Let's keep 'step' only if we need to show headers etc outside stepper. 
+    // Actually Stepper is inside the form container.
+    // We'll remove manual 'step' state usage for rendering and let Stepper drive.
+    // BUT Stepper needs initialStep.
+    // NOTE: We'll still use local state to track current step index if we want specific headers?
+    // The existing code used 'step' for header text. 
+    // Let's rely on Stepper's onStepChange to update a local 'currentStep' for header text.
+    const [currentStep, setCurrentStep] = useState(1);
 
     const [formData, setFormData] = useState({
         username: '',
@@ -61,19 +72,25 @@ export default function AuthPage() {
         })
         setIsVerifying(false)
         setOtp('')
-        setStep(1)
+        setCurrentStep(1)
     }, [isLogin])
 
-    const handleNextStep = () => {
-        if (step === 1 && !isLogin) {
+    const handleBeforeNextStep = async (stepCalled) => {
+        if (stepCalled === 1) {
             if (!formData.username || !formData.legalName || !formData.dateOfBirth || !formData.phone || !formData.country || !formData.state) {
                 toast.error('Please fill in all personal details')
-                return
+                return false
             }
-            // Add date validation here if needed (e.g. >13 years old)
-
-            setStep(2)
+            // Additional validation if needed
+            return true
         }
+        return true
+    }
+
+    const handleRegistrationComplete = () => {
+        // Trigger the form submission logic for registration
+        // We can simulate an event or just call the logic
+        handleSubmit({ preventDefault: () => { } })
     }
 
     const handleSubmit = async (e) => {
@@ -249,60 +266,51 @@ export default function AuthPage() {
                                     {isVerifying ? 'Verifying Identity' : (isLogin ? 'Welcome Back' : 'Sign Up')}
                                 </h2>
 
-                                {/* Step Indicator for Registration */}
-                                {!isLogin && !isVerifying && (
-                                    <div className="flex items-center gap-2 mb-6">
-                                        <div className={`h-1 flex-1 rounded-full transition-colors duration-300 ${step >= 1 ? 'bg-titan-purple' : 'bg-white/10'}`} />
-                                        <div className={`h-1 flex-1 rounded-full transition-colors duration-300 ${step >= 2 ? 'bg-titan-purple' : 'bg-white/10'}`} />
-                                        <div className="text-xs font-mono text-white/40 ml-2">STEP {step}/2</div>
-                                    </div>
-                                )}
-
-                                <p className="text-white/40 text-sm mb-6 font-mono">
+                                <p className="text-white/40 text-sm mb-2 font-mono leading-relaxed">
                                     {isVerifying
                                         ? 'Aligning biometrics...'
-                                        : (isLogin ? 'Access the mainframe.' : (step === 1 ? 'Establish personal profile.' : 'Secure credentials.'))
+                                        : (isLogin ? 'Access the mainframe.' : (currentStep === 1 ? 'Establish personal profile.' : 'Secure credentials.'))
                                     }
                                 </p>
 
-                                <form onSubmit={handleSubmit} className="space-y-5">
+                                <form onSubmit={handleSubmit} className="space-y-2 relative z-10">
 
                                     {/* --- LOGIN MODE --- */}
                                     {isLogin && !isVerifying && (
-                                        <div className="space-y-4">
+                                        <div className="space-y-2.5">
                                             <div className="relative group">
-                                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
+                                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
                                                 <input
                                                     type="email"
                                                     name="email"
                                                     placeholder="Email"
                                                     value={formData.email}
                                                     onChange={handleChange}
-                                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
+                                                    className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
                                                     autoComplete="email"
                                                     required
                                                 />
                                             </div>
                                             <div className="relative group">
-                                                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
+                                                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
                                                 <input
                                                     type={showPassword ? 'text' : 'password'}
                                                     name="password"
                                                     placeholder="Password"
                                                     value={formData.password}
                                                     onChange={handleChange}
-                                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-12 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
+                                                    className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
                                                     autoComplete="current-password"
                                                     required
                                                 />
-                                                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/30 hover:text-white transition-colors">
-                                                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white transition-colors p-1">
+                                                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                                                 </button>
                                             </div>
 
-                                            <div className="flex items-center justify-between text-xs text-white/40 mb-2">
+                                            <div className="flex items-center justify-between text-xs text-white/50 mb-0.5 font-medium px-1">
                                                 <label className="flex items-center gap-2 cursor-pointer hover:text-white transition-colors">
-                                                    <input type="checkbox" checked={rememberMe} onChange={() => setRememberMe(!rememberMe)} className="rounded bg-white/10 border-white/20" />
+                                                    <input type="checkbox" checked={rememberMe} onChange={() => setRememberMe(!rememberMe)} className="rounded bg-white/10 border-white/20 w-3.5 h-3.5 text-titan-purple focus:ring-0 checked:bg-titan-purple" />
                                                     Remember me
                                                 </label>
                                                 <Link to="/forgot-password" className="hover:text-titan-cyan transition-colors">Forgot Password?</Link>
@@ -311,259 +319,243 @@ export default function AuthPage() {
                                             <button
                                                 type="submit"
                                                 disabled={isLoading}
-                                                className="btn-neon w-full mt-4 h-12 flex items-center justify-center gap-2"
+                                                className="btn-neon w-full mt-2 h-10 flex items-center justify-center gap-2 text-sm tracking-widest font-bold uppercase"
                                             >
-                                                {isLoading ? <div className="animate-spin w-5 h-5 border-2 border-white/30 border-t-white rounded-full" /> : <>ENTER ARENA <ArrowRight size={18} /></>}
+                                                {isLoading ? <div className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" /> : <>ENTER ARENA <ArrowRight size={16} /></>}
                                             </button>
                                         </div>
                                     )}
 
-                                    {/* --- REGISTER: STEP 1 (PERSONAL INFO) --- */}
-                                    {!isLogin && !isVerifying && step === 1 && (
-                                        <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                                            <div className="relative group">
-                                                <User className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                <input
-                                                    type="text"
-                                                    name="username"
-                                                    placeholder="Gamertag / Username"
-                                                    value={formData.username}
-                                                    onChange={handleChange}
-                                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                    autoFocus
-                                                    required
-                                                />
-                                            </div>
-                                            <div className="relative group">
-                                                <FileText className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                <input
-                                                    type="text"
-                                                    name="legalName"
-                                                    placeholder="Full Legal Name"
-                                                    value={formData.legalName}
-                                                    onChange={handleChange}
-                                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                    required
-                                                />
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="relative group">
-                                                    <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                    <input
-                                                        type="date"
-                                                        name="dateOfBirth"
-                                                        value={formData.dateOfBirth}
-                                                        onChange={handleChange}
-                                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-2 text-white/80 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm uppercase"
-                                                        required
-                                                    />
-                                                </div>
-                                                <div className="relative group">
-                                                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                    <select
-                                                        name="country"
-                                                        value={formData.country}
-                                                        onChange={(e) => {
-                                                            const selectedCode = e.target.value;
-                                                            const selectedCountry = countries.find(c => c.code === selectedCode);
-                                                            const dialingCode = selectedCountry ? selectedCountry.dial_code : '';
 
-                                                            setFormData(prev => ({
-                                                                ...prev,
-                                                                country: selectedCode,
-                                                                // Don't auto-fill phone, let user type, but maybe give them the code if empty
-                                                                phone: prev.phone || dialingCode
-                                                            }));
-                                                        }}
-                                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm appearance-none cursor-pointer"
-                                                        required
-                                                    >
-                                                        <option value="" disabled className="bg-[#050505] text-white/50">Select Country</option>
-                                                        {countries.map(country => (
-                                                            <option key={country.code} value={country.code} className="bg-[#050505] text-white">
-                                                                {country.name}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </div>
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="relative group col-span-2">
-                                                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                    <input
-                                                        type="tel"
-                                                        name="phone"
-                                                        placeholder="Phone Number"
-                                                        value={formData.phone}
-                                                        onChange={(e) => {
-                                                            const val = e.target.value;
-                                                            // country is now the ISO code
-                                                            const isoCode = formData.country || undefined;
-
-                                                            // Format as you type
-                                                            const formatted = new AsYouType(isoCode).input(val);
-
-                                                            setFormData(prev => ({ ...prev, phone: formatted }));
-                                                        }}
-                                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                        required
-                                                    />
-                                                </div>
-                                            </div>
-                                            {/* Dynamic Location Fields */}
-                                            {formData.country === 'IN' ? (
-                                                <>
-                                                    <div className="grid grid-cols-2 gap-4">
+                                    {/* --- REGISTER: Stepper Wrapper --- */}
+                                    {!isLogin && !isVerifying && (
+                                        <Stepper
+                                            initialStep={1}
+                                            onStepChange={(s) => setCurrentStep(s)}
+                                            onFinalStepCompleted={handleRegistrationComplete}
+                                            onBeforeNext={handleBeforeNextStep}
+                                            backButtonText="BACK"
+                                            nextButtonText="NEXT"
+                                            stepCircleContainerClassName="shadow-none mb-2"
+                                            contentClassName="p-0"
+                                            footerClassName="px-0 pb-0 pt-0"
+                                        >
+                                            <Step>
+                                                <div className="space-y-2.5 animate-in fade-in slide-in-from-right-4 duration-300 pt-0.5">
+                                                    <div className="relative group">
+                                                        <User className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="text"
+                                                            name="username"
+                                                            placeholder="Gamertag / Username"
+                                                            value={formData.username}
+                                                            onChange={handleChange}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
+                                                            autoFocus
+                                                            required
+                                                        />
+                                                    </div>
+                                                    <div className="relative group">
+                                                        <FileText className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="text"
+                                                            name="legalName"
+                                                            placeholder="Full Legal Name"
+                                                            value={formData.legalName}
+                                                            onChange={handleChange}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
+                                                            required
+                                                        />
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2.5">
                                                         <div className="relative group">
-                                                            <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                            <select
-                                                                name="state"
-                                                                value={formData.state}
-                                                                onChange={(e) => {
-                                                                    setFormData(prev => ({
-                                                                        ...prev,
-                                                                        state: e.target.value,
-                                                                        city: '' // Reset district/city when state changes
-                                                                    }))
-                                                                }}
-                                                                className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm appearance-none cursor-pointer"
+                                                            <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                            <input
+                                                                type="date"
+                                                                name="dateOfBirth"
+                                                                value={formData.dateOfBirth}
+                                                                onChange={handleChange}
+                                                                className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-2 text-white/90 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-mono text-xs uppercase shadow-inner"
                                                                 required
-                                                            >
-                                                                <option value="" disabled className="bg-[#050505] text-white/50">Select State</option>
-                                                                {getAllStates().map(state => (
-                                                                    <option key={state.id} value={state.state} className="bg-[#050505] text-white">
-                                                                        {state.state}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
+                                                            />
                                                         </div>
                                                         <div className="relative group">
-                                                            <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
+                                                            <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
                                                             <select
-                                                                name="city"
-                                                                value={formData.city} // Mapping District to City field
-                                                                onChange={handleChange}
-                                                                className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm appearance-none cursor-pointer"
+                                                                name="country"
+                                                                value={formData.country}
+                                                                onChange={(e) => {
+                                                                    const selectedCode = e.target.value;
+                                                                    const selectedCountry = countries.find(c => c.code === selectedCode);
+                                                                    const dialingCode = selectedCountry ? selectedCountry.dial_code : '';
+
+                                                                    setFormData(prev => ({
+                                                                        ...prev,
+                                                                        country: selectedCode,
+                                                                        phone: prev.phone || dialingCode
+                                                                    }));
+                                                                }}
+                                                                className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner"
                                                                 required
-                                                                disabled={!formData.state}
                                                             >
-                                                                <option value="" disabled className="bg-[#050505] text-white/50">Select District</option>
-                                                                {formData.state && getDistrictsByState(formData.state).map((district, idx) => (
-                                                                    <option key={idx} value={district} className="bg-[#050505] text-white">
-                                                                        {district}
+                                                                <option value="" disabled className="bg-[#1a1a1a] text-white/50">Country</option>
+                                                                {countries.map(country => (
+                                                                    <option key={country.code} value={country.code} className="bg-[#1a1a1a] text-white">
+                                                                        {country.name}
                                                                     </option>
                                                                 ))}
                                                             </select>
                                                         </div>
                                                     </div>
-                                                </>
-                                            ) : (
-                                                /* Fallback for other countries */
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <input
-                                                        type="text"
-                                                        name="state"
-                                                        placeholder="State / Province"
-                                                        value={formData.state}
-                                                        onChange={handleChange}
-                                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-3 px-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                        required
-                                                    />
-                                                    <input
-                                                        type="text"
-                                                        name="city"
-                                                        placeholder="City (Optional)"
-                                                        value={formData.city}
-                                                        onChange={handleChange}
-                                                        className="w-full bg-white/5 border border-white/10 rounded-lg py-3 px-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                    />
+                                                    <div className="grid grid-cols-2 gap-2.5">
+                                                        <div className="relative group col-span-2">
+                                                            <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                            <input
+                                                                type="tel"
+                                                                name="phone"
+                                                                placeholder="Phone Number"
+                                                                value={formData.phone}
+                                                                onChange={(e) => {
+                                                                    const val = e.target.value;
+                                                                    const isoCode = formData.country || undefined;
+                                                                    const formatted = new AsYouType(isoCode).input(val);
+                                                                    setFormData(prev => ({ ...prev, phone: formatted }));
+                                                                }}
+                                                                className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
+                                                                required
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                    {/* Dynamic Location Fields */}
+                                                    {formData.country === 'IN' ? (
+                                                        <>
+                                                            <div className="grid grid-cols-2 gap-2.5">
+                                                                <div className="relative group">
+                                                                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                                    <select
+                                                                        name="state"
+                                                                        value={formData.state}
+                                                                        onChange={(e) => {
+                                                                            setFormData(prev => ({
+                                                                                ...prev,
+                                                                                state: e.target.value,
+                                                                                city: ''
+                                                                            }))
+                                                                        }}
+                                                                        className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner"
+                                                                        required
+                                                                    >
+                                                                        <option value="" disabled className="bg-[#1a1a1a] text-white/50">State</option>
+                                                                        {getAllStates().map(state => (
+                                                                            <option key={state.id} value={state.state} className="bg-[#1a1a1a] text-white">
+                                                                                {state.state}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+                                                                <div className="relative group">
+                                                                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                                    <select
+                                                                        name="city"
+                                                                        value={formData.city}
+                                                                        onChange={handleChange}
+                                                                        className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner"
+                                                                        required
+                                                                        disabled={!formData.state}
+                                                                    >
+                                                                        <option value="" disabled className="bg-[#1a1a1a] text-white/50">District</option>
+                                                                        {formData.state && getDistrictsByState(formData.state).map((district, idx) => (
+                                                                            <option key={idx} value={district} className="bg-[#1a1a1a] text-white">
+                                                                                {district}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <div className="grid grid-cols-2 gap-2.5">
+                                                            <input
+                                                                type="text"
+                                                                name="state"
+                                                                placeholder="State / Pro"
+                                                                value={formData.state}
+                                                                onChange={handleChange}
+                                                                className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 px-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm shadow-inner"
+                                                                required
+                                                            />
+                                                            <input
+                                                                type="text"
+                                                                name="city"
+                                                                placeholder="City (Opt)"
+                                                                value={formData.city}
+                                                                onChange={handleChange}
+                                                                className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 px-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm shadow-inner"
+                                                            />
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            )}
-                                            <button
-                                                type="button"
-                                                onClick={handleNextStep}
-                                                className="btn-neon w-full mt-6 h-12 flex items-center justify-center gap-2"
-                                            >
-                                                NEXT STEP <ArrowRight size={18} />
-                                            </button>
-                                        </div>
-                                    )}
+                                            </Step>
 
-                                    {/* --- REGISTER: STEP 2 (SECURITY & TERMS) --- */}
-                                    {!isLogin && !isVerifying && step === 2 && (
-                                        <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                                            <div className="relative group">
-                                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                <input
-                                                    type="email"
-                                                    name="email"
-                                                    placeholder="Email Address"
-                                                    value={formData.email}
-                                                    onChange={handleChange}
-                                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                    autoComplete="email"
-                                                    autoFocus
-                                                    required
-                                                />
-                                            </div>
+                                            <Step>
+                                                <div className="space-y-3 animate-in fade-in slide-in-from-right-4 duration-300 pt-0.5">
+                                                    <div className="relative group">
+                                                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="email"
+                                                            name="email"
+                                                            placeholder="Email Address"
+                                                            value={formData.email}
+                                                            onChange={handleChange}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
+                                                            autoComplete="email"
+                                                            autoFocus
+                                                            required
+                                                        />
+                                                    </div>
 
-                                            <div className="relative group">
-                                                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                                <input
-                                                    type={showPassword ? 'text' : 'password'}
-                                                    name="password"
-                                                    placeholder="Create Password"
-                                                    value={formData.password}
-                                                    onChange={handleChange}
-                                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-12 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                    autoComplete="new-password"
-                                                    required
-                                                />
-                                                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-white/30 hover:text-white transition-colors">
-                                                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                                                </button>
-                                            </div>
+                                                    <div className="relative group">
+                                                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="password"
+                                                            name="password"
+                                                            placeholder="Create Password"
+                                                            value={formData.password}
+                                                            onChange={handleChange}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
+                                                            autoComplete="new-password"
+                                                            required
+                                                        />
+                                                        <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white transition-colors p-1">
+                                                            {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                                                        </button>
+                                                    </div>
 
-                                            <label className="flex items-start gap-3 cursor-pointer group mt-4">
-                                                <div className={`mt-0.5 w-5 h-5 rounded border flex items-center justify-center transition-all duration-300 ${formData.termsAccepted ? 'bg-titan-cyan border-titan-cyan shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'border-white/30 group-hover:border-white/50 bg-black/50'}`}>
-                                                    {formData.termsAccepted && <Check size={14} className="text-black stroke-[3]" />}
+                                                    <label className="flex items-start gap-3 cursor-pointer group mt-3 bg-white/5 p-3 rounded-lg border border-white/5 hover:border-white/10 transition-all">
+                                                        <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center transition-all duration-300 flex-shrink-0 ${formData.termsAccepted ? 'bg-titan-cyan border-titan-cyan shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'border-white/30 group-hover:border-white/50 bg-black/50'}`}>
+                                                            {formData.termsAccepted && <Check size={12} className="text-black stroke-[3]" />}
+                                                        </div>
+                                                        <input
+                                                            type="checkbox"
+                                                            name="termsAccepted"
+                                                            checked={formData.termsAccepted}
+                                                            onChange={handleChange}
+                                                            className="hidden"
+                                                        />
+                                                        <span className="text-xs text-white/50 group-hover:text-white/80 transition-colors leading-tight select-none">
+                                                            I ACKNOWLEDGE THE <span className="text-titan-cyan font-bold">PROTOCOLS</span> (TERMS).
+                                                            <br />
+                                                            <span className="text-white/30">Biometric Age &ge; 13 Confirmed.</span>
+                                                        </span>
+                                                    </label>
                                                 </div>
-                                                <input
-                                                    type="checkbox"
-                                                    name="termsAccepted"
-                                                    checked={formData.termsAccepted}
-                                                    onChange={handleChange}
-                                                    className="hidden"
-                                                />
-                                                <span className="text-xs text-white/50 group-hover:text-white/80 transition-colors leading-tight">
-                                                    I ACKNOWLEDGE THE <span className="text-titan-cyan">PROTOCOLS</span> (TERMS).
-                                                    <br />
-                                                    <span className="text-white/30">Biometric Age &ge; 13 Confirmed.</span>
-                                                </span>
-                                            </label>
-
-                                            <div className="flex gap-3 mt-6">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setStep(1)}
-                                                    className="px-4 py-3 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-colors text-white/60 font-mono text-sm"
-                                                >
-                                                    BACK
-                                                </button>
-                                                <button
-                                                    type="submit"
-                                                    disabled={isLoading}
-                                                    className="btn-neon flex-1 h-12 flex items-center justify-center gap-2"
-                                                >
-                                                    {isLoading ? <div className="animate-spin w-5 h-5 border-2 border-white/30 border-t-white rounded-full" /> : <>INITIALIZE API <ArrowRight size={18} /></>}
-                                                </button>
-                                            </div>
-                                        </div>
+                                            </Step>
+                                        </Stepper>
                                     )}
 
                                     {/* --- VERIFICATION STEP (OTP) --- */}
                                     {isVerifying && (
-                                        <div className="space-y-6 text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                        <div className="space-y-4 text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
                                             <div className="relative group">
                                                 <div className="absolute -inset-0.5 bg-gradient-to-r from-titan-purple to-titan-cyan rounded-lg blur opacity-20 group-hover:opacity-60 transition duration-500"></div>
                                                 <input
@@ -571,7 +563,7 @@ export default function AuthPage() {
                                                     placeholder="XXXXXX"
                                                     value={otp}
                                                     onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                                                    className="relative w-full bg-black/80 border border-white/10 text-center text-3xl tracking-[0.8em] font-mono py-4 rounded-lg text-titan-cyan focus:outline-none focus:border-titan-cyan/50 focus:text-white transition-all placeholder-white/10"
+                                                    className="relative w-full bg-black/80 border border-white/10 text-center text-3xl tracking-[0.8em] font-mono py-3 rounded-lg text-titan-cyan focus:outline-none focus:border-titan-cyan/50 focus:text-white transition-all placeholder-white/10"
                                                     autoComplete="off"
                                                     required
                                                     maxLength={6}
@@ -584,9 +576,9 @@ export default function AuthPage() {
                                             <button
                                                 type="submit"
                                                 disabled={isLoading}
-                                                className="btn-neon w-full mt-4 h-12 flex items-center justify-center gap-2"
+                                                className="btn-neon w-full mt-2 h-10 flex items-center justify-center gap-2"
                                             >
-                                                {isLoading ? <div className="animate-spin w-5 h-5 border-2 border-white/30 border-t-white rounded-full" /> : 'AUTHENTICATE'}
+                                                {isLoading ? <div className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" /> : 'AUTHENTICATE'}
                                             </button>
                                         </div>
                                     )}
@@ -594,8 +586,8 @@ export default function AuthPage() {
                                 </form>
 
                                 {!isVerifying && (
-                                    <div className="mt-8 text-center border-t border-white/5 pt-6">
-                                        <p className="text-white/30 text-xs font-mono mb-2">
+                                    <div className="mt-4 text-center border-t border-white/5 pt-3 relative z-20">
+                                        <p className="text-white/30 text-xs font-mono mb-1">
                                             {isLogin ? "NO IDENTITY FOUND?" : "IDENTITY EXISTS?"}
                                         </p>
                                         <button

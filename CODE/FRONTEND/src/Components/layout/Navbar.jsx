@@ -17,7 +17,8 @@ import {
     X,
     LogOut,
     LayoutDashboard,
-    Crown
+    Crown,
+    Globe // Added
 } from 'lucide-react'
 import useAuthStore from '../../store/authStore'
 
@@ -103,6 +104,7 @@ export default function Navbar() {
 
     const navLinks = [
         { name: 'Tournaments', path: '/tournaments', icon: Trophy },
+        { name: 'Community', path: '/feed', icon: Globe }, // Added
         { name: 'Teams', path: '/teams', icon: Users },
         { name: 'Matches', path: '/matches', icon: Swords },
     ]
@@ -178,7 +180,7 @@ export default function Navbar() {
                                             <User size={16} className="text-white" />
                                         </div>
                                         <span className="hidden sm:block font-heading font-semibold text-sm text-white">
-                                            {user?.username || 'Player'}
+                                            {user?.ign || user?.username || 'Player'}
                                         </span>
                                     </button>
 

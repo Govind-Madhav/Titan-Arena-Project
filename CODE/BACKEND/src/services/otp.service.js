@@ -7,9 +7,6 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
 // Create Redis Client
-// In a real app, this might be a singleton exported from a db/redis module.
-// For now, initializing here or check if we can reuse one.
-// The prompted code doesn't show a central redis client. I will create one here.
 const redisClient = redis.createClient({
     url: process.env.REDIS_URL || 'redis://localhost:6379'
 });
@@ -24,27 +21,30 @@ class OtpService {
     }
 
     /**
-     * Generates a 6-digit OTP, hashes it, and stores in Redis.
-     * Enforces rate limiting.
+     * Generates a unique 6-digit OTP, hashes it, and stores it in Redis.
+     * @param {string} email
+     * @param {string} scope - 'register' or 'reset'
      */
-    async generateOtp(email) {
+    async generateOtp(email, scope = 'register') {
         if (!redisClient.isOpen) await redisClient.connect();
 
-        // Rate Limiting (Simple: 1 per minute)
-        const rateKey = `rate:otp:${email}`;
+        // Rate Limiting (Simple: 1 per minute per scope)
+        const rateKey = `rate:otp:${scope}:${email}`;
         const isRateLimited = await redisClient.get(rateKey);
         if (isRateLimited) {
-            throw new Error('Please wait before requesting another OTP');
+            throw new Error('Please wait before requesting another code.');
         }
 
         // Generate 6-digit OTP
         const otp = crypto.randomInt(100000, 999999).toString();
 
-        // Hash it
+        // Hash it using HMAC or bcrypt? 
+        // bcrypt is slow (good for passwords), but for OTPs with 5 min TTL, 
+        // speed matters less than security. bcrypt is safer against leaks.
         const hash = await bcrypt.hash(otp, 10);
 
-        // Store: key = otp:email:<email>:register
-        const key = `otp:email:${email}:register`;
+        // Store: key = otp:${scope}:${email}
+        const key = `otp:${scope}:${email}`;
         const payload = JSON.stringify({
             hash,
             attempts: 0
@@ -63,15 +63,18 @@ class OtpService {
      * Verifies the OTP.
      * Enforces strict attempt limits.
      * Deletes on success.
+     * @param {string} email 
+     * @param {string} enteredOtp 
+     * @param {string} scope 
      */
-    async verifyOtp(email, enteredOtp) {
+    async verifyOtp(email, enteredOtp, scope = 'register') {
         if (!redisClient.isOpen) await redisClient.connect();
 
-        const key = `otp:email:${email}:register`;
+        const key = `otp:${scope}:${email}`;
         const data = await redisClient.get(key);
 
         if (!data) {
-            throw new Error('OTP expired or invalid');
+            throw new Error('Code expired or invalid.');
         }
 
         let { hash, attempts } = JSON.parse(data);
@@ -79,7 +82,7 @@ class OtpService {
         // Check Max Attempts
         if (attempts >= this.MAX_ATTEMPTS) {
             await redisClient.del(key); // Hard fail cleanup
-            throw new Error('Max verification attempts reached. Please request a new OTP.');
+            throw new Error('Too many failed attempts. Please request a new code.');
         }
 
         // Verify Hash
@@ -95,7 +98,7 @@ class OtpService {
 
             if (attempts >= this.MAX_ATTEMPTS) {
                 await redisClient.del(key);
-                throw new Error('Max verification attempts reached. Please request a new OTP.');
+                throw new Error('Too many failed attempts. Please request a new code.');
             } else {
                 // Update attempts, preserve remaining TTL
                 const ttl = await redisClient.ttl(key);
@@ -104,7 +107,7 @@ class OtpService {
                 }
             }
 
-            throw new Error('Invalid OTP');
+            throw new Error('Invalid code. Please try again.');
         }
     }
 }

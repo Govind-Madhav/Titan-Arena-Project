@@ -9,6 +9,8 @@ import { Toaster } from 'react-hot-toast'
 import Layout from './Components/layout/Layout'
 import LandingPage from './pages/LandingPage'
 import AuthPage from './pages/AuthPage'
+import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import SettingsPage from './pages/settings/SettingsPage'
 
 // Player Components
 import TournamentsPage from './pages/player/TournamentsPage'
@@ -19,6 +21,7 @@ import MatchesPage from './pages/player/MatchesPage'
 import WalletPage from './pages/player/WalletPage'
 import ProfilePage from './pages/player/ProfilePage'
 import LeaderboardPage from './pages/player/LeaderboardPage'
+import FeedPage from './pages/player/FeedPage' // New
 
 import ProtectedRoute from './Components/auth/ProtectedRoute'
 import SessionWarning from './Components/auth/SessionWarning'
@@ -28,12 +31,15 @@ import AdminDashboard from './pages/admin/AdminPage'
 import ManageUsers from './pages/admin/ManageUsers'
 import ManageHosts from './pages/admin/ManageHosts'
 import ManageTournaments from './pages/admin/ManageTournaments'
+import ManageApplications from './pages/admin/ManageApplications' // New
+
 // Host Components
 import HostDashboard from './pages/host/HostHomepage'
 import HostManageTourn from './pages/host/HostmanageTourn'
 import HostManageUser from './pages/host/HostManageUser'
 import HostUserPayments from './pages/host/HostUserPayments'
 import HostDeclareWinners from './pages/host/HostDeclareWinners'
+import HostApplicationPage from './pages/host/HostApplicationPage' // New
 
 function App() {
   return (
@@ -65,6 +71,7 @@ function App() {
         {/* Public Routes */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/auth" element={<AuthPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
         {/* Protected Routes with Layout */}
         <Route element={<Layout />}>
@@ -111,10 +118,26 @@ function App() {
             }
           />
           <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <SettingsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/leaderboard"
             element={
               <ProtectedRoute>
                 <LeaderboardPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/feed"
+            element={
+              <ProtectedRoute>
+                <FeedPage />
               </ProtectedRoute>
             }
           />
@@ -146,6 +169,14 @@ function App() {
           }
         />
         <Route
+          path="/manageApplications"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN', 'SUPERADMIN']}>
+              <ManageApplications />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/manageTourn"
           element={
             <ProtectedRoute allowedRoles={['ADMIN', 'SUPERADMIN']}>
@@ -154,6 +185,14 @@ function App() {
           }
         />
         {/* Host Routes - Protected & Self-Layout */}
+        <Route
+          path="/host/apply"
+          element={
+            <ProtectedRoute>
+              <HostApplicationPage />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/host"
           element={
@@ -196,7 +235,7 @@ function App() {
         />
 
       </Routes>
-    </BrowserRouter>
+    </BrowserRouter >
   )
 }
 
