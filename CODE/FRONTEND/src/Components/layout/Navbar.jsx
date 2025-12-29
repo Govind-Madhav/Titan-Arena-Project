@@ -117,7 +117,8 @@ export default function Navbar() {
 
     const navLinks = [
         { name: 'Tournaments', path: '/tournaments', icon: Trophy },
-        { name: 'Community', path: '/feed', icon: Globe }, // Added
+        { name: 'Community', path: '/feed', icon: Globe },
+        { name: 'Leaderboard', path: '/leaderboard', icon: Trophy }, // Re-using Trophy or maybe implement BarChart/Award icon if imported, utilizing Trophy for now to be safe or import Crown? actually Trophy is already imported.
         { name: 'Teams', path: '/teams', icon: Users },
         { name: 'Matches', path: '/matches', icon: Swords },
     ]

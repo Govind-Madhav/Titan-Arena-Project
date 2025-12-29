@@ -5,23 +5,38 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Trophy, User, Users, Medal, Search, Filter, Crown } from 'lucide-react'
+import { Trophy, User, Users, Medal, Search, Filter, Crown, Globe, MapPin } from 'lucide-react'
+import useAuthStore from '../../store/authStore'
 import { Particles } from '../../Components/effects/ReactBits'
 import api from '../../lib/api'
 
 export default function LeaderboardPage() {
-    const [activeTab, setActiveTab] = useState('players') // 'players' | 'teams'
+    const [activeTab, setActiveTab] = useState('global') // 'global' | 'local'
     const [searchTerm, setSearchTerm] = useState('')
     const [leaderboardData, setLeaderboardData] = useState([])
     const [loading, setLoading] = useState(true)
 
+    const { user } = useAuthStore(); // Need user for country
+
     useEffect(() => {
         fetchLeaderboard()
-    }, [])
+    }, [activeTab]) // Refetch on tab change
 
     const fetchLeaderboard = async () => {
+        setLoading(true);
         try {
-            const res = await api.get('/stats/leaderboard')
+            let url = '/stats/leaderboard';
+            if (activeTab === 'local') {
+                if (!user?.country) {
+                    // If no country, maybe show empty or prompt? 
+                    // For now, we'll just not filter (or handle in UI)
+                    // But typically we want to send the user's country
+                    url += `?country=${user?.country || 'IN'}`; // Default to IN or handle null
+                } else {
+                    url += `?country=${user.country}`;
+                }
+            }
+            const res = await api.get(url)
             setLeaderboardData(res.data.data || [])
         } catch (error) {
             console.error('Failed to fetch leaderboard:', error)
@@ -65,18 +80,19 @@ export default function LeaderboardPage() {
                 {/* Controls */}
                 <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-12">
                     {/* Tab Switcher (Currently only Players supported) */}
+                    {/* Tab Switcher */}
                     <div className="bg-white/5 p-1 rounded-xl flex items-center border border-white/10">
                         <button
-                            onClick={() => setActiveTab('players')}
-                            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-heading font-semibold transition-all duration-300 ${activeTab === 'players' ? 'bg-titan-purple text-white shadow-lg' : 'text-white/50 hover:text-white'}`}
+                            onClick={() => setActiveTab('global')}
+                            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-heading font-semibold transition-all duration-300 ${activeTab === 'global' ? 'bg-titan-purple text-white shadow-lg' : 'text-white/50 hover:text-white'}`}
                         >
-                            <User size={18} /> Players
+                            <Globe size={18} /> Global
                         </button>
                         <button
-                            disabled
-                            className="flex items-center gap-2 px-6 py-2.5 rounded-lg font-heading font-semibold text-white/20 cursor-not-allowed"
+                            onClick={() => setActiveTab('local')}
+                            className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-heading font-semibold transition-all duration-300 ${activeTab === 'local' ? 'bg-titan-purple text-white shadow-lg' : 'text-white/50 hover:text-white'}`}
                         >
-                            <Users size={18} /> Teams (Coming Soon)
+                            <MapPin size={18} /> Local
                         </button>
                     </div>
 

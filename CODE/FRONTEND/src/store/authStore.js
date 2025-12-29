@@ -157,33 +157,28 @@ const useAuthStore = create(
                 set({ isLoading: true })
                 try {
                     const res = await api.post('/auth/verify-email', { email, otp })
-                    const { user, accessToken, expiresAt } = res.data.data
-
-                    set({
-                        user,
-                        accessToken,
-                        tokenExpiresAt: expiresAt,
-                        isAuthenticated: true,
-                        isLoading: false
-                    })
-
-                    // Start token refresh timer
-                    get().startTokenRefreshTimer()
-
-                    // Notify other tabs
-                    if (authChannel) {
-                        authChannel.postMessage({
-                            type: 'LOGIN',
-                            data: { user, accessToken, tokenExpiresAt: expiresAt }
-                        })
-                    }
-
-                    return { success: true }
+                    set({ isLoading: false })
+                    return { success: true, message: res.data.message }
                 } catch (error) {
                     set({ isLoading: false })
                     return {
                         success: false,
                         message: error.response?.data?.message || 'Verification failed'
+                    }
+                }
+            },
+
+            resendVerification: async (email) => {
+                set({ isLoading: true })
+                try {
+                    const res = await api.post('/auth/resend-verification', { email })
+                    set({ isLoading: false })
+                    return { success: true, message: res.data.message }
+                } catch (error) {
+                    set({ isLoading: false })
+                    return {
+                        success: false,
+                        message: error.response?.data?.message || 'Failed to resend verification code'
                     }
                 }
             },

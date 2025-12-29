@@ -50,8 +50,9 @@ export default function AuthPage() {
     })
 
     const [otp, setOtp] = useState('')
+    const [resendCooldown, setResendCooldown] = useState(0)
 
-    const { login, signup, verifyEmail, isLoading } = useAuthStore()
+    const { login, signup, verifyEmail, resendVerification, isLoading } = useAuthStore()
     const navigate = useNavigate()
     const location = useLocation()
     const from = location.state?.from?.pathname || '/'
@@ -73,7 +74,16 @@ export default function AuthPage() {
         setIsVerifying(false)
         setOtp('')
         setCurrentStep(1)
+        setResendCooldown(0)
     }, [isLogin])
+
+    // Resend cooldown timer
+    useEffect(() => {
+        if (resendCooldown > 0) {
+            const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000)
+            return () => clearTimeout(timer)
+        }
+    }, [resendCooldown])
 
     const handleBeforeNextStep = async (stepCalled) => {
         if (stepCalled === 1) {
@@ -100,8 +110,11 @@ export default function AuthPage() {
             // Handle OTP Verification
             const result = await verifyEmail(formData.email, otp)
             if (result.success) {
-                toast.success('Email verified! Logging you in...')
-                navigate(from, { replace: true })
+                toast.success('Email verified! Please login to continue.')
+                // Redirect to login page after successful verification
+                setIsVerifying(false)
+                setMode('login')
+                setOtp('')
             } else {
                 toast.error(result.message)
             }
@@ -128,7 +141,7 @@ export default function AuthPage() {
             if (result.success) {
                 toast.success('Verification code sent! Please check your email.')
                 setIsVerifying(true)
-                // Effectively move to "Step 3" visually, which is the Verification UI
+                // Show verification UI - user will verify email first
             } else {
                 toast.error(result.message)
             }
@@ -571,7 +584,23 @@ export default function AuthPage() {
                                                 />
                                             </div>
                                             <div className="text-xs text-white/40 font-mono">
-                                                SIGNAL LOST? <button type="button" className="text-titan-purple hover:text-white transition-colors underline decoration-dotted underline-offset-4">RESEND UPLINK</button>
+                                                SIGNAL LOST? <button
+                                                    type="button"
+                                                    onClick={async () => {
+                                                        if (resendCooldown > 0) return;
+                                                        const result = await resendVerification(formData.email);
+                                                        if (result.success) {
+                                                            toast.success(result.message || 'Verification code sent!');
+                                                            setResendCooldown(60); // 60 second cooldown
+                                                        } else {
+                                                            toast.error(result.message || 'Failed to resend code');
+                                                        }
+                                                    }}
+                                                    disabled={isLoading || resendCooldown > 0}
+                                                    className="text-titan-purple hover:text-white transition-colors underline decoration-dotted underline-offset-4 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {resendCooldown > 0 ? `WAIT ${resendCooldown}s` : 'RESEND UPLINK'}
+                                                </button>
                                             </div>
                                             <button
                                                 type="submit"
