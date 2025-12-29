@@ -71,6 +71,42 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+// Middleware to ensure services are initialized (for Serverless/Vercel)
+let servicesInitialized = false;
+let initPromise = null;
+
+const initializeServices = async () => {
+  if (servicesInitialized) return;
+
+  try {
+    // Initialize independently to allow partial failures (soft dependencies)
+    try {
+      initializeFirebase();
+    } catch (e) { console.warn('Firebase Init Warning:', e.message); }
+
+    try {
+      const redisHealth = await checkRedisHealth();
+      if (redisHealth.status !== 'connected') {
+        await createRedisClient();
+      }
+    } catch (e) { console.warn('Redis Init Warning:', e.message); }
+
+    servicesInitialized = true;
+    console.log('✅ Services initialized');
+  } catch (error) {
+    console.error('❌ Service initialization failed:', error);
+  }
+};
+
+// Global middleware to await services in serverless environment
+app.use(async (req, res, next) => {
+  if (!servicesInitialized) {
+    if (!initPromise) initPromise = initializeServices();
+    await initPromise;
+  }
+  next();
+});
+
 // Routes
 app.use('/api/auth', require('./modules/auth/auth.routes'));
 app.use('/api/admin', require('./modules/admin/admin.routes'));
@@ -108,76 +144,49 @@ app.use((req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
-
-// Initialize services and start server
-const startServer = async () => {
-  try {
-    console.log('🚀 Starting E-sports Tournament API...');
-    console.log(`📦 Process ID: ${process.pid}`);
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}\n`);
-
-    // ✅ FIX: Guarded Firebase initialization (soft dependency)
-    console.log('📱 Initializing Firebase...');
+// Start server if run directly (Local/Docker)
+if (require.main === module) {
+  const startServer = async () => {
+    const PORT = process.env.PORT || 5001;
     try {
-      initializeFirebase();
-      console.log('✅ Firebase initialized successfully');
-    } catch (error) {
-      console.warn('⚠️  Firebase initialization failed (real-time features disabled):', error.message);
-      console.warn('   API will continue without Firebase - only core features available');
-    }
+      console.log('🚀 Starting E-sports Tournament API...');
 
-    // Initialize Redis (soft dependency)
-    console.log('💾 Initializing Redis...');
-    try {
-      await createRedisClient();
-    } catch (error) {
-      console.warn('⚠️  Redis initialization failed (cache disabled):', error.message);
-    }
+      // Explicit initialization for local server
+      await initializeServices();
 
-    // Start Express server
-    const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log('\n✅ Server running successfully!');
-      console.log(`📊 API URL: http://0.0.0.0:${PORT}`);
-      console.log(`🏥 Health check: http://0.0.0.0:${PORT}/api/health`);
-      console.log(`🔌 CORS origins: ${corsOrigins.join(', ')}\n`);
-    });
-
-    // Graceful shutdown handler
-    const gracefulShutdown = async (signal) => {
-      console.log(`\n${signal} received. Starting graceful shutdown...`);
-
-      // Stop accepting new connections
-      server.close(async () => {
-        console.log('🔒 HTTP server closed');
-
-        // Close Firebase
-        await closeFirebase();
-
-        // Close Redis
-        await closeRedis();
-
-        console.log('✅ Graceful shutdown complete\n');
-        process.exit(0);
+      const server = app.listen(PORT, '0.0.0.0', () => {
+        console.log(`\n✅ Server running successfully!`);
+        console.log(`📊 API URL: http://0.0.0.0:${PORT}`);
+        console.log(`ENVIRONMENT: ${process.env.NODE_ENV || 'development'}\n`);
       });
 
-      // Force shutdown after 10 seconds
-      setTimeout(() => {
-        console.error('❌ Forced shutdown after timeout');
-        process.exit(1);
-      }, 10000);
-    };
+      // Graceful shutdown
+      const gracefulShutdown = (signal) => {
+        console.log(`\n${signal} received. Starting graceful shutdown...`);
+        server.close(async () => {
+          console.log('🔒 HTTP server closed');
+          await closeFirebase();
+          await closeRedis();
+          console.log('✅ Graceful shutdown complete\n');
+          process.exit(0);
+        });
+        setTimeout(() => {
+          console.error('❌ Forced shutdown after timeout');
+          process.exit(1);
+        }, 10000);
+      };
 
-    // Listen for termination signals
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+      process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+      process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-  } catch (error) {
-    console.error('❌ Failed to start server:', error.message);
-    console.error(error.stack);
-    process.exit(1);
-  }
-};
+    } catch (error) {
+      console.error('❌ Failed to start server:', error.message);
+      process.exit(1);
+    }
+  };
 
-// Start the server
-startServer();
+  startServer();
+}
+
+// Export app for Vercel
+module.exports = app;
