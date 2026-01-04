@@ -13,25 +13,26 @@ const api = axios.create({
     withCredentials: true, // Important for cookies
 })
 
-// Queue for requests during token refresh
-let isRefreshing = false
-let failedQueue = []
+import { auth } from './firebase'
 
-const processQueue = (error, token = null) => {
-    failedQueue.forEach(prom => {
-        if (error) {
-            prom.reject(error)
-        } else {
-            prom.resolve(token)
-        }
-    })
-    failedQueue = []
-}
-
-// Request interceptor to add auth token
+// Request interceptor to add auth token (Hardened Firebase Identity)
 api.interceptors.request.use(
-    (config) => {
-        // Get auth store dynamically to avoid circular dependency
+    async (config) => {
+        // 1. Check for active Firebase user
+        const firebaseUser = auth.currentUser
+
+        if (firebaseUser) {
+            try {
+                // Firebase handles refresh automatically, we just pull the current token
+                const token = await firebaseUser.getIdToken()
+                config.headers.Authorization = `Bearer ${token}`
+                return config
+            } catch (e) {
+                console.error('🔐 API Security: Failed to fetch Firebase ID token')
+            }
+        }
+
+        // 2. Legacy Fallback (for existing sessions during migration)
         const authData = localStorage.getItem('titan-auth')
         if (authData) {
             try {
@@ -40,7 +41,7 @@ api.interceptors.request.use(
                     config.headers.Authorization = `Bearer ${state.accessToken}`
                 }
             } catch (e) {
-                console.error('Failed to parse auth data')
+                console.warn('API: Failed to parse legacy auth data')
             }
         }
         return config
@@ -52,60 +53,15 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
-        const originalRequest = error.config
-
-        // If 401 and not already retrying, try to refresh token
-        if (error.response?.status === 401 && !originalRequest._retry) {
-            if (isRefreshing) {
-                // If already refreshing, queue this request
-                return new Promise((resolve, reject) => {
-                    failedQueue.push({ resolve, reject })
-                }).then(token => {
-                    originalRequest.headers.Authorization = `Bearer ${token}`
-                    return api(originalRequest)
-                }).catch(err => {
-                    return Promise.reject(err)
-                })
-            }
-
-            originalRequest._retry = true
-            isRefreshing = true
-
-            try {
-                // Call refresh endpoint (cookie will be sent automatically)
-                const res = await axios.post(
-                    `${api.defaults.baseURL}/auth/refresh`,
-                    {},
-                    { withCredentials: true }
-                )
-
-                const { accessToken, expiresAt } = res.data.data
-
-                // Update stored token
-                const authData = localStorage.getItem('titan-auth')
-                if (authData) {
-                    const parsed = JSON.parse(authData)
-                    parsed.state.accessToken = accessToken
-                    parsed.state.tokenExpiresAt = expiresAt
-                    localStorage.setItem('titan-auth', JSON.stringify(parsed))
-                }
-
-                // Process queued requests
-                processQueue(null, accessToken)
-                isRefreshing = false
-
-                // Retry original request
-                originalRequest.headers.Authorization = `Bearer ${accessToken}`
-                return api(originalRequest)
-            } catch (refreshError) {
-                // Refresh failed, clear auth and redirect
-                processQueue(refreshError, null)
-                isRefreshing = false
-
+        if (error.response?.status === 401) {
+            // If Firebase exists, it means the token is truly stale/invalid
+            if (auth.currentUser) {
+                // Potential force sign-out or session recovery
+                console.warn('🔐 API: 401 Unauthorized for Firebase User. Potential session mismatch.')
+            } else {
+                // Legacy redirect
                 localStorage.removeItem('titan-auth')
                 window.location.href = '/auth'
-
-                return Promise.reject(refreshError)
             }
         }
 

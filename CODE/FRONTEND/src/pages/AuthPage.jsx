@@ -13,16 +13,16 @@ import useAuthStore from '../store/authStore'
 import { Particles } from '../Components/effects/ReactBits'
 import Navbar from '../Components/layout/Navbar'
 import { countries } from '../lib/countries'
-import { AsYouType } from 'libphonenumber-js'
 import { getAllStates, getDistrictsByState } from '../lib/india-locations';
 import api from '../lib/api'; // Import API client
 
 export default function AuthPage() {
 
     const [isLogin, setIsLogin] = useState(true)
-    const [isVerifying, setIsVerifying] = useState(false)
     const [showPassword, setShowPassword] = useState(false)
     const [rememberMe, setRememberMe] = useState(false)
+    const [isVerificationSent, setIsVerificationSent] = useState(false)
+    const [resendTimer, setResendTimer] = useState(0)
 
     // Wizard State
     // Wizard State
@@ -38,26 +38,30 @@ export default function AuthPage() {
     const [currentStep, setCurrentStep] = useState(1);
 
     const [formData, setFormData] = useState({
+        ign: '',              // NEW
         username: '',
         email: '',
         password: '',
+        confirmPassword: '', // NEW
         legalName: '',
         dateOfBirth: '',
         phone: '',
+        region: '',          // NEW
+        subRegion: '',       // NEW
         country: '',
         state: '',
         city: '',
         termsAccepted: false
     })
 
-    const [otp, setOtp] = useState('')
-    const [resendCooldown, setResendCooldown] = useState(0)
-
     // Availability State
-    const [usernameAvailable, setUsernameAvailable] = useState(null); // null, true, false
+    const [usernameAvailable, setUsernameAvailable] = useState(null);
     const [isCheckingUsername, setIsCheckingUsername] = useState(false);
+    const [ignAvailable, setIgnAvailable] = useState(null); // NEW
+    const [isCheckingIgn, setIsCheckingIgn] = useState(false); // NEW
 
-    const { login, signup, verifyEmail, resendVerification, isLoading } = useAuthStore()
+    // Unified Auth Store (Hybrid)
+    const { syncWithBackend, isLoading } = useAuthStore()
     const navigate = useNavigate()
     const location = useLocation()
     const from = location.state?.from?.pathname || '/'
@@ -65,30 +69,49 @@ export default function AuthPage() {
     // Clear form when switching between login/signup
     useEffect(() => {
         setFormData({
+            ign: '',
             username: '',
             email: '',
             password: '',
+            confirmPassword: '',
             legalName: '',
             dateOfBirth: '',
             phone: '',
+            region: '',
+            subRegion: '',
             country: '',
             state: '',
             city: '',
             termsAccepted: false
         })
-        setIsVerifying(false)
-        setOtp('')
         setCurrentStep(1)
-        setResendCooldown(0)
     }, [isLogin])
 
     // Resend cooldown timer
+    // (Removed phone OTP resend)
+
+    // Debounced IGN Check (NEW)
     useEffect(() => {
-        if (resendCooldown > 0) {
-            const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000)
-            return () => clearTimeout(timer)
+        if (isLogin || !formData.ign || formData.ign.length < 3) {
+            setIgnAvailable(null);
+            return;
         }
-    }, [resendCooldown])
+
+        const timer = setTimeout(async () => {
+            setIsCheckingIgn(true);
+            try {
+                const res = await api.post('/auth/check-ign', { ign: formData.ign });
+                setIgnAvailable(res.data.available);
+            } catch (error) {
+                console.error('IGN check failed', error);
+                setIgnAvailable(null);
+            } finally {
+                setIsCheckingIgn(false);
+            }
+        }, 500); // 500ms debounce
+
+        return () => clearTimeout(timer);
+    }, [formData.ign, isLogin]);
 
     // Debounced Username Check
     useEffect(() => {
@@ -101,21 +124,21 @@ export default function AuthPage() {
             setIsCheckingUsername(true);
             try {
                 const res = await api.post('/auth/check-availability', { username: formData.username });
-                setUsernameAvailable(res.data.data.usernameAvailable);
+                setUsernameAvailable(res.data.available);
             } catch (error) {
-                console.error('Check failed', error);
+                console.error('Username check failed', error);
                 setUsernameAvailable(null);
             } finally {
                 setIsCheckingUsername(false);
             }
-        }, 500); // 500ms debounce
+        }, 500);
 
         return () => clearTimeout(timer);
     }, [formData.username, isLogin]);
 
     const handleBeforeNextStep = async (stepCalled) => {
         if (stepCalled === 1) {
-            if (!formData.username || !formData.legalName || !formData.dateOfBirth || !formData.phone || !formData.country || !formData.state) {
+            if (!formData.username || !formData.legalName || !formData.dateOfBirth || !formData.country || !formData.state) {
                 toast.error('Please fill in all personal details')
                 return false
             }
@@ -131,48 +154,146 @@ export default function AuthPage() {
         handleSubmit({ preventDefault: () => { } })
     }
 
+    const [isAuthProcessing, setIsAuthProcessing] = useState(false)
+
     const handleSubmit = async (e) => {
         e.preventDefault()
-
-        if (isVerifying) {
-            // Handle OTP Verification
-            const result = await verifyEmail(formData.email, otp)
-            if (result.success) {
-                toast.success('Email verified! Please login to continue.')
-                // Redirect to login page after successful verification
-                setIsVerifying(false)
-                setMode('login')
-                setOtp('')
-            } else {
-                toast.error(result.message)
-            }
-            return
-        }
+        const { auth } = await import('../lib/firebase')
+        const { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification } = await import('firebase/auth')
 
         if (isLogin) {
-            const result = await login(formData.email, formData.password, rememberMe)
-            if (result.success) {
-                toast.success('Welcome back to the Arena!')
-                navigate(from, { replace: true })
-            } else {
-                toast.error(result.message)
+            // --- FIREBASE LOGIN (Email/Password) ---
+            if (!formData.email || !formData.password) return toast.error('Email and password required')
+
+            setIsAuthProcessing(true)
+            try {
+                const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password)
+                const user = userCredential.user
+
+                // 🚨 Frontend Check (Pre-sync)
+                if (!user.emailVerified) {
+                    setIsVerificationSent(true)
+                    toast.error('Uplink Interrupted: Email verification required.')
+
+                    // Dispatch custom branded verification link
+                    await api.post('/auth/trigger-verification', {
+                        email: user.email,
+                        username: formData.username || user.displayName
+                    });
+
+                    setIsAuthProcessing(false)
+                    return
+                }
+
+                toast.success('Identity Verified. Syncing profile...')
+
+                const syncResult = await syncWithBackend()
+                if (syncResult.success) {
+                    toast.success('Welcome to Titan Arena!')
+                    navigate(from, { replace: true })
+                } else {
+                    if (syncResult.code === 'EMAIL_NOT_VERIFIED') {
+                        setIsVerificationSent(true)
+                        await api.post('/auth/trigger-verification', {
+                            email: user.email,
+                            username: formData.username || user.displayName
+                        });
+                    }
+                    toast.error(syncResult.message)
+                }
+            } catch (error) {
+                console.error('Login Failed:', error)
+                toast.error(error.message || 'Verification failed')
+            } finally {
+                setIsAuthProcessing(false)
             }
         } else {
-            // Handle Register Final Step
-            if (!formData.termsAccepted) {
-                toast.error('You must accept the terms and conditions')
-                return
-            }
+            // --- CUSTOM BACKEND SIGNUP (Email/Password with OTP) ---
+            if (currentStep === 2) {
+                if (!formData.termsAccepted) return toast.error('Accept terms to proceed')
 
-            const result = await signup(formData)
+                // Frontend validation
+                if (formData.password !== formData.confirmPassword) {
+                    return toast.error("Passwords don't match")
+                }
 
-            if (result.success) {
-                toast.success('Verification code sent! Please check your email.')
-                setIsVerifying(true)
-                // Show verification UI - user will verify email first
-            } else {
-                toast.error(result.message)
+                // Block if checking IGN
+                if (isCheckingIgn) {
+                    return toast.error("Please wait for gamertag availability check")
+                }
+
+                // Check IGN is available
+                if (ignAvailable === false) {
+                    return toast.error("Gamertag is already taken")
+                }
+
+                setIsAuthProcessing(true)
+                try {
+                    // Prepare payload (remove confirmPassword)
+                    const payload = {
+                        ign: formData.ign.trim(),
+                        username: formData.username,
+                        legalName: formData.legalName,
+                        email: formData.email,
+                        password: formData.password,
+                        phone: formData.phone,
+                        region: Number(formData.region),
+                        subRegion: formData.subRegion || null,
+                        country: formData.country,
+                        state: formData.state,
+                        city: formData.city || null,
+                        dateOfBirth: formData.dateOfBirth,
+                        termsAccepted: formData.termsAccepted
+                    }
+
+                    // Call custom backend signup
+                    const response = await api.post('/auth/signup', payload)
+
+                    setIsVerificationSent(true)
+                    toast.success('Verification code sent to your email!')
+                } catch (error) {
+                    console.error('Signup Failed:', error)
+                    toast.error(error.response?.data?.message || 'Registration failed')
+                } finally {
+                    setIsAuthProcessing(false)
+                }
             }
+        }
+    }
+
+    // Handle region change (reset sub-region)
+    const handleRegionChange = (e) => {
+        setFormData({
+            ...formData,
+            region: e.target.value,
+            subRegion: '' // Reset sub-region when region changes
+        })
+    }
+
+    const handleResendEmail = async () => {
+        const { auth } = await import('../lib/firebase')
+        const { sendEmailVerification } = await import('firebase/auth')
+
+        if (!auth.currentUser) return toast.error('No active session found.')
+
+        try {
+            await api.post('/auth/trigger-verification', {
+                email: auth.currentUser.email,
+                username: formData.username || auth.currentUser.displayName
+            });
+            toast.success('Verification link resent!')
+            setResendTimer(60)
+            const interval = setInterval(() => {
+                setResendTimer(prev => {
+                    if (prev <= 1) {
+                        clearInterval(interval)
+                        return 0
+                    }
+                    return prev - 1
+                })
+            }, 1000)
+        } catch (error) {
+            toast.error('Failed to resend email. Try again later.')
         }
     }
 
@@ -304,20 +425,56 @@ export default function AuthPage() {
                         <div className="backdrop-blur-xl bg-black/40 border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
                             <div className="p-8">
                                 <h2 className="font-display text-3xl font-bold mb-2">
-                                    {isVerifying ? 'Verifying Identity' : (isLogin ? 'Welcome Back' : 'Sign Up')}
+                                    {isLogin ? 'Welcome Back' : 'Sign Up'}
                                 </h2>
 
                                 <p className="text-white/40 text-sm mb-2 font-mono leading-relaxed">
-                                    {isVerifying
-                                        ? 'Aligning biometrics...'
-                                        : (isLogin ? 'Access the mainframe.' : (currentStep === 1 ? 'Establish personal profile.' : 'Secure credentials.'))
-                                    }
+                                    {isLogin ? 'Access the mainframe.' : (currentStep === 1 ? 'Establish personal profile.' : 'Secure credentials.')}
                                 </p>
 
                                 <form onSubmit={handleSubmit} className="space-y-2 relative z-10">
 
+                                    {/* --- VERIFICATION PENDING OVERLAY --- */}
+                                    {isVerificationSent && (
+                                        <motion.div
+                                            initial={{ opacity: 0, scale: 0.95 }}
+                                            animate={{ opacity: 1, scale: 1 }}
+                                            className="absolute inset-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center"
+                                        >
+                                            <div className="w-16 h-16 rounded-full bg-titan-purple/20 flex items-center justify-center mb-6 animate-pulse">
+                                                <Mail size={32} className="text-titan-purple" />
+                                            </div>
+                                            <h3 className="font-display text-xl font-bold mb-2">VERIFICATION REQUIRED</h3>
+                                            <p className="text-white/60 text-sm mb-8">
+                                                A secure uplink link has been sent to <span className="text-white font-mono">{formData.email}</span>.
+                                                <br />Please verify your identity to proceed.
+                                            </p>
+
+                                            <div className="space-y-4 w-full">
+                                                <button
+                                                    onClick={handleResendEmail}
+                                                    disabled={resendTimer > 0}
+                                                    className="btn-neon w-full h-10 text-xs font-bold flex items-center justify-center gap-2"
+                                                >
+                                                    {resendTimer > 0 ? `RESEND IN ${resendTimer}s` : 'RESEND VERIFICATION'}
+                                                </button>
+
+                                                <button
+                                                    onClick={() => {
+                                                        setIsVerificationSent(false)
+                                                        setIsLogin(true)
+                                                    }}
+                                                    className="w-full text-white/40 hover:text-white text-xs font-mono transition-colors"
+                                                >
+                                                    ← BACK TO LOGIN
+                                                </button>
+                                            </div>
+                                        </motion.div>
+                                    )}
+
+
                                     {/* --- LOGIN MODE --- */}
-                                    {isLogin && !isVerifying && (
+                                    {isLogin && (
                                         <div className="space-y-2.5">
                                             <div className="relative group">
                                                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
@@ -369,7 +526,7 @@ export default function AuthPage() {
 
 
                                     {/* --- REGISTER: Stepper Wrapper --- */}
-                                    {!isLogin && !isVerifying && (
+                                    {!isLogin && (
                                         <Stepper
                                             initialStep={1}
                                             onStepChange={(s) => setCurrentStep(s)}
@@ -383,16 +540,41 @@ export default function AuthPage() {
                                         >
                                             <Step>
                                                 <div className="space-y-2.5 animate-in fade-in slide-in-from-right-4 duration-300 pt-0.5">
+                                                    {/* IGN (Gamertag) Field - NEW */}
+                                                    <div className="relative group">
+                                                        <Gamepad2 className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="text"
+                                                            name="ign"
+                                                            placeholder="Gamertag (how others will see you)"
+                                                            value={formData.ign}
+                                                            onChange={(e) => setFormData({ ...formData, ign: e.target.value })}
+                                                            minLength={3}
+                                                            maxLength={20}
+                                                            pattern="[a-zA-Z0-9_]+"
+                                                            className={`w-full bg-white/10 border ${ignAvailable === false ? 'border-red-500 focus:border-red-500' : (ignAvailable === true ? 'border-green-500 focus:border-green-500' : 'border-white/10')} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
+                                                            autoFocus
+                                                            required
+                                                        />
+                                                        {isCheckingIgn ? (
+                                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+                                                        ) : (
+                                                            ignAvailable === true ? (
+                                                                <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />
+                                                            ) : ignAvailable === false ? (
+                                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 font-bold text-xs">TAKEN</div>
+                                                            ) : null
+                                                        )}
+                                                    </div>
                                                     <div className="relative group">
                                                         <User className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
                                                         <input
                                                             type="text"
                                                             name="username"
-                                                            placeholder="Gamertag / Username"
+                                                            placeholder="Username (for login)"
                                                             value={formData.username}
-                                                            onChange={handleChange}
+                                                            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                                                             className={`w-full bg-white/10 border ${usernameAvailable === false ? 'border-red-500 focus:border-red-500' : (usernameAvailable === true ? 'border-green-500 focus:border-green-500' : 'border-white/10')} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
-                                                            autoFocus
                                                             required
                                                         />
                                                         {isCheckingUsername ? (
@@ -458,23 +640,7 @@ export default function AuthPage() {
                                                         </div>
                                                     </div>
                                                     <div className="grid grid-cols-2 gap-2.5">
-                                                        <div className="relative group col-span-2">
-                                                            <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
-                                                            <input
-                                                                type="tel"
-                                                                name="phone"
-                                                                placeholder="Phone Number"
-                                                                value={formData.phone}
-                                                                onChange={(e) => {
-                                                                    const val = e.target.value;
-                                                                    const isoCode = formData.country || undefined;
-                                                                    const formatted = new AsYouType(isoCode).input(val);
-                                                                    setFormData(prev => ({ ...prev, phone: formatted }));
-                                                                }}
-                                                                className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
-                                                                required
-                                                            />
-                                                        </div>
+                                                        {/* Phone field removed per request */}
                                                     </div>
                                                     {/* Dynamic Location Fields */}
                                                     {formData.country === 'IN' ? (
@@ -581,6 +747,59 @@ export default function AuthPage() {
                                                         </button>
                                                     </div>
 
+                                                    {/* Confirm Password Field - NEW */}
+                                                    <div className="relative group">
+                                                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="password"
+                                                            name="confirmPassword"
+                                                            placeholder="Confirm Password"
+                                                            value={formData.confirmPassword}
+                                                            onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                                                            className={`w-full bg-white/10 border ${formData.confirmPassword && formData.password !== formData.confirmPassword ? 'border-red-500' : 'border-white/10'} rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
+                                                            required
+                                                        />
+                                                        {formData.confirmPassword && formData.password !== formData.confirmPassword && (
+                                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 font-bold text-xs">NO MATCH</div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Region Selector - NEW */}
+                                                    <div className="relative group">
+                                                        <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <select
+                                                            name="region"
+                                                            value={formData.region}
+                                                            onChange={handleRegionChange}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner"
+                                                            required
+                                                        >
+                                                            <option value="" disabled className="bg-[#1a1a1a] text-white/50">Select Region *</option>
+                                                            <option value="1" className="bg-[#1a1a1a] text-white">Asia</option>
+                                                            <option value="2" className="bg-[#1a1a1a] text-white">Europe</option>
+                                                            <option value="3" className="bg-[#1a1a1a] text-white">Africa</option>
+                                                            <option value="4" className="bg-[#1a1a1a] text-white">North America</option>
+                                                            <option value="5" className="bg-[#1a1a1a] text-white">South America</option>
+                                                            <option value="6" className="bg-[#1a1a1a] text-white">Oceania</option>
+                                                        </select>
+                                                    </div>
+                                                    <p className="text-white/40 text-xs font-mono -mt-1">Region affects matchmaking & notifications. You can still join tournaments from other regions.</p>
+
+                                                    {/* Sub-Region Selector - NEW (Optional) */}
+                                                    <div className="relative group">
+                                                        <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <select
+                                                            name="subRegion"
+                                                            value={formData.subRegion}
+                                                            onChange={(e) => setFormData({ ...formData, subRegion: e.target.value })}
+                                                            disabled={!formData.region}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            <option value="" className="bg-[#1a1a1a] text-white/50">Sub-Region (Auto)</option>
+                                                            {/* Sub-regions will be populated based on selected region */}
+                                                        </select>
+                                                    </div>
+
                                                     <label className="flex items-start gap-3 cursor-pointer group mt-3 bg-white/5 p-3 rounded-lg border border-white/5 hover:border-white/10 transition-all">
                                                         <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center transition-all duration-300 flex-shrink-0 ${formData.termsAccepted ? 'bg-titan-cyan border-titan-cyan shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'border-white/30 group-hover:border-white/50 bg-black/50'}`}>
                                                             {formData.termsAccepted && <Check size={12} className="text-black stroke-[3]" />}
@@ -603,67 +822,21 @@ export default function AuthPage() {
                                         </Stepper>
                                     )}
 
-                                    {/* --- VERIFICATION STEP (OTP) --- */}
-                                    {isVerifying && (
-                                        <div className="space-y-4 text-center animate-in fade-in slide-in-from-bottom-4 duration-500">
-                                            <div className="relative group">
-                                                <div className="absolute -inset-0.5 bg-gradient-to-r from-titan-purple to-titan-cyan rounded-lg blur opacity-20 group-hover:opacity-60 transition duration-500"></div>
-                                                <input
-                                                    type="text"
-                                                    placeholder="XXXXXX"
-                                                    value={otp}
-                                                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                                                    className="relative w-full bg-black/80 border border-white/10 text-center text-3xl tracking-[0.8em] font-mono py-3 rounded-lg text-titan-cyan focus:outline-none focus:border-titan-cyan/50 focus:text-white transition-all placeholder-white/10"
-                                                    autoComplete="off"
-                                                    required
-                                                    maxLength={6}
-                                                    autoFocus
-                                                />
-                                            </div>
-                                            <div className="text-xs text-white/40 font-mono">
-                                                SIGNAL LOST? <button
-                                                    type="button"
-                                                    onClick={async () => {
-                                                        if (resendCooldown > 0) return;
-                                                        const result = await resendVerification(formData.email);
-                                                        if (result.success) {
-                                                            toast.success(result.message || 'Verification code sent!');
-                                                            setResendCooldown(60); // 60 second cooldown
-                                                        } else {
-                                                            toast.error(result.message || 'Failed to resend code');
-                                                        }
-                                                    }}
-                                                    disabled={isLoading || resendCooldown > 0}
-                                                    className="text-titan-purple hover:text-white transition-colors underline decoration-dotted underline-offset-4 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                >
-                                                    {resendCooldown > 0 ? `WAIT ${resendCooldown}s` : 'RESEND UPLINK'}
-                                                </button>
-                                            </div>
-                                            <button
-                                                type="submit"
-                                                disabled={isLoading}
-                                                className="btn-neon w-full mt-2 h-10 flex items-center justify-center gap-2"
-                                            >
-                                                {isLoading ? <div className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" /> : 'AUTHENTICATE'}
-                                            </button>
-                                        </div>
-                                    )}
 
                                 </form>
 
-                                {!isVerifying && (
-                                    <div className="mt-4 text-center border-t border-white/5 pt-3 relative z-20">
-                                        <p className="text-white/30 text-xs font-mono mb-1">
-                                            {isLogin ? "NO IDENTITY FOUND?" : "IDENTITY EXISTS?"}
-                                        </p>
-                                        <button
-                                            onClick={() => setIsLogin(!isLogin)}
-                                            className="text-titan-cyan hover:text-white transition-colors font-display font-bold tracking-wider text-sm uppercase border-b border-transparent hover:border-titan-cyan pb-1"
-                                        >
-                                            {isLogin ? 'CREATE NEW PROFILE' : 'ACCESS EXISTING PROFILE'}
-                                        </button>
-                                    </div>
-                                )}
+                                <div className="mt-4 text-center border-t border-white/5 pt-3 relative z-20">
+                                    <p className="text-white/30 text-xs font-mono mb-1">
+                                        {isLogin ? "NO IDENTITY FOUND?" : "IDENTITY EXISTS?"}
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsLogin(!isLogin)}
+                                        className="text-titan-cyan hover:text-white transition-colors font-display font-bold tracking-wider text-sm uppercase border-b border-transparent hover:border-titan-cyan pb-1"
+                                    >
+                                        {isLogin ? 'CREATE NEW PROFILE' : 'ACCESS EXISTING PROFILE'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </motion.div>

@@ -8,18 +8,13 @@ const { sql } = require('drizzle-orm');
 const crypto = require('crypto');
 
 // Users table
-// UID Counters table
-// ⚠️ CONCURRENCY WARNING:
-// Do not blindly SELECT and UPDATE this table. You MUST use atomic increments:
-// UPDATE uid_counters SET lastValue = LAST_INSERT_ID(lastValue + 1) WHERE ...
-// SELECT LAST_INSERT_ID();
+// UID Counters table (Region-Based)
+// One counter per region (1-6), no year dependency
+// Uses SELECT FOR UPDATE for atomic increments
 const uidCounters = mysqlTable('uid_counters', {
-    regionCode: varchar('region_code', { length: 2 }).notNull(),
-    year: int('year').notNull(),
-    lastValue: int('last_value').notNull().default(0),
-}, (table) => ({
-    pk: primaryKey({ columns: [table.regionCode, table.year] }),
-}));
+    region: int('region').primaryKey(),  // 1-6 only
+    lastValue: bigint('last_value', { mode: 'number' }).notNull().default(0)
+});
 
 // User Counters (ID Generation)
 const userCounters = mysqlTable('user_counters', {
@@ -67,7 +62,11 @@ const users = mysqlTable('users', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     username: varchar('username', { length: 191 }).notNull().unique(),
     email: varchar('email', { length: 191 }).notNull().unique(),
-    passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+    passwordHash: varchar('password_hash', { length: 255 }),
+
+    // Firebase Auth Bridge (Hardened Identity)
+    firebaseUid: varchar('firebase_uid', { length: 128 }).unique(),
+    authProvider: mysqlEnum('auth_provider', ['FIREBASE', 'LEGACY']).default('FIREBASE'),
 
     // New Identity Fields (Final Architecture)
     playerCode: varchar('player_code', { length: 20 }).unique(), // PLxxxx (Nullable until migration)
@@ -84,7 +83,10 @@ const users = mysqlTable('users', {
     countryCode: varchar('country_code', { length: 3 }).notNull(),
     state: varchar('state', { length: 100 }).notNull(),
     city: varchar('city', { length: 100 }),
-    regionCode: varchar('regionCode', { length: 2 }).notNull(),
+
+    // Region System (NEW)
+    regionCode: int('region_code').notNull(),              // 1-6 (immutable, in UID)
+    subRegionCode: varchar('sub_region_code', { length: 10 }), // AS-SA, EU-W, etc (mutable)
 
     // Status Flags
     // DEPRECATED (Migration Only): role, hostStatus, platformUid
@@ -115,6 +117,7 @@ const users = mysqlTable('users', {
     emailIdx: uniqueIndex('user_email_idx').on(table.email),
     regionCodeIdx: index('user_regionCode_idx').on(table.regionCode),
     countryCodeIdx: index('user_country_code_idx').on(table.countryCode),
+    firebaseUidIdx: index('idx_firebase_uid').on(table.firebaseUid),
 }));
 
 // Refresh Tokens table

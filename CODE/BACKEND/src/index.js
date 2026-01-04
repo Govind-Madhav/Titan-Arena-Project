@@ -223,5 +223,4 @@ if (require.main === module) {
   startServer();
 }
 
-// Export app for Vercel
-module.exports = app;
+

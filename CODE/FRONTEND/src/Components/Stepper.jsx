@@ -219,7 +219,7 @@ function StepIndicator({ step, currentStep, onClickStep, disableStepIndicators }
             onClick={handleClick}
             className="relative cursor-pointer outline-none focus:outline-none"
             animate={status}
-            initial={false}
+            initial="inactive"
         >
             <motion.div
                 variants={{
@@ -244,7 +244,7 @@ function StepIndicator({ step, currentStep, onClickStep, disableStepIndicators }
 
 function StepConnector({ isComplete }) {
     const lineVariants = {
-        incomplete: { width: 0, backgroundColor: 'transparent' },
+        incomplete: { width: 0, backgroundColor: '#8B5CF600' },
         complete: { width: '100%', backgroundColor: '#8B5CF6' }
     };
 
@@ -253,7 +253,7 @@ function StepConnector({ isComplete }) {
             <motion.div
                 className="absolute left-0 top-0 h-full"
                 variants={lineVariants}
-                initial={false}
+                initial="incomplete"
                 animate={isComplete ? 'complete' : 'incomplete'}
                 transition={{ duration: 0.4 }}
             />

@@ -14,24 +14,33 @@ const emailService = require('../../utils/email.service');
 const statsService = require('../../services/stats.service');
 const uidService = require('../../services/uid.service');
 const otpService = require('../../services/otp.service');
+const { syncUser } = require('../../services/userSync.service');
+const { validateSubRegion } = require('../../config/regions.config');
 
 // Validation schemas
 const signupSchema = z.object({
+    ign: z.string().min(3, 'Gamertag must be at least 3 characters').max(20, 'Gamertag must be at most 20 characters').regex(/^[a-zA-Z0-9_]+$/, 'Gamertag can only contain letters, numbers, and underscores'),
     email: z.string().email('Invalid email format'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
+    confirmPassword: z.string(),
     legalName: z.string().min(2, 'Legal Name is required'),
     dateOfBirth: z.string().refine((val) => {
         const date = new Date(val);
         const age = new Date().getFullYear() - date.getFullYear();
-        return age >= 13; // Min age check (e.g. 13+)
+        return age >= 13;
     }, 'You must be at least 13 years old'),
-    phone: z.string().min(10, 'Valid phone number required'),
+    phone: z.string().regex(/^\+[1-9]\d{7,14}$/, 'Enter phone number with country code (e.g. +919876543210)'), // E.164 format
+    region: z.number().int().min(1).max(6, 'Region must be between 1-6'), // User must select
+    subRegion: z.string().optional(), // Optional sub-region
     country: z.string().min(2, 'Country is required'),
     state: z.string().min(2, 'State is required'),
     city: z.string().optional(),
-    username: z.string().min(3, 'Username must be at least 3 characters'), // Mandatory Gamertag/Username
+    username: z.string().min(3, 'Username must be at least 3 characters').regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
     termsAccepted: z.boolean().refine(val => val === true, 'You must accept the terms and conditions'),
     role: z.enum(['PLAYER', 'ADMIN', 'SUPERADMIN']).optional().default('PLAYER')
+}).refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match",
+    path: ["confirmPassword"]
 });
 
 const loginSchema = z.object({
@@ -39,10 +48,24 @@ const loginSchema = z.object({
     password: z.string().min(1, 'Password is required')
 });
 
+const metadataSchema = z.object({
+    ign: z.string().min(3).optional(),
+    username: z.string().min(3).optional(),
+    legalName: z.string().min(2).optional(),
+    dateOfBirth: z.string().optional(),
+    region: z.number().int().min(1).max(6).optional(),
+    subRegion: z.string().optional(),
+    country: z.string().min(2).optional(),
+    state: z.string().min(2).optional(),
+    city: z.string().optional(),
+    phone: z.string().optional()
+});
+
+
 // Generate tokens
-const generateAccessToken = (userId) => {
+const generateAccessToken = (userId, platformUid) => {
     return jwt.sign(
-        { userId, type: 'access' },
+        { userId, platformUid, type: 'access' },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_ACCESS_EXPIRY || '15m' }
     );
@@ -54,6 +77,30 @@ const generateRefreshToken = (userId) => {
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d' }
     );
+};
+
+// Check IGN availability (dedicated endpoint)
+exports.checkIgnAvailability = async (req, res) => {
+    try {
+        const { ign } = req.body;
+
+        if (!ign || ign.length < 3) {
+            return res.json({ available: null });
+        }
+
+        // Check IGN (case-insensitive)
+        const normalizedIgn = ign.trim().toLowerCase();
+        const { sql } = require('drizzle-orm');
+        const existingIgn = await db.select()
+            .from(playerProfiles)
+            .where(sql`LOWER(${playerProfiles.ign}) = ${normalizedIgn}`)
+            .limit(1);
+
+        res.json({ available: existingIgn.length === 0 });
+    } catch (error) {
+        console.error('Check IGN error:', error);
+        res.status(500).json({ available: null });
+    }
 };
 
 // Signup
@@ -89,17 +136,31 @@ exports.signup = async (req, res) => {
             });
         }
 
+        // Normalize IGN (trim)
+        const ign = data.ign.trim();
+
+        // Validate sub-region belongs to region
+        if (data.subRegion && !validateSubRegion(data.region, data.subRegion)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid sub-region for selected region'
+            });
+        }
+
         // Hash password before storing
         const passwordHash = await bcrypt.hash(data.password, 12);
 
         // Store pending registration in Redis (24 hour TTL)
         const pendingData = {
+            ign: ign,
             email: data.email,
             passwordHash: passwordHash,
             username: data.username,
             legalName: data.legalName,
             dateOfBirth: data.dateOfBirth,
             phone: data.phone,
+            region: data.region,
+            subRegion: data.subRegion || null,
             country: data.country,
             state: data.state,
             city: data.city,
@@ -115,7 +176,7 @@ exports.signup = async (req, res) => {
         // Generate & Send OTP
         try {
             const otp = await otpService.generateOtp(data.email);
-            await emailService.sendVerificationEmail(data.email, otp, data.username);
+            await emailService.sendVerificationEmail(data.email, otp, ign);
         } catch (emailError) {
             console.error('Failed to send verification email:', emailError);
             // Clean up pending registration if email fails
@@ -210,12 +271,21 @@ exports.login = async (req, res) => {
             });
         }
 
+        // Data integrity check
+        if (!user.ign) {
+            return res.status(500).json({
+                success: false,
+                message: 'Profile corrupted. Contact support.'
+            });
+        }
+
         // 4. Token & Session
         const tokenPayload = {
             id: user.id,
             uid: user.id, // Legacy
             username: user.username,
-            role: user.isAdmin ? (user.role === 'SUPERADMIN' ? 'SUPERADMIN' : 'ADMIN') : 'PLAYER', // Logic map
+            platformUid: user.platformUid,
+            role: user.isAdmin ? (user.role === 'SUPERADMIN' ? 'SUPERADMIN' : 'ADMIN') : 'PLAYER',
             isAdmin: user.isAdmin,
             isHost: user.hostProfileStatus === 'ACTIVE',
             playerCode: user.playerCode
@@ -259,7 +329,7 @@ exports.login = async (req, res) => {
                     email: user.email,
                     username: user.username,
                     playerCode: user.playerCode,
-                    platformUid: user.playerCode, // Legacy Mapping
+                    platformUid: user.platformUid, // ALWAYS use actual platformUid
                     role: tokenPayload.role,
                     isAdmin: user.isAdmin,
                     isHost: tokenPayload.isHost,
@@ -304,18 +374,7 @@ exports.refresh = async (req, res) => {
             });
         }
 
-        // Verify refresh token
-        let decoded;
-        try {
-            decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
-        } catch (error) {
-            return res.status(401).json({
-                success: false,
-                message: 'Invalid or expired refresh token'
-            });
-        }
-
-        // Check if token exists in DB
+        // Check if token exists in DB (refresh tokens are UUIDs, not JWTs)
         const result = await db.select()
             .from(refreshTokens)
             .where(eq(refreshTokens.token, refreshToken))
@@ -330,8 +389,22 @@ exports.refresh = async (req, res) => {
             });
         }
 
+        // Get user data for new access token
+        const userResult = await db.select({
+            id: users.id,
+            platformUid: users.platformUid
+        }).from(users).where(eq(users.id, storedToken.userId)).limit(1);
+
+        const user = userResult[0];
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
         // Generate new access token
-        const accessToken = generateAccessToken(decoded.userId);
+        const accessToken = generateAccessToken(user.id, user.platformUid);
 
         // Calculate token expiry
         const accessTokenExpiry = new Date();
@@ -389,7 +462,14 @@ exports.logout = async (req, res) => {
 // Logout all devices
 exports.logoutAllDevices = async (req, res) => {
     try {
-        const userId = req.user.id;
+        let userId = req.user?.id;
+
+        if (req.firebaseUser) {
+            const syncedUser = await syncUser(req.firebaseUser);
+            userId = syncedUser.id;
+        }
+
+        if (!userId) return res.status(401).json({ success: false, message: 'Authentication required' });
 
         // Delete all refresh tokens for this user
         await db.delete(refreshTokens)
@@ -415,10 +495,46 @@ exports.logoutAllDevices = async (req, res) => {
         });
     }
 };
+// 🚀 HYBRID SYNC: Pass identity metadata to MySQL
+exports.sync = async (req, res) => {
+    try {
+        if (!req.firebaseUser) {
+            return res.status(401).json({ success: false, message: 'Firebase identity required' });
+        }
+
+        const metadata = metadataSchema.parse(req.body);
+        const user = await syncUser(req.firebaseUser, metadata);
+
+        res.json({
+            success: true,
+            message: 'Identity synchronized successfully',
+            data: user
+        });
+    } catch (error) {
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ success: false, message: 'Invalid metadata', errors: error.errors });
+        }
+        console.error('Sync failure:', error);
+        res.status(500).json({ success: false, message: 'Sync failed' });
+    }
+};
 
 // Get current user
+
 exports.getMe = async (req, res) => {
     try {
+        let userId = req.user?.id;
+
+        // ⚡ HYBRID AUTH: If coming from Firebase, perform dynamic sync
+        if (req.firebaseUser) {
+            const syncedUser = await syncUser(req.firebaseUser);
+            userId = syncedUser.id;
+        }
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Authentication required' });
+        }
+
         // We want user and their wallet
         // Drizzle doesn't do deep nesting automatically like Prisma's include/select
         // So we join
@@ -432,7 +548,8 @@ exports.getMe = async (req, res) => {
                 role: users.role,
                 hostStatus: users.hostStatus,
                 isBanned: users.isBanned,
-                createdAt: users.createdAt
+                createdAt: users.createdAt,
+                registrationCompleted: users.registrationCompleted // Critical for Frontend
             },
             wallet: {
                 balance: wallets.balance,
@@ -441,7 +558,7 @@ exports.getMe = async (req, res) => {
         })
             .from(users)
             .leftJoin(wallets, eq(users.id, wallets.userId))
-            .where(eq(users.id, req.user.id))
+            .where(eq(users.id, userId))
             .limit(1);
 
         const data = result[0];
@@ -521,8 +638,8 @@ exports.verifyEmail = async (req, res) => {
         let userId;
         try {
             await db.transaction(async (tx) => {
-                // Generate UID (Atomic)
-                const { uid: platformUid, regionCode } = await uidService.generatePlatformUid(data.country, tx);
+                // CRITICAL: Generate UID with region
+                const { uid: platformUid } = await uidService.generatePlatformUid(data.region, tx);
 
                 // Generate user ID
                 userId = crypto.randomUUID();
@@ -533,17 +650,19 @@ exports.verifyEmail = async (req, res) => {
                     platformUid: platformUid,
                     username: data.username,
                     email: data.email,
-                    passwordHash: data.passwordHash, // Already hashed
+                    passwordHash: data.passwordHash,
                     legalName: data.legalName,
                     dateOfBirth: new Date(data.dateOfBirth),
                     phone: data.phone,
-                    countryCode: uidService.getCallingCode(data.country).toString(),
+                    phoneVerified: false, // Not verified yet
+                    countryCode: data.country,
                     state: data.state,
                     city: data.city,
-                    regionCode: regionCode,
+                    regionCode: data.region,
+                    subRegionCode: data.subRegion,
                     role: data.role || 'PLAYER',
                     hostStatus: 'NOT_VERIFIED',
-                    emailVerified: true, // Verified immediately
+                    emailVerified: true,
                     isBanned: false,
                     registrationCompleted: true,
                     termsAccepted: data.termsAccepted,
@@ -564,20 +683,34 @@ exports.verifyEmail = async (req, res) => {
                     updatedAt: now
                 });
 
-                // Create Profile
-                await tx.insert(playerProfiles).values({
-                    userId: userId,
-                    ign: data.username,
-                    realName: data.legalName,
-                    dateOfBirth: new Date(data.dateOfBirth),
-                    country: data.country,
-                    state: data.state,
-                    city: data.city,
-                    completionPercentage: 10
-                });
+                // Create Profile with IGN
+                // DB constraint handles race condition
+                try {
+                    await tx.insert(playerProfiles).values({
+                        userId: userId,
+                        ign: data.ign,
+                        realName: data.legalName,
+                        dateOfBirth: new Date(data.dateOfBirth),
+                        country: data.country,
+                        state: data.state,
+                        city: data.city,
+                        completionPercentage: 60
+                    });
+                } catch (err) {
+                    if (err.code === 'ER_DUP_ENTRY' && err.message?.includes('unique_ign')) {
+                        throw new Error('Gamertag already taken');
+                    }
+                    throw err;
+                }
             });
         } catch (error) {
             // Handle duplicate entry errors
+            if (error.message === 'Gamertag already taken') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'Gamertag already taken. Please sign up again with a different gamertag.'
+                });
+            }
             if (error.code === 'ER_DUP_ENTRY' || error.message?.includes('duplicate key')) {
                 if (error.sqlMessage?.includes('username') || error.message?.includes('username')) {
                     return res.status(409).json({
@@ -670,9 +803,18 @@ exports.resendVerification = async (req, res) => {
 // Get user dashboard data (Stats + History)
 exports.getDashboard = async (req, res) => {
     try {
+        let userId = req.user?.id;
+
+        if (req.firebaseUser) {
+            const syncedUser = await syncUser(req.firebaseUser);
+            userId = syncedUser.id;
+        }
+
+        if (!userId) return res.status(401).json({ success: false, message: 'Authentication required' });
+
         const [stats, matches] = await Promise.all([
-            statsService.calculateUserStats(req.user.id),
-            statsService.getRecentMatches(req.user.id)
+            statsService.calculateUserStats(userId),
+            statsService.getRecentMatches(userId)
         ]);
 
         res.json({
@@ -905,6 +1047,38 @@ exports.resetPassword = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to reset password'
+        });
+    }
+};
+
+// Trigger custom branded verification email
+exports.triggerVerificationEmail = async (req, res) => {
+    try {
+        const { email, username } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email required' });
+        }
+
+        const { admin } = require('../../config/firebase.config');
+
+        // 🚨 Generate the secure verification link via Firebase Admin SDK
+        // This link is hosted by Firebase (e-sports-tournament-ba4c6.firebaseapp.com/__/auth/action)
+        // By using the Admin SDK, we get the link but WE choose how to deliver it.
+        const verificationLink = await admin.auth().generateEmailVerificationLink(email);
+
+        // 📧 Deliver via our custom branded SMTP
+        await emailService.sendCustomVerificationEmail(email, verificationLink, username || 'Titan Warrior');
+
+        res.json({
+            success: true,
+            message: 'Custom verification link dispatched'
+        });
+    } catch (error) {
+        console.error('Trigger verification error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to dispatch verification link'
         });
     }
 };

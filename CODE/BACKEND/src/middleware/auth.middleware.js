@@ -8,76 +8,125 @@ const { db } = require('../db');
 const { users } = require('../db/schema');
 const { eq } = require('drizzle-orm');
 
+const { verifyIdToken } = require('../config/firebase.config');
+const { syncUser } = require('../services/userSync.service');
+
 /**
- * Verify JWT access token and attach user to request
+ * AUTH CONTRACT:
+ * - Firebase = identity proof only
+ * - JWT = session auth only
+ * - MySQL = single source of truth
+ * - syncUser() MUST be used for all Firebase identities
+ * 
+ * PRODUCTION HARDENED: Hybrid Auth Middleware
+ * Supports both Legacy JWT and Firebase Identity Proof
  */
 const authRequired = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
 
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return res.status(401).json({
-                success: false,
-                message: 'Access token required'
-            });
+            return res.status(401).json({ success: false, message: 'Authentication required' });
         }
 
         const token = authHeader.split(' ')[1];
+        let decoded = null;
+        let isFirebase = false;
 
+        // 1. Detection Phase: Check if it's a Firebase token (STRONG)
         try {
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-            const result = await db.select({
-                id: users.id,
-                email: users.email,
-                username: users.username,
-                role: users.role,
-                isAdmin: users.isAdmin, // New
-                playerCode: users.playerCode, // New
-                hostStatus: users.hostStatus,
-                isBanned: users.isBanned
-            })
-                .from(users)
-                .where(eq(users.id, decoded.id)) // JWT now uses 'id', was 'userId' in previous legacy? Check generateToken
-                .limit(1);
-
-            const user = result[0];
-
-            if (!user) {
-                return res.status(401).json({ success: false, message: 'User not found' });
+            const raw = jwt.decode(token, { complete: true });
+            // Canonical Firebase detection: check issuer
+            if (raw?.payload?.iss === `https://securetoken.google.com/${process.env.FIREBASE_PROJECT_ID}`) {
+                isFirebase = true;
             }
-
-            // Hydrate User Object with claims
-            req.user = {
-                ...user,
-                // If token has claims, trust them or prefer DB? 
-                // DB is authoritative for bans/status. 
-                // Token is authoritative for session scope (isHost).
-                isHost: decoded.isHost || (user.hostStatus === 'VERIFIED'), // Fallback
-                isAdmin: user.isAdmin // DB is source of truth for admin
-            };
-            next();
-        } catch (jwtError) {
-            if (jwtError.name === 'TokenExpiredError') {
-                return res.status(401).json({
-                    success: false,
-                    message: 'Token expired',
-                    code: 'TOKEN_EXPIRED'
-                });
-            }
-            throw jwtError;
+        } catch (e) {
+            // Not a valid JWT structure at all
+            return res.status(401).json({ success: false, message: 'Invalid token format' });
         }
+
+        let userId = null;
+        let firebaseUser = null;
+
+        if (isFirebase) {
+            // 2a. Firebase Path
+            try {
+                firebaseUser = await verifyIdToken(token);
+                req.firebaseUser = firebaseUser;
+
+                // 🚨 CRITICAL: Enforce Email Verification for Firebase Users
+                if (!firebaseUser.email_verified && process.env.NODE_ENV === 'production') {
+                    console.log(`🔐 Access Denied: Unverified email for UID ${firebaseUser.uid}`);
+                    return res.status(403).json({
+                        success: false,
+                        message: 'Email verification required',
+                        code: 'EMAIL_NOT_VERIFIED',
+                        email: firebaseUser.email
+                    });
+                }
+
+                const syncedUser = await syncUser(firebaseUser);
+                userId = syncedUser.id;
+            } catch (err) {
+                console.error('🔐 Firebase token verification failed:', err.message);
+                return res.status(401).json({ success: false, message: 'Invalid or expired identity token' });
+            }
+        } else {
+            // 2b. Legacy Path
+            try {
+                decoded = jwt.verify(token, process.env.JWT_SECRET);
+                userId = decoded.id || decoded.userId;
+            } catch (err) {
+                if (err.name === 'TokenExpiredError') {
+                    return res.status(401).json({ success: false, message: 'Session expired', code: 'TOKEN_EXPIRED' });
+                }
+                console.error('🔐 Legacy token verification failed:', err.message);
+                return res.status(401).json({ success: false, message: 'Access denied: Invalid session' });
+            }
+        }
+
+        // 3. Database hydration (Authoritative data)
+        const result = await db.select({
+            id: users.id,
+            email: users.email,
+            username: users.username,
+            role: users.role,
+            isAdmin: users.isAdmin,
+            playerCode: users.playerCode,
+            hostStatus: users.hostStatus,
+            isBanned: users.isBanned
+        })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1);
+
+        const user = result[0];
+
+        if (!user) {
+            return res.status(401).json({ success: false, message: 'Identity missing' });
+        }
+
+        if (user.isBanned) {
+            return res.status(403).json({ success: false, message: 'Access denied: Account suspended' });
+        }
+
+        // 4. Final Attachment
+        req.user = {
+            ...user,
+            isHost: user.hostStatus === 'VERIFIED', // Host is operational state, not role
+            isAdmin: user.isAdmin
+        };
+
+        next();
     } catch (error) {
-        console.error('Auth middleware error:', error);
-        return res.status(401).json({
-            success: false,
-            message: 'Invalid token'
-        });
+        console.error('🔴 Auth Middleware Critical Error:', error);
+        return res.status(500).json({ success: false, message: 'Authentication service error' });
     }
 };
 
 /**
  * Optional auth - attach user if token present, but don't fail
+ * HYBRID-AWARE: Supports both Firebase and JWT
  */
 const authOptional = async (req, res, next) => {
     try {
@@ -85,24 +134,51 @@ const authOptional = async (req, res, next) => {
 
         if (authHeader && authHeader.startsWith('Bearer ')) {
             const token = authHeader.split(' ')[1];
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            let isFirebase = false;
 
-            const result = await db.select({
-                id: users.id,
-                email: users.email,
-                username: users.username,
-                role: users.role,
-                hostStatus: users.hostStatus,
-                isBanned: users.isBanned
-            })
-                .from(users)
-                .where(eq(users.id, decoded.userId))
-                .limit(1);
+            // Detect Firebase token
+            try {
+                const raw = jwt.decode(token, { complete: true });
+                if (raw?.payload?.iss === `https://securetoken.google.com/${process.env.FIREBASE_PROJECT_ID}`) {
+                    isFirebase = true;
+                }
+            } catch (e) {
+                // Invalid token, silently continue
+            }
 
-            const user = result[0];
+            if (isFirebase) {
+                // Firebase path
+                try {
+                    const firebaseUser = await verifyIdToken(token);
+                    req.firebaseUser = firebaseUser;
+                    const syncedUser = await syncUser(firebaseUser);
+                    req.user = syncedUser;
+                } catch (err) {
+                    // Silently continue without user
+                }
+            } else {
+                // JWT path
+                try {
+                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                    const result = await db.select({
+                        id: users.id,
+                        email: users.email,
+                        username: users.username,
+                        role: users.role,
+                        hostStatus: users.hostStatus,
+                        isBanned: users.isBanned
+                    })
+                        .from(users)
+                        .where(eq(users.id, decoded.userId))
+                        .limit(1);
 
-            if (user) {
-                req.user = user;
+                    const user = result[0];
+                    if (user) {
+                        req.user = user;
+                    }
+                } catch (err) {
+                    // Silently continue without user
+                }
             }
         }
         next();
@@ -158,39 +234,29 @@ const isHost = (req, res, next) => {
     });
 };
 
-// 5. Universal Role Guard (Legacy Compatibility + New Flags)
+// 5. Universal Role Guard (Fixed Permission Logic)
 const authorize = (...allowedRoles) => (req, res, next) => {
     if (!req.user) {
         return res.status(401).json({ success: false, message: 'Authentication required' });
     }
 
-    // Super Admin always works if explicitly requested or if we treat them as god mode (usually handled by isAdmin check being lenient)
-    // But here we check specific matches.
-
     let hasPermission = false;
 
-    // Check Player (Everyone is a player)
-    if (allowedRoles.includes('PLAYER')) {
+    // Check actual role
+    if (allowedRoles.includes(req.user.role)) {
         hasPermission = true;
     }
 
-    // Check Host
+    // Check Host (operational state, not role)
     if (allowedRoles.includes('HOST')) {
         if (req.user.isHost || req.user.hostStatus === 'VERIFIED') {
             hasPermission = true;
         }
     }
 
-    // Check Admin
+    // Check Admin flag
     if (allowedRoles.includes('ADMIN')) {
         if (req.user.isAdmin) {
-            hasPermission = true;
-        }
-    }
-
-    // Check Super Admin
-    if (allowedRoles.includes('SUPERADMIN')) {
-        if (req.user.role === 'SUPERADMIN') {
             hasPermission = true;
         }
     }
@@ -205,10 +271,72 @@ const authorize = (...allowedRoles) => (req, res, next) => {
     });
 };
 
+/**
+ * PRODUCTION HARDENED: Verify Firebase ID Token
+ * This replaces legacy JWT verification for Identity-Provider-driven flows.
+ */
+const firebaseAuth = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication required (ID Token missing)'
+            });
+        }
+
+        const token = authHeader.split('Bearer ')[1];
+
+        // 1. Signature & Expiry Check (Hardened)
+        const decoded = await verifyIdToken(token);
+
+        // 2. Audience Verification (Critical for Project Isolation)
+        if (decoded.aud !== process.env.FIREBASE_PROJECT_ID) {
+            console.error('❌ Security Alert: Token Audience Mismatch detected.', {
+                expected: process.env.FIREBASE_PROJECT_ID,
+                received: decoded.aud
+            });
+            return res.status(401).json({ success: false, message: 'Invalid token source' });
+        }
+
+        // Attach Firebase User to request
+        req.firebaseUser = decoded;
+        next();
+    } catch (error) {
+        console.error('🔐 Firebase Auth Audit Failure:', error.message);
+        return res.status(401).json({
+            success: false,
+            message: 'Invalid or expired identity token',
+            code: 'AUTH_TOKEN_INVALID'
+        });
+    }
+};
+
+/**
+ * Optional Firebase Auth
+ */
+const firebaseAuthOptional = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.split('Bearer ')[1];
+            const decoded = await verifyIdToken(token);
+            if (decoded.aud === process.env.FIREBASE_PROJECT_ID) {
+                req.firebaseUser = decoded;
+            }
+        }
+        next();
+    } catch (error) {
+        next();
+    }
+};
+
 module.exports = {
     authRequired,
     authOptional,
-    authenticate: authRequired, // Alias
+    firebaseAuth,
+    firebaseAuthOptional,
+    authenticate: authRequired, // Alias legacy
     isAdmin,      // New Guard
     isSuperAdmin, // New Guard
     isHost,       // New Guard

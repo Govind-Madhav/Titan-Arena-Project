@@ -17,24 +17,25 @@ let database = null;
  */
 const getServiceAccount = () => {
     try {
-        // 🔐 PRIORITY 1: Service account as JSON string in env var (MOST SECURE)
         if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+            console.log('🔥 Initializing Firebase Admin with SERVICE_ACCOUNT_JSON');
             return JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
         }
 
-        // 🔐 PRIORITY 2: Service account file path from env var
         if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-            const filePath = path.resolve(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+            const filePath = path.isAbsolute(process.env.FIREBASE_SERVICE_ACCOUNT_PATH)
+                ? process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+                : path.join(process.cwd(), process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+
             if (fs.existsSync(filePath)) {
+                console.log(`🔥 Initializing Firebase Admin with SERVICE_ACCOUNT_PATH: ${process.env.FIREBASE_SERVICE_ACCOUNT_PATH}`);
                 return require(filePath);
             }
-            throw new Error(`Service account file not found: ${filePath}`);
         }
 
-        // 🔐 PRIORITY 3: Default location (local dev only)
         const defaultPath = path.join(__dirname, '../../Firebase/e-sports-tournament-ba4c6-firebase-adminsdk-fbsvc-dc828d7473.json');
         if (fs.existsSync(defaultPath)) {
-            console.warn('⚠️  Using default service account path. Set FIREBASE_SERVICE_ACCOUNT_JSON for production.');
+            console.log('⚠️  Using default service account path.');
             return require(defaultPath);
         }
 
@@ -169,9 +170,11 @@ const closeFirebase = async () => {
 };
 
 module.exports = {
+    admin,
     initializeFirebase,
     getDatabase,
     getApp,
     checkFirebaseHealth,
-    closeFirebase
+    closeFirebase,
+    verifyIdToken: (token) => admin.auth().verifyIdToken(token, true)
 };

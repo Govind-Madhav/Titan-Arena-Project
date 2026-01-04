@@ -13,30 +13,13 @@ import Navbar from '../Components/layout/Navbar'
 
 export default function ForgotPasswordPage() {
     const navigate = useNavigate()
-    const { forgotPassword, resetPassword, isLoading } = useAuthStore()
+    const { forgotPassword, isLoading } = useAuthStore()
 
-    // Steps: 1 = Email, 2 = OTP & New Password
-    const [step, setStep] = useState(1)
-
-    // Form Data
+    // Status: 'idle' | 'success'
+    const [status, setStatus] = useState('idle')
     const [email, setEmail] = useState('')
-    const [otp, setOtp] = useState('')
-    const [newPassword, setNewPassword] = useState('')
-    const [confirmPassword, setConfirmPassword] = useState('')
-    const [showPassword, setShowPassword] = useState(false)
 
-    // Cooldown for resend
-    const [cooldown, setCooldown] = useState(0)
-
-    useEffect(() => {
-        let timer
-        if (cooldown > 0) {
-            timer = setInterval(() => setCooldown(c => c - 1), 1000)
-        }
-        return () => clearInterval(timer)
-    }, [cooldown])
-
-    const handleRequestOtp = async (e) => {
+    const handleRequestReset = async (e) => {
         e.preventDefault()
         if (!email) {
             toast.error('Please enter your email address')
@@ -45,35 +28,8 @@ export default function ForgotPasswordPage() {
 
         const result = await forgotPassword(email)
         if (result.success) {
-            // Success (or fake success for enumeration protection)
-            // But if it's rate limited, we get 429 message.
-            toast.success('If account exists, code sent!')
-            setStep(2)
-            setCooldown(60) // 60s cooldown
-        } else {
-            toast.error(result.message)
-        }
-    }
-
-    const handleResetPassword = async (e) => {
-        e.preventDefault()
-        if (!otp || !newPassword) {
-            toast.error('Please fill in all fields')
-            return
-        }
-        if (newPassword.length < 8) {
-            toast.error('Password must be at least 8 characters')
-            return
-        }
-        if (newPassword !== confirmPassword) {
-            toast.error('Passwords do not match')
-            return
-        }
-
-        const result = await resetPassword(email, otp, newPassword)
-        if (result.success) {
-            toast.success('Password reset successfully!')
-            navigate('/auth')
+            setStatus('success')
+            toast.success('Reset link dispatched to your inbox!')
         } else {
             toast.error(result.message)
         }
@@ -99,23 +55,27 @@ export default function ForgotPasswordPage() {
 
                         <div className="text-center mb-8">
                             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-titan-purple/20 mb-4 border border-titan-purple/30 text-titan-purple shadow-[0_0_15px_rgba(139,92,246,0.3)]">
-                                <Key size={32} />
+                                {status === 'success' ? <CheckCircle size={32} className="text-titan-cyan" /> : <Key size={32} />}
                             </div>
-                            <h2 className="font-display text-3xl font-bold mb-2">Reset Password</h2>
-                            <p className="text-white/40 font-mono text-sm">
-                                {step === 1 ? 'Enter email to receive protocol key.' : 'Enter key & secure credentials.'}
+                            <h2 className="font-display text-3xl font-bold mb-2">
+                                {status === 'success' ? 'Link Dispatched' : 'Reset Password'}
+                            </h2>
+                            <p className="text-white/40 font-mono text-sm leading-relaxed px-4">
+                                {status === 'success'
+                                    ? `A secure reset protocol has been sent to ${email}. Check your comms.`
+                                    : 'Enter your verified email to receive a secure reset link.'}
                             </p>
                         </div>
 
                         <AnimatePresence mode="wait">
-                            {step === 1 ? (
+                            {status === 'idle' ? (
                                 <motion.form
-                                    key="step1"
-                                    initial={{ opacity: 0, x: -20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0, x: -20 }}
+                                    key="request"
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -10 }}
                                     className="space-y-4"
-                                    onSubmit={handleRequestOtp}
+                                    onSubmit={handleRequestReset}
                                 >
                                     <div className="relative group">
                                         <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
@@ -136,97 +96,33 @@ export default function ForgotPasswordPage() {
                                         className="btn-neon w-full h-12 flex items-center justify-center gap-2 group"
                                     >
                                         {isLoading ? <div className="animate-spin w-5 h-5 border-2 border-white/30 border-t-white rounded-full" /> :
-                                            <>SEND CODE <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" /></>
+                                            <>SEND RESET LINK <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" /></>
                                         }
                                     </button>
                                 </motion.form>
                             ) : (
-                                <motion.form
-                                    key="step2"
-                                    initial={{ opacity: 0, x: 20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0, x: 20 }}
-                                    className="space-y-4"
-                                    onSubmit={handleResetPassword}
+                                <motion.div
+                                    key="success"
+                                    initial={{ opacity: 0, scale: 0.9 }}
+                                    animate={{ opacity: 1, scale: 1 }}
+                                    className="text-center space-y-6"
                                 >
-                                    <div className="relative group">
-                                        <div className="absolute -inset-0.5 bg-gradient-to-r from-titan-purple to-titan-cyan rounded-lg blur opacity-20 group-hover:opacity-40 transition duration-500"></div>
-                                        <input
-                                            type="text"
-                                            placeholder="XXXXXX"
-                                            value={otp}
-                                            onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                                            className="relative w-full bg-black/80 border border-white/10 text-center text-2xl tracking-[0.5em] font-mono py-3 rounded-lg text-titan-cyan focus:outline-none focus:border-titan-cyan/50 focus:text-white transition-all placeholder-white/10"
-                                            autoComplete="off"
-                                            required
-                                            maxLength={6}
-                                            autoFocus
-                                        />
+                                    <div className="p-4 bg-titan-cyan/5 border border-titan-cyan/20 rounded-lg text-titan-cyan text-sm font-mono">
+                                        The reset link will expire in 1 hour.
                                     </div>
-
-                                    <div className="space-y-3 mt-4">
-                                        <div className="relative group">
-                                            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                            <input
-                                                type="password"
-                                                placeholder="New Password"
-                                                value={newPassword}
-                                                onChange={(e) => setNewPassword(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                required
-                                            />
-                                        </div>
-                                        <div className="relative group">
-                                            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-titan-cyan transition-colors" size={18} />
-                                            <input
-                                                type="password"
-                                                placeholder="Confirm Password"
-                                                value={confirmPassword}
-                                                onChange={(e) => setConfirmPassword(e.target.value)}
-                                                className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-12 pr-4 text-white placeholder-white/20 focus:outline-none focus:border-titan-purple/50 focus:bg-white/10 transition-all font-mono text-sm"
-                                                required
-                                            />
-                                        </div>
-                                    </div>
-
                                     <button
-                                        type="submit"
-                                        disabled={isLoading}
-                                        className="btn-neon w-full h-12 flex items-center justify-center gap-2 mt-4"
+                                        onClick={() => navigate('/auth')}
+                                        className="btn-neon w-full h-12 flex items-center justify-center gap-2"
                                     >
-                                        {isLoading ? <div className="animate-spin w-5 h-5 border-2 border-white/30 border-t-white rounded-full" /> :
-                                            <>RESET PASSWORD <CheckCircle size={18} /></>
-                                        }
+                                        RETURN TO LOGIN <ArrowLeft size={18} />
                                     </button>
-
-                                    <div className="flex items-center justify-between mt-4">
-                                        <button
-                                            type="button"
-                                            onClick={() => setStep(1)}
-                                            className="text-xs text-white/40 hover:text-white flex items-center gap-1 transition-colors"
-                                        >
-                                            <ArrowLeft size={12} /> BACK
-                                        </button>
-
-                                        {cooldown > 0 ? (
-                                            <span className="text-xs text-white/30 font-mono">Resend in {cooldown}s</span>
-                                        ) : (
-                                            <button
-                                                type="button"
-                                                onClick={handleRequestOtp}
-                                                className="text-xs text-titan-purple hover:text-white transition-colors"
-                                            >
-                                                Resend Code
-                                            </button>
-                                        )}
-                                    </div>
-                                </motion.form>
+                                </motion.div>
                             )}
                         </AnimatePresence>
 
                         <div className="mt-8 pt-6 border-t border-white/5 text-center">
-                            <Link to="/auth" className="text-white/40 hover:text-white text-sm transition-colors">
-                                Return to Authenticator
+                            <Link to="/auth" className="text-white/40 hover:text-white text-sm transition-colors flex items-center justify-center gap-2 group">
+                                <ArrowLeft size={14} className="group-hover:-translate-x-1 transition-transform" /> Back to Authenticator
                             </Link>
                         </div>
 

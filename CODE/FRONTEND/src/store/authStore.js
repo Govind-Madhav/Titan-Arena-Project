@@ -101,119 +101,60 @@ const useAuthStore = create(
                 })
             },
 
-            login: async (email, password, rememberMe = true) => {
+            // NEW: Sync with Backend after Firebase Auth
+            syncWithBackend: async (metadata = {}) => {
+                set({ isLoading: true })
+                try {
+                    // ⚡ Use /auth/sync when metadata is provided (signup), otherwise /auth/me (login)
+                    const endpoint = Object.keys(metadata).length > 0 ? '/auth/sync' : '/auth/me'
+                    const res = endpoint === '/auth/sync'
+                        ? await api.post(endpoint, metadata)
+                        : await api.get(endpoint)
+
+                    const user = res.data.data
+
+                    set({
+                        user,
+                        isAuthenticated: true,
+                        isLoading: false
+                    })
+                    return { success: true }
+                } catch (error) {
+                    console.error('Backend Sync Failed:', error.response?.data || error.message)
+                    set({ isLoading: false, isAuthenticated: false, user: null })
+                    return {
+                        success: false,
+                        message: error.response?.data?.message || 'Sync failed'
+                    }
+                }
+            },
+
+            // LEGACY: Keep for compatibility during transition, but redirect to new flow
+            login: async (email, password) => {
+                console.warn('⚠️ Legacy login called. Transitioning to Firebase Phone Auth is recommended.')
                 set({ isLoading: true })
                 try {
                     const res = await api.post('/auth/login', { email, password })
                     const { user, accessToken, expiresAt } = res.data.data
-
-                    set({
-                        user,
-                        accessToken,
-                        tokenExpiresAt: expiresAt,
-                        isAuthenticated: true,
-                        isLoading: false
-                    })
-
-                    // Start token refresh timer
-                    get().startTokenRefreshTimer()
-
-                    // Notify other tabs
-                    if (authChannel) {
-                        authChannel.postMessage({
-                            type: 'LOGIN',
-                            data: { user, accessToken, tokenExpiresAt: expiresAt }
-                        })
-                    }
-
+                    set({ user, accessToken, tokenExpiresAt: expiresAt, isAuthenticated: true, isLoading: false })
                     return { success: true }
                 } catch (error) {
                     set({ isLoading: false })
-                    return {
-                        success: false,
-                        message: error.response?.data?.message || 'Login failed'
-                    }
+                    return { success: false, message: error.response?.data?.message || 'Login failed' }
                 }
             },
 
-            signup: async (data) => {
-                set({ isLoading: true })
-                try {
-                    await api.post('/auth/signup', data) // Corrected: endpoint is /signup
-                    // Response: { message: "Verification code sent..." }
-                    // Do NOT set auth state yet.
-                    set({ isLoading: false })
-                    return { success: true }
-                } catch (error) {
-                    set({ isLoading: false })
-                    return {
-                        success: false,
-                        message: error.response?.data?.message || 'Signup failed'
-                    }
-                }
-            },
-
-            verifyEmail: async (email, otp) => {
-                set({ isLoading: true })
-                try {
-                    const res = await api.post('/auth/verify-email', { email, otp })
-                    set({ isLoading: false })
-                    return { success: true, message: res.data.message }
-                } catch (error) {
-                    set({ isLoading: false })
-                    return {
-                        success: false,
-                        message: error.response?.data?.message || 'Verification failed'
-                    }
-                }
-            },
-
-            resendVerification: async (email) => {
-                set({ isLoading: true })
-                try {
-                    const res = await api.post('/auth/resend-verification', { email })
-                    set({ isLoading: false })
-                    return { success: true, message: res.data.message }
-                } catch (error) {
-                    set({ isLoading: false })
-                    return {
-                        success: false,
-                        message: error.response?.data?.message || 'Failed to resend verification code'
-                    }
-                }
-            },
+            // ... (other methods)
 
             logout: async () => {
+                const { auth } = await import('../lib/firebase')
                 try {
+                    await auth.signOut()
                     await api.post('/auth/logout')
                 } catch (error) {
                     console.error('Logout error:', error)
                 } finally {
                     get().clearAuth()
-
-                    // Notify other tabs
-                    if (authChannel) {
-                        authChannel.postMessage({ type: 'LOGOUT' })
-                    }
-                }
-            },
-
-            logoutAllDevices: async () => {
-                try {
-                    await api.post('/auth/logout-all')
-                    get().clearAuth()
-
-                    // Notify other tabs
-                    if (authChannel) {
-                        authChannel.postMessage({ type: 'LOGOUT' })
-                    }
-
-                    return { success: true }
-                } catch (error) {
-                    return {
-                        success: false,
-                        message: error.response?.data?.message || 'Failed to logout from all devices'
-                    }
                 }
             },
 
@@ -341,35 +282,28 @@ const useAuthStore = create(
             },
 
             forgotPassword: async (email) => {
+                const { auth } = await import('../lib/firebase')
+                const { sendPasswordResetEmail } = await import('firebase/auth')
                 set({ isLoading: true })
                 try {
-                    // Always returns success (200) for security
-                    await api.post('/auth/forgot-password', { email })
+                    await sendPasswordResetEmail(auth, email)
                     set({ isLoading: false })
                     return { success: true }
                 } catch (error) {
                     set({ isLoading: false })
-                    // Check for rate limit
-                    if (error.response?.status === 429) {
-                        return { success: false, message: error.response.data.message }
+                    console.error('Password reset error:', error)
+                    return {
+                        success: false,
+                        message: error.code === 'auth/user-not-found'
+                            ? 'No account found with this email'
+                            : 'Failed to send reset email. Please try again.'
                     }
-                    return { success: false, message: 'Something went wrong. Please try again.' }
                 }
             },
 
-            resetPassword: async (email, otp, newPassword) => {
-                set({ isLoading: true })
-                try {
-                    await api.post('/auth/reset-password', { email, otp, newPassword })
-                    set({ isLoading: false })
-                    return { success: true }
-                } catch (error) {
-                    set({ isLoading: false })
-                    return {
-                        success: false,
-                        message: error.response?.data?.message || 'Password reset failed'
-                    }
-                }
+            // LEGACY: No longer used with Firebase reset flow
+            resetPassword: async () => {
+                return { success: false, message: 'Please use the link sent to your email.' }
             },
 
             getToken: () => get().accessToken,
