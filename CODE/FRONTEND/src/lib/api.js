@@ -4,6 +4,7 @@
  */
 
 import axios from 'axios'
+import useAuthStore from '../store/authStore'
 
 const api = axios.create({
     baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5001/api',
@@ -53,15 +54,49 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     async (error) => {
-        if (error.response?.status === 401) {
-            // If Firebase exists, it means the token is truly stale/invalid
-            if (auth.currentUser) {
-                // Potential force sign-out or session recovery
-                console.warn('🔐 API: 401 Unauthorized for Firebase User. Potential session mismatch.')
-            } else {
-                // Legacy redirect
+        const originalRequest = error.config
+
+        if (error.response?.status === 401 && !originalRequest._retry) {
+            // Prevent Redirect Loop for Auth Checks
+            const isAuthCheck = originalRequest.url.includes('/auth/me') || originalRequest.url.includes('/auth/sync')
+
+            if (isAuthCheck) {
+                // If /auth/me fails, it means even the cookie revival failed. Clear local auth.
                 localStorage.removeItem('titan-auth')
-                window.location.href = '/auth'
+                return Promise.reject(error)
+            }
+
+            originalRequest._retry = true
+
+            try {
+                // Attempt to refresh the token using the refreshToken cookie
+                const response = await axios.post(`${api.defaults.baseURL}/auth/refresh`, {}, { withCredentials: true })
+
+                if (response.data.success) {
+                    const { accessToken, expiresAt } = response.data.data
+
+                    // Update global state
+                    useAuthStore.setState({
+                        accessToken,
+                        tokenExpiresAt: expiresAt,
+                        isAuthenticated: true
+                    })
+
+                    // Update the Authorization header and retry the original request
+                    originalRequest.headers.Authorization = `Bearer ${accessToken}`
+
+                    // Re-try the original request
+                    return api(originalRequest)
+                }
+            } catch (refreshError) {
+                // Refresh failed, probably cookie expired or revoked.
+                console.error('🔐 API: Refresh token invalid or expired.')
+
+                // Only redirect if not already on auth page and not a background sync
+                if (window.location.pathname !== '/auth' && !isAuthCheck) {
+                    localStorage.removeItem('titan-auth')
+                    window.location.href = '/auth'
+                }
             }
         }
 

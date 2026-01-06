@@ -8,18 +8,20 @@ const router = express.Router();
 const authController = require('./auth.controller');
 const { authRequired } = require('../../middleware/auth.middleware');
 
-const { authLimiter } = require('../../middleware/security.middleware');
+const { authLimiter, availabilityCheckLimiter } = require('../../middleware/security.middleware');
 const { forgotPasswordLimiter, resetPasswordLimiter } = require('../../middleware/rateLimit.middleware');
 
 // Public routes
 router.post('/register', authLimiter, authController.signup); // Alias for compatibility
 router.post('/signup', authLimiter, authController.signup);
-router.post('/check-availability', authLimiter, authController.checkAvailability); // Real-time validation route
-router.post('/check-ign', authLimiter, authController.checkIgnAvailability); // IGN availability check
+router.post('/check-availability', availabilityCheckLimiter, authController.checkAvailability); // Real-time validation route
+router.post('/check-ign', availabilityCheckLimiter, authController.checkIgnAvailability); // IGN availability check
 router.post('/login', authLimiter, authController.login);
+router.post('/lookup-email', availabilityCheckLimiter, authController.lookupEmail); // Username login support
 router.post('/refresh', authController.refresh);
 router.post('/logout', authRequired, authController.logout);
 router.post('/forgot-password', forgotPasswordLimiter, authController.forgotPassword);
+router.post('/trigger-password-reset', forgotPasswordLimiter, authController.triggerPasswordReset); // Custom Branded Flow
 router.post('/reset-password', resetPasswordLimiter, authController.resetPassword);
 
 // Email verification routes

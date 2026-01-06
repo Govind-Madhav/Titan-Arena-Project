@@ -10,13 +10,14 @@ const crypto = require('crypto');
 // Users table
 // UID Counters table (Region-Based)
 // One counter per region (1-6), no year dependency
-// Uses SELECT FOR UPDATE for atomic increments
+// UID Counters Table (Platform-wide)
 const uidCounters = mysqlTable('uid_counters', {
-    region: int('region').primaryKey(),  // 1-6 only
-    lastValue: bigint('last_value', { mode: 'number' }).notNull().default(0)
+    region: int('region').primaryKey(),
+    lastValue: bigint('last_value', { mode: 'number' }).notNull().default(0),
+    updatedAt: timestamp('updated_at').defaultNow().onUpdateNow()
 });
 
-// User Counters (ID Generation)
+// User Counters Table (Legacy/Specific)
 const userCounters = mysqlTable('user_counters', {
     key: varchar('key', { length: 20 }).primaryKey(), // 'PLAYER_CODE', 'HOST_CODE', 'ADMIN_CODE'
     lastNumber: int('last_number').notNull().default(0)
@@ -413,7 +414,6 @@ const disputes = mysqlTable('dispute', {
 
 
 module.exports = {
-    uidCounters,
     users,
     refreshTokens,
     wallets,
@@ -431,6 +431,7 @@ module.exports = {
     playerGameProfiles,
     adminAssignments,
     disputes,
+    uidCounters,
     userCounters,
     hostProfiles,
     hostApplications, // New

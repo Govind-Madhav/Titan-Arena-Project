@@ -4,7 +4,7 @@
  */
 
 const { db } = require('../../db');
-const { users, tournaments, registrations, matches, playerProfiles, auditLogs, adminAssignments, hostProfiles } = require('../../db/schema');
+const { users, tournaments, registrations, matches, playerProfiles, auditLogs, adminAssignments, hostProfiles, hostApplications } = require('../../db/schema');
 const uidService = require('../../services/uid.service'); // Added
 const { eq, desc, count, and, or, sql, ne } = require('drizzle-orm');
 
@@ -149,6 +149,50 @@ const getAdmins = async (req, res) => {
     } catch (error) {
         console.error('Get admins error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch admins' });
+    }
+};
+
+// --- HOST MANAGEMENT (LEGACY/SIMPLE) ---
+const getPendingHosts = async (req, res) => {
+    try {
+        const result = await db.select({
+            id: users.id,
+            username: users.username,
+            email: users.email,
+            hostStatus: users.hostStatus,
+            createdAt: users.createdAt
+        })
+            .from(users)
+            .where(eq(users.hostStatus, 'PENDING'))
+            .orderBy(desc(users.createdAt));
+
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('Get pending hosts error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch pending hosts' });
+    }
+};
+
+const getVerifiedHosts = async (req, res) => {
+    try {
+        const result = await db.select({
+            id: users.id,
+            username: users.username,
+            email: users.email,
+            hostStatus: users.hostStatus,
+            hostCode: hostProfiles.hostCode, // Join for Host Code
+            verifiedAt: hostProfiles.verifiedAt,
+            createdAt: users.createdAt
+        })
+            .from(users)
+            .innerJoin(hostProfiles, eq(users.id, hostProfiles.userId)) // Only verified hosts have profiles
+            .where(eq(hostProfiles.status, 'ACTIVE'))
+            .orderBy(desc(hostProfiles.verifiedAt));
+
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('Get verified hosts error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch verified hosts' });
     }
 };
 
@@ -633,5 +677,7 @@ module.exports = {
     reassignWorkload,
     getPendingHostApplications,
     approveHostApplication,
-    rejectHostApplication
+    rejectHostApplication,
+    getPendingHosts, // NEW
+    getVerifiedHosts // NEW
 };

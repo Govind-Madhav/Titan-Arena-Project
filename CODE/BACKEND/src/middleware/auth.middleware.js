@@ -26,6 +26,29 @@ const authRequired = async (req, res, next) => {
         const authHeader = req.headers.authorization;
 
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            // 🚨 SILENT REVIVE: Check for Refresh Token Cookie as Fallback
+            const refreshToken = req.cookies?.refreshToken;
+            if (refreshToken) {
+                const { refreshTokens: rtSchema } = require('../db/schema');
+                const rtResult = await db.select()
+                    .from(rtSchema)
+                    .where(eq(rtSchema.token, refreshToken))
+                    .limit(1);
+
+                const storedToken = rtResult[0];
+                if (storedToken && new Date(storedToken.expiresAt) > new Date()) {
+                    // Valid cookie! Hydrate from DB
+                    const userResult = await db.select().from(users).where(eq(users.id, storedToken.userId)).limit(1);
+                    if (userResult[0]) {
+                        req.user = {
+                            ...userResult[0],
+                            isHost: userResult[0].hostStatus === 'VERIFIED',
+                            isAdmin: userResult[0].isAdmin
+                        };
+                        return next();
+                    }
+                }
+            }
             return res.status(401).json({ success: false, message: 'Authentication required' });
         }
 

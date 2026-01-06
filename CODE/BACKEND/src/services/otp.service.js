@@ -5,14 +5,7 @@
 const redis = require('redis');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-
-// Create Redis Client
-const redisClient = redis.createClient({
-    url: process.env.REDIS_URL || 'redis://localhost:6379'
-});
-
-redisClient.on('error', (err) => console.error('Redis Client Error', err));
-redisClient.connect().catch(console.error);
+const { getRedisClient } = require('../config/redis.config');
 
 class OtpService {
     constructor() {
@@ -26,7 +19,7 @@ class OtpService {
      * @param {string} scope - 'register' or 'reset'
      */
     async generateOtp(email, scope = 'register') {
-        if (!redisClient.isOpen) await redisClient.connect();
+        const redisClient = getRedisClient();
 
         // Rate Limiting (Simple: 1 per minute per scope)
         const rateKey = `rate:otp:${scope}:${email}`;
@@ -68,7 +61,7 @@ class OtpService {
      * @param {string} scope 
      */
     async verifyOtp(email, enteredOtp, scope = 'register') {
-        if (!redisClient.isOpen) await redisClient.connect();
+        const redisClient = getRedisClient();
 
         const key = `otp:${scope}:${email}`;
         const data = await redisClient.get(key);

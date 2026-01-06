@@ -122,11 +122,13 @@ exports.sendVerificationEmail = async (email, token, username) => {
     };
 
     try {
-        await transport.sendMail(mailOptions);
-        console.log(`Verification email sent to ${email}`);
+        const info = await transport.sendMail(mailOptions);
+        console.log(`✅ Verification email sent to ${email}`);
+        console.log(`📬 Message ID: ${info.messageId}`);
+        console.log(`📨 Response: ${info.response}`);
         return true;
     } catch (error) {
-        console.error('Email send error:', {
+        console.error('❌ Email send error:', {
             message: error.message,
             code: error.code,
             smtpConfigured: !!process.env.SMTP_USER
@@ -205,7 +207,7 @@ exports.sendCustomVerificationEmail = async (email, verificationLink, username) 
     }
 };
 
-exports.sendPasswordResetEmail = async (email, otp, username) => {
+exports.sendPasswordResetEmail = async (email, link, username) => {
     const transport = getTransporter();
     const cleanUsername = sanitize(username);
 
@@ -213,8 +215,8 @@ exports.sendPasswordResetEmail = async (email, otp, username) => {
         from: `"TITAN ARENA" <${process.env.SMTP_USER}>`,
         to: email,
         replyTo: 'no-reply@titanarena.com',
-        subject: '🔐 Your Password Reset Code – Valid for 5 minutes',
-        text: `Hi ${cleanUsername}, your password reset code is: ${otp}. Do not share this code. It expires in 5 minutes.`, // Text fallback
+        subject: '🔐 Reset Your Password',
+        text: `Hi ${cleanUsername}, please click the link to reset your password: ${link}`, // Text fallback
         html: `
             <!DOCTYPE html>
             <html>
@@ -226,12 +228,14 @@ exports.sendPasswordResetEmail = async (email, otp, username) => {
                     .logo h1 { font-size: 32px; margin: 0; }
                     .logo span { color: #8B5CF6; }
                     .card { background: linear-gradient(145deg, #1a1a2e, #16162a); border-radius: 16px; padding: 40px; border: 1px solid rgba(139, 92, 246, 0.2); }
-                    h2 { color: #ffffff; margin-top: 0; }
-                    p { color: #a0a0a0; line-height: 1.6; }
-                    .code { display: block; background: rgba(139, 92, 246, 0.1); border: 1px dashed #8B5CF6; color: #ffffff; font-family: 'Courier New', monospace; font-size: 32px; letter-spacing: 4px; padding: 20px; text-align: center; margin: 30px 0; border-radius: 8px; font-weight: bold; }
-                    .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
-                    .highlight { color: #8B5CF6; }
-                    .warning { color: #ef4444; font-size: 13px; margin-top: 20px; text-align: center; }
+                    h2 { color: #00F0FF; margin-top: 0; }
+                    p { color: #e5e5e5; line-height: 1.6; } /* Lighter text for readability */
+                    .btn-container { text-align: center; margin: 30px 0; }
+                    .btn { display: inline-block; background: #8B5CF6; color: #FFFFFF !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; letter-spacing: 1px; transition: background 0.3s; }
+                    .btn:hover { background: #7c3aed; }
+                    .footer { text-align: center; margin-top: 30px; color: #888; font-size: 12px; }
+                    .fallback-link { font-size: 11px; color: #888; word-break: break-all; margin-top: 20px; text-align: center; border-top: 1px solid #333; padding-top: 20px; }
+                    .warning { color: #fe8787; font-size: 13px; margin-top: 20px; text-align: center; } /* Softer red for warnings */
                 </style>
             </head>
             <body>
@@ -241,15 +245,20 @@ exports.sendPasswordResetEmail = async (email, otp, username) => {
                     </div>
                     <div class="card">
                         <h2>Password Reset Request 🔐</h2>
-                        <p>Hi ${cleanUsername}, we received a request to reset your password. Use the code below to proceed.</p>
+                        <p>Hi ${cleanUsername},</p>
+                        <p>We received a request to reset your password. Click the button below to choose a new secure password.</p>
                         
-                        <div class="code">${otp}</div>
+                        <div class="btn-container">
+                            <a href="${link}" class="btn">RESET PASSWORD</a>
+                        </div>
                         
-                        <p style="font-size: 14px; color: #666;">This code will expire in <span class="highlight">5 minutes</span>.</p>
-                        
-                        <p class="warning">⚠️ Do not share this code. We will never ask for it.</p>
-                        
+                        <p>This link will expire in 5 minutes.</p>
                         <p>If you didn't request this, you can safely ignore this email.</p>
+
+                        <div class="fallback-link">
+                            <p>Button not working? Copy this link into your browser:</p>
+                            <a href="${link}" style="color: #8B5CF6;">${link}</a>
+                        </div>
                     </div>
                     <div class="footer">
                         <p>© 2025 TITAN ARENA. All rights reserved.</p>
@@ -262,7 +271,7 @@ exports.sendPasswordResetEmail = async (email, otp, username) => {
 
     try {
         await transport.sendMail(mailOptions);
-        console.log(`Password reset OTP sent to ${email}`);
+        console.log(`Password reset link sent to ${email}`);
         return true;
     } catch (error) {
         console.error('Email send error:', {

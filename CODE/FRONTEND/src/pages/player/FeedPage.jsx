@@ -87,17 +87,17 @@ const FeedPage = () => {
                                         <div className="w-10 h-10 rounded-full bg-gradient-to-br from-titan-purple to-blue-600 p-[1px]">
                                             <div className="w-full h-full rounded-full bg-black overflow-hidden relative">
                                                 {post.avatarUrl ? (
-                                                    <img src={post.avatarUrl} alt={post.username} className="w-full h-full object-cover" />
+                                                    <img src={post.avatarUrl} alt={post.ign || post.username} className="w-full h-full object-cover" />
                                                 ) : (
                                                     <div className="w-full h-full flex items-center justify-center font-bold text-white bg-white/10">
-                                                        {post.username?.[0]?.toUpperCase() || '?'}
+                                                        {(post.ign || post.username)?.[0]?.toUpperCase() || '?'}
                                                     </div>
                                                 )}
                                             </div>
                                         </div>
                                         <div>
                                             <div className="flex items-center gap-2">
-                                                <h3 className="font-bold text-white text-sm">{post.username}</h3>
+                                                <h3 className="font-bold text-white text-sm">{post.ign || post.username}</h3>
                                                 {post.role === 'ADMIN' && <ShieldCheck size={14} className="text-titan-gold" />}
                                                 {post.isHost && <Zap size={14} className="text-pink-400" />}
                                             </div>

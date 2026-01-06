@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { db } = require('../src/db');
+const { db } = require('../../src/db');
 const { sql } = require('drizzle-orm');
 
 (async () => {

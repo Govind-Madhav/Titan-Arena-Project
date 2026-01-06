@@ -4,8 +4,8 @@
  */
 
 require('dotenv').config();
-const { db, pool } = require('../src/db');
-const { admin } = require('../src/config/firebase.config');
+const { db, pool } = require('../../src/db');
+const { admin } = require('../../src/config/firebase.config');
 const { sql } = require('drizzle-orm');
 
 async function removeAllUsers() {

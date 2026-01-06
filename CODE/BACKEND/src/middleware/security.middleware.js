@@ -28,6 +28,7 @@ const getClientOrFail = () => {
 // 2. Rate Limiters (Using rate-limiter-flexible)
 let globalRateLimiter = null;
 let authRateLimiter = null;
+let availabilityCheckLimiter = null;
 
 const initLimiters = () => {
     try {
@@ -49,6 +50,15 @@ const initLimiters = () => {
             points: 20, // Increased from 5/hour to 20/15m
             duration: 15 * 60, // 15 mins
             blockDuration: 60 * 5, // Block for 5 mins if exceeded
+        });
+
+        // Availability Check: 100 req / 15 mins (For real-time validation)
+        availabilityCheckLimiter = new RateLimiterRedis({
+            storeClient: redisClient,
+            keyPrefix: 'middleware_availability',
+            points: 100, // More lenient for typing checks
+            duration: 15 * 60, // 15 mins
+            blockDuration: 60, // Block for 1 min if exceeded
         });
 
     } catch (e) {
@@ -102,6 +112,27 @@ const authLimiterMiddleware = async (req, res, next) => {
     }
 };
 
+// Middleware Wrapper for Availability Check Limiter
+const availabilityCheckLimiterMiddleware = async (req, res, next) => {
+    try {
+        if (!availabilityCheckLimiter) initLimiters();
+
+        // Use IP as key for availability checks
+        await availabilityCheckLimiter.consume(req.ip);
+        next();
+    } catch (rejRes) {
+        if (rejRes instanceof Error) {
+            console.error('Critical Security Error:', rejRes.message);
+            res.status(503).json({ success: false, message: 'Service Unavailable (Security)' });
+        } else {
+            res.status(429).json({
+                success: false,
+                message: 'Too many availability checks. Please slow down.'
+            });
+        }
+    }
+};
+
 // 3. Strict Helmet Configuration
 const helmetConfig = helmet({
     contentSecurityPolicy: {
@@ -131,6 +162,7 @@ const hppProtection = hpp();
 module.exports = {
     globalLimiter: globalLimiterMiddleware,
     authLimiter: authLimiterMiddleware,
+    availabilityCheckLimiter: availabilityCheckLimiterMiddleware,
     helmet: helmetConfig,
     hpp: hppProtection
 };

@@ -4,21 +4,11 @@
  * Format: rPPPPPPPPP (region + 9-digit counter)
  * Example: 1000000001 (First user in Asia)
  * 
- * CRITICAL: Uses SELECT FOR UPDATE for atomicity
- * 
- * ⚠️ WARNING:
- * This service MUST be the only codepath that generates platform UIDs.
- * Do NOT generate UIDs elsewhere.
- * 
- * 🔒 IMMUTABLE RULES (DO NOT CHANGE):
- * ❌ Do NOT add year/time to UID
- * ❌ Do NOT involve sub-region in UID
- * ❌ Do NOT generate UID outside transactions
- * ❌ Do NOT regenerate UID ever
- * ❌ Do NOT auto-assign region
+ * Uses Atomic Update for thread safety.
  */
 
-const { sql } = require('drizzle-orm');
+const { sql, eq } = require('drizzle-orm');
+const { uidCounters } = require('../db/schema');
 
 class UidService {
     /**
@@ -28,78 +18,43 @@ class UidService {
      * @returns {object} { uid, region, sequence }
      */
     async generatePlatformUid(region, tx) {
-        if (!tx) {
-            throw new Error('Transaction required for UID generation');
+        if (!tx) throw new Error('Transaction required for UID generation');
+
+        // Ensure region is number
+        const regionNum = Number(region);
+        if (isNaN(regionNum) || regionNum < 1 || regionNum > 6) {
+            throw new Error(`Invalid region for UID generation: ${region}`);
         }
 
-        if (region < 1 || region > 6) {
-            throw new Error(`Invalid region: ${region}. Must be 1-6`);
-        }
-
-        // Lock row and get current value
-        const result = await tx.execute(sql`
-            SELECT last_value
-            FROM uid_counters
-            WHERE region = ${region}
-            FOR UPDATE
-        `);
-
-        const rows = Array.isArray(result[0]) ? result[0] : result;
-
-        if (!rows || rows.length === 0) {
-            throw new Error(`Counter not initialized for region ${region}`);
-        }
-
-        const current = rows[0].last_value;
-        const next = current + 1;
-
-        // Guard against overflow (future-proof)
-        if (next > 999_999_999) {
-            throw new Error(`UID counter exhausted for region ${region}. Congratulations on 1 billion users! 🏆`);
-        }
-
-        // Update counter
-        await tx.execute(sql`
-            UPDATE uid_counters
-            SET last_value = ${next}
-            WHERE region = ${region}
-        `);
-
-        // Format: rPPPPPPPPP (1 digit region + 9 digit counter)
-        const uid = `${region}${String(next).padStart(9, '0')}`;
-
-        // Return structured data for better debugging
-        return {
-            uid,
-            region,
-            sequence: next
-        };
-    }
-
-    /**
-     * Health check - verify all region counters are initialized
-     * Call this at app startup
-     */
-    async healthCheck(db) {
         try {
-            const result = await db.execute(sql`
-                SELECT region FROM uid_counters ORDER BY region
-            `);
+            // 1. Atomic Increment: Update the counter directly
+            // This implicitly locks the row until transaction commit
+            await tx.update(uidCounters)
+                .set({ lastValue: sql`${uidCounters.lastValue} + 1` })
+                .where(eq(uidCounters.region, regionNum));
 
-            const rows = Array.isArray(result[0]) ? result[0] : result;
-            const regions = rows.map(r => r.region);
+            // 2. Fetch the new value
+            const [row] = await tx.select()
+                .from(uidCounters)
+                .where(eq(uidCounters.region, regionNum));
 
-            const expected = [1, 2, 3, 4, 5, 6];
-            const missing = expected.filter(r => !regions.includes(r));
-
-            if (missing.length > 0) {
-                throw new Error(`UID counters not initialized for regions: ${missing.join(', ')}`);
+            if (!row) {
+                throw new Error(`UID Counter not found for region ${regionNum}`);
             }
 
-            console.log('✅ UID Service: All region counters initialized');
-            return true;
+            const currentValue = Number(row.lastValue);
+
+            // 3. Format UID: Region + 9-digit sequence
+            const regionPrefix = regionNum.toString();
+            const sequencePadding = currentValue.toString().padStart(9, '0');
+            const uid = `${regionPrefix}${sequencePadding}`; // e.g. "1000000001"
+
+            console.log(`✅ Generated UID: ${uid} (Region: ${regionNum}, Seq: ${currentValue})`);
+
+            return { uid, region: regionNum, sequence: currentValue };
+
         } catch (error) {
-            console.error('❌ UID Service health check failed:', error.message);
+            console.error('❌ UID Generation Failed:', error);
             throw error;
         }
     }

@@ -1,15 +1,10 @@
-CREATE TABLE `uid_counters` (
-	`region_code` varchar(2) NOT NULL,
-	`year` int NOT NULL,
-	`last_value` int NOT NULL DEFAULT 0,
-	CONSTRAINT `uid_counters_region_code_year_pk` PRIMARY KEY(`region_code`,`year`)
-);
---> statement-breakpoint
 CREATE TABLE `users` (
 	`id` varchar(191) NOT NULL,
 	`username` varchar(191) NOT NULL,
 	`email` varchar(191) NOT NULL,
-	`password_hash` varchar(255) NOT NULL,
+	`password_hash` varchar(255),
+	`firebase_uid` varchar(128),
+	`auth_provider` enum('FIREBASE','LEGACY') DEFAULT 'FIREBASE',
 	`player_code` varchar(20),
 	`is_admin` boolean DEFAULT false,
 	`legalName` varchar(255) NOT NULL,
@@ -20,7 +15,8 @@ CREATE TABLE `users` (
 	`country_code` varchar(3) NOT NULL,
 	`state` varchar(100) NOT NULL,
 	`city` varchar(100),
-	`regionCode` varchar(2) NOT NULL,
+	`region_code` int NOT NULL,
+	`sub_region_code` varchar(10),
 	`role` varchar(50) NOT NULL DEFAULT 'PLAYER',
 	`hostStatus` varchar(50) NOT NULL DEFAULT 'NOT_VERIFIED',
 	`platformUid` varchar(20),
@@ -38,6 +34,7 @@ CREATE TABLE `users` (
 	CONSTRAINT `users_id` PRIMARY KEY(`id`),
 	CONSTRAINT `users_username_unique` UNIQUE(`username`),
 	CONSTRAINT `users_email_unique` UNIQUE(`email`),
+	CONSTRAINT `users_firebase_uid_unique` UNIQUE(`firebase_uid`),
 	CONSTRAINT `users_player_code_unique` UNIQUE(`player_code`),
 	CONSTRAINT `users_platformUid_unique` UNIQUE(`platformUid`),
 	CONSTRAINT `user_platformUid_idx` UNIQUE(`platformUid`),
@@ -279,6 +276,13 @@ CREATE TABLE `dispute` (
 	CONSTRAINT `dispute_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
+CREATE TABLE `uid_counters` (
+	`region` int NOT NULL,
+	`last_value` bigint NOT NULL DEFAULT 0,
+	`updated_at` timestamp DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `uid_counters_region` PRIMARY KEY(`region`)
+);
+--> statement-breakpoint
 CREATE TABLE `user_counters` (
 	`key` varchar(20) NOT NULL,
 	`last_number` int NOT NULL DEFAULT 0,
@@ -341,8 +345,9 @@ ALTER TABLE `dispute` ADD CONSTRAINT `dispute_raisedById_users_id_fk` FOREIGN KE
 ALTER TABLE `host_applications` ADD CONSTRAINT `host_applications_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `host_applications` ADD CONSTRAINT `host_applications_reviewed_by_users_id_fk` FOREIGN KEY (`reviewed_by`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE `posts` ADD CONSTRAINT `posts_user_id_users_id_fk` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX `user_regionCode_idx` ON `users` (`regionCode`);--> statement-breakpoint
+CREATE INDEX `user_regionCode_idx` ON `users` (`region_code`);--> statement-breakpoint
 CREATE INDEX `user_country_code_idx` ON `users` (`country_code`);--> statement-breakpoint
+CREATE INDEX `idx_firebase_uid` ON `users` (`firebase_uid`);--> statement-breakpoint
 CREATE INDEX `refreshToken_userId_idx` ON `refreshtoken` (`userId`);--> statement-breakpoint
 CREATE INDEX `transaction_userId_idx` ON `transaction` (`userId`);--> statement-breakpoint
 CREATE INDEX `transaction_walletId_idx` ON `transaction` (`walletId`);--> statement-breakpoint

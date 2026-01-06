@@ -134,7 +134,7 @@ export default function Navbar() {
                         <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-titan-purple to-titan-blue flex items-center justify-center shadow-neon-sm">
                             <span className="font-display font-black text-white text-lg">T</span>
                         </div>
-                        <div className="hidden sm:block">
+                        <div className="hidden lg:block">
                             <span className="font-display font-bold text-xl tracking-wider text-white group-hover:text-aurora transition-colors">
                                 TITAN
                             </span>
@@ -145,7 +145,7 @@ export default function Navbar() {
                     </Link>
 
                     {/* Desktop Navigation */}
-                    <div className="hidden md:flex items-center gap-1">
+                    <div className="hidden lg:flex items-center gap-1">
                         {navLinks.map((link) => (
                             <Link
                                 key={link.path}
@@ -190,10 +190,14 @@ export default function Navbar() {
                                 {/* User Menu */}
                                 <div className="relative group">
                                     <button className="flex items-center gap-2 p-2 rounded-lg hover:bg-white/5 transition-all">
-                                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-titan-purple to-titan-blue flex items-center justify-center">
-                                            <User size={16} className="text-white" />
-                                        </div>
-                                        <span className="hidden sm:block font-heading font-semibold text-sm text-white">
+                                        {user?.avatarUrl ? (
+                                            <img src={user.avatarUrl} alt={user.ign} className="w-8 h-8 rounded-full object-cover border border-titan-purple/50" />
+                                        ) : (
+                                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-titan-purple to-titan-blue flex items-center justify-center">
+                                                <User size={16} className="text-white" />
+                                            </div>
+                                        )}
+                                        <span className="hidden lg:block font-heading font-semibold text-sm text-white">
                                             {user?.ign || user?.username || 'Player'}
                                         </span>
                                     </button>
@@ -244,7 +248,7 @@ export default function Navbar() {
                         {/* Mobile Menu Button */}
                         <button
                             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                            className="md:hidden p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all"
+                            className="lg:hidden p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all"
                         >
                             {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
                         </button>
@@ -258,7 +262,7 @@ export default function Navbar() {
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
-                    className="md:hidden bg-titan-bg-card border-t border-white/5"
+                    className="lg:hidden bg-titan-bg-card border-t border-white/5"
                 >
                     <div className="px-4 py-4 space-y-2">
                         {navLinks.map((link) => (

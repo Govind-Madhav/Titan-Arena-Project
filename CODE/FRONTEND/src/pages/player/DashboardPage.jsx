@@ -103,7 +103,7 @@ export default function DashboardPage() {
                     className="mb-8"
                 >
                     <h1 className="font-display text-3xl sm:text-4xl font-bold mb-2">
-                        Welcome back, <GradientText>{user?.username || 'Player'}</GradientText>!
+                        Welcome back, <GradientText>{user?.ign || user?.username || 'Player'}</GradientText>!
                     </h1>
                     <p className="text-white/40">Here's your arena overview</p>
                 </motion.div>

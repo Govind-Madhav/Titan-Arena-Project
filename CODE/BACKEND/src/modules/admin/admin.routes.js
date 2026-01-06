@@ -13,9 +13,13 @@ router.use(authenticate, authorize('ADMIN'));
 
 // User management
 router.get('/users', adminController.getAllUsers);
-router.get('/admins', adminController.getAdmins); // New endpoint
+router.get('/admins', adminController.getAdmins);
 router.get('/pending-players', adminController.getPendingPlayers);
 router.get('/verified-players', adminController.getVerifiedPlayers);
+
+// Host Management (Legacy/Simple)
+router.get('/pending-hosts', adminController.getPendingHosts); // NEW
+router.get('/verified-hosts', adminController.getVerifiedHosts); // NEW
 router.put('/approve-player/:id', adminController.approvePlayer);
 router.delete('/delete-player/:id', adminController.deletePlayer);
 

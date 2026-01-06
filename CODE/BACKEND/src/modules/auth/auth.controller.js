@@ -16,10 +16,11 @@ const uidService = require('../../services/uid.service');
 const otpService = require('../../services/otp.service');
 const { syncUser } = require('../../services/userSync.service');
 const { validateSubRegion } = require('../../config/regions.config');
+const { admin } = require('../../config/firebase.config');
 
 // Validation schemas
 const signupSchema = z.object({
-    ign: z.string().min(3, 'Gamertag must be at least 3 characters').max(20, 'Gamertag must be at most 20 characters').regex(/^[a-zA-Z0-9_]+$/, 'Gamertag can only contain letters, numbers, and underscores'),
+    ign: z.string().min(3, 'Gamertag must be at least 3 characters').max(20, 'Gamertag must be at most 20 characters'), // Allow any characters
     email: z.string().email('Invalid email format'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
     confirmPassword: z.string(),
@@ -29,13 +30,13 @@ const signupSchema = z.object({
         const age = new Date().getFullYear() - date.getFullYear();
         return age >= 13;
     }, 'You must be at least 13 years old'),
-    phone: z.string().regex(/^\+[1-9]\d{7,14}$/, 'Enter phone number with country code (e.g. +919876543210)'), // E.164 format
+    phone: z.string().optional(), // Optional until OTP is implemented
     region: z.number().int().min(1).max(6, 'Region must be between 1-6'), // User must select
     subRegion: z.string().optional(), // Optional sub-region
     country: z.string().min(2, 'Country is required'),
     state: z.string().min(2, 'State is required'),
     city: z.string().optional(),
-    username: z.string().min(3, 'Username must be at least 3 characters').regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
+    username: z.string().min(3, 'Username must be at least 3 characters').regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'), // Strict validation for username
     termsAccepted: z.boolean().refine(val => val === true, 'You must accept the terms and conditions'),
     role: z.enum(['PLAYER', 'ADMIN', 'SUPERADMIN']).optional().default('PLAYER')
 }).refine((data) => data.password === data.confirmPassword, {
@@ -99,7 +100,29 @@ exports.checkIgnAvailability = async (req, res) => {
         res.json({ available: existingIgn.length === 0 });
     } catch (error) {
         console.error('Check IGN error:', error);
-        res.status(500).json({ available: null });
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+
+// Lookup email by username
+exports.lookupEmail = async (req, res) => {
+    try {
+        const { username } = req.body;
+        if (!username) return res.status(400).json({ success: false, message: 'Username required' });
+
+        const result = await db.select({ email: users.email })
+            .from(users)
+            .where(eq(users.username, username))
+            .limit(1);
+
+        if (!result[0]) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        res.json({ success: true, email: result[0].email });
+    } catch (error) {
+        console.error('Email lookup error:', error);
+        res.status(500).json({ success: false, message: 'Lookup failed' });
     }
 };
 
@@ -130,10 +153,10 @@ exports.signup = async (req, res) => {
         const existing = await redis.get(pendingKey);
 
         if (existing) {
-            return res.status(400).json({
-                success: false,
-                message: 'A verification email has already been sent. Please check your inbox or wait 24 hours to register again.'
-            });
+            // User is trying to register again - allow them to get a new OTP
+            console.log(`📧 Resending OTP for pending registration: ${data.email}`);
+            // Delete old OTP and continue with new registration
+            await redis.del(`otp:register:${data.email}`);
         }
 
         // Normalize IGN (trim)
@@ -173,9 +196,11 @@ exports.signup = async (req, res) => {
             EX: 86400 // 24 hours
         });
 
+
         // Generate & Send OTP
         try {
             const otp = await otpService.generateOtp(data.email);
+            console.log(`🔐 OTP for ${data.email}: ${otp}`); // DEV: Show OTP in terminal
             await emailService.sendVerificationEmail(data.email, otp, ign);
         } catch (emailError) {
             console.error('Failed to send verification email:', emailError);
@@ -585,6 +610,52 @@ exports.getMe = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Failed to fetch user'
+        });
+    }
+};
+
+// Resend verification email
+exports.resendVerification = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email is required'
+            });
+        }
+
+        // Check pending registration
+        const { getRedisClient } = require('../../config/redis.config');
+        const redis = getRedisClient();
+        const pendingKey = `pending_registration:${email}`;
+
+        const pendingDataStr = await redis.get(pendingKey);
+        if (!pendingDataStr) {
+            return res.status(404).json({
+                success: false,
+                message: 'No pending registration found. Please sign up again.'
+            });
+        }
+
+        const data = JSON.parse(pendingDataStr);
+
+        // Generate & Send new OTP
+        const otp = await otpService.generateOtp(email);
+        console.log(`🔐 RE-SENT OTP for ${email}: ${otp}`); // DEV
+        await emailService.sendVerificationEmail(email, otp, data.ign);
+
+        res.json({
+            success: true,
+            message: 'Verification code resent successfully'
+        });
+
+    } catch (error) {
+        console.error('Resend verification error:', error);
+        res.status(400).json({
+            success: false,
+            message: error.message || 'Failed to resend verification code'
         });
     }
 };
@@ -1083,7 +1154,56 @@ exports.triggerVerificationEmail = async (req, res) => {
     }
 };
 
+// Trigger branded password reset email with CUSTOM LINK
+exports.triggerPasswordReset = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'Email is required' });
+        }
+
+        // 1. Verify user exists
+        const userResult = await db.select({ id: users.id, username: users.username })
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
+
+        if (!userResult[0]) {
+            console.log("Password reset requested for non-existent email: " + email);
+            return res.json({ success: true, message: 'Password reset link sent' });
+        }
+
+        const username = userResult[0].username;
+
+        // 2. Generate Standard Firebase Link
+        const firebaseLink = await admin.auth().generatePasswordResetLink(email);
+
+        // 3. Extract oobCode
+        const urlObj = new URL(firebaseLink);
+        const oobCode = urlObj.searchParams.get('oobCode');
+
+        if (!oobCode) {
+            throw new Error('Failed to extract oobCode from Firebase link');
+        }
+
+        // 4. Construct CUSTOM Frontend Link
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const customLink = `${frontendUrl}/auth?mode=resetPassword&oobCode=${oobCode}`;
+
+        // 5. Send via Custom Email Service
+        await emailService.sendPasswordResetEmail(email, customLink, username);
+
+        res.json({ success: true, message: 'Password reset link sent' });
+
+    } catch (error) {
+        console.error('Trigger Password Reset Error:', error);
+        res.status(500).json({ success: false, message: 'Failed to send reset link' });
+    }
+};
+
 // Helper: Generate Username Suggestions
+
 const generateSuggestions = (baseTag) => {
     const suggestions = [];
     const randomSuffix = () => Math.floor(Math.random() * 1000);

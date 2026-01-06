@@ -27,10 +27,17 @@ const useAuthStore = create(
             refreshTimer: null,
 
             // Initialize auth state and start refresh timer
-            initialize: () => {
+            initialize: async () => {
                 const state = get()
+
+                // 1. If we have a valid token, start refresh timer
                 if (state.accessToken && state.tokenExpiresAt) {
                     get().startTokenRefreshTimer()
+                } else {
+                    // 2. If no token, attempt to revive session via Cookie (for Refresh/Remember Me)
+                    // We call syncWithBackend which hits /auth/me
+                    // If cookie exists, this will restore 'user' and 'isAuthenticated'
+                    await get().syncWithBackend()
                 }
 
                 // Listen for auth events from other tabs

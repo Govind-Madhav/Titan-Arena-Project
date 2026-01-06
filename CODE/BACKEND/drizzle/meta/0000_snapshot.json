@@ -1,49 +1,9 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "bcdb017e-3b8a-4683-9766-98871bdf155d",
+  "id": "573ddabe-1a99-4c70-84ef-9f4c20a7cc07",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
-    "uid_counters": {
-      "name": "uid_counters",
-      "columns": {
-        "region_code": {
-          "name": "region_code",
-          "type": "varchar(2)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "year": {
-          "name": "year",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "last_value": {
-          "name": "last_value",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "uid_counters_region_code_year_pk": {
-          "name": "uid_counters_region_code_year_pk",
-          "columns": [
-            "region_code",
-            "year"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
     "users": {
       "name": "users",
       "columns": {
@@ -72,8 +32,23 @@
           "name": "password_hash",
           "type": "varchar(255)",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
+        },
+        "firebase_uid": {
+          "name": "firebase_uid",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "auth_provider": {
+          "name": "auth_provider",
+          "type": "enum('FIREBASE','LEGACY')",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'FIREBASE'"
         },
         "player_code": {
           "name": "player_code",
@@ -148,11 +123,18 @@
           "notNull": false,
           "autoincrement": false
         },
-        "regionCode": {
-          "name": "regionCode",
-          "type": "varchar(2)",
+        "region_code": {
+          "name": "region_code",
+          "type": "int",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "sub_region_code": {
+          "name": "sub_region_code",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "role": {
@@ -288,7 +270,7 @@
         "user_regionCode_idx": {
           "name": "user_regionCode_idx",
           "columns": [
-            "regionCode"
+            "region_code"
           ],
           "isUnique": false
         },
@@ -296,6 +278,13 @@
           "name": "user_country_code_idx",
           "columns": [
             "country_code"
+          ],
+          "isUnique": false
+        },
+        "idx_firebase_uid": {
+          "name": "idx_firebase_uid",
+          "columns": [
+            "firebase_uid"
           ],
           "isUnique": false
         }
@@ -320,6 +309,12 @@
           "name": "users_email_unique",
           "columns": [
             "email"
+          ]
+        },
+        "users_firebase_uid_unique": {
+          "name": "users_firebase_uid_unique",
+          "columns": [
+            "firebase_uid"
           ]
         },
         "users_player_code_unique": {
@@ -2287,6 +2282,47 @@
           "name": "dispute_id",
           "columns": [
             "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "uid_counters": {
+      "name": "uid_counters",
+      "columns": {
+        "region": {
+          "name": "region",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_value": {
+          "name": "last_value",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "onUpdate": true,
+          "default": "(now())"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "uid_counters_region": {
+          "name": "uid_counters_region",
+          "columns": [
+            "region"
           ]
         }
       },

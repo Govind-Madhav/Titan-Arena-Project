@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { User, Shield, Calendar, Trophy, Mail, CheckCircle, XCircle, Edit, MapPin, Activity, TrendingUp, Swords, Clock, AlertCircle, LayoutDashboard, Crown, ArrowRight } from 'lucide-react'
+import { User, Shield, Calendar, Trophy, Mail, CheckCircle, XCircle, Edit, MapPin, Activity, TrendingUp, Swords, Clock, AlertCircle, LayoutDashboard, Crown, ArrowRight, Fingerprint, Copy } from 'lucide-react'
 import useAuthStore from '../../store/authStore'
 import { Particles } from '../../Components/effects/ReactBits'
 
@@ -69,6 +69,11 @@ export default function ProfilePage() {
             // You might want to show a toast here
         }
     }
+
+    // Role Helpers - Robust checks to handle SUPER_ADMIN vs SUPERADMIN
+    const isSuperAdmin = user?.role === 'SUPERADMIN' || user?.role === 'SUPER_ADMIN';
+    const isAdmin = user?.role === 'ADMIN' || user?.isAdmin || isSuperAdmin;
+    const isHost = user?.role === 'HOST' || user?.hostStatus === 'VERIFIED' || isAdmin;
 
     return (
         <div className="min-h-screen relative bg-titan-bg pb-20">
@@ -141,16 +146,40 @@ export default function ProfilePage() {
                         ) : (
                             <>
                                 <h1 className="font-display font-bold text-3xl md:text-5xl text-white mb-2">
-                                    {user?.ign || user?.username}
+                                    {user?.username}
                                 </h1>
                                 <div className="flex flex-wrap items-center justify-center md:justify-start gap-4 text-white/60 mb-4">
-                                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 text-sm">
-                                        <Mail size={14} /> {user?.email}
-                                    </span>
-                                    <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/5 text-sm">
-                                        <Shield size={14} className={user?.role === 'ADMIN' ? 'text-titan-purple' : 'text-blue-400'} />
-                                        {user?.role}
-                                    </span>
+                                    {user?.platformUid && (
+                                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 border border-white/10 hover:border-titan-purple/50 transition-colors group/uid">
+                                            <span className="text-sm font-mono tracking-wider font-bold text-white shadow-neon-sm">UID: {user.platformUid}</span>
+                                            <button
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(user.platformUid);
+                                                }}
+                                                className="text-white/40 hover:text-titan-cyan transition-colors"
+                                                title="Copy UID"
+                                            >
+                                                <Copy size={12} />
+                                            </button>
+                                        </div>
+                                    )}
+                                    {user?.ign && (
+                                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 border border-white/10 hover:border-titan-purple/50 transition-colors group/ign">
+                                            <Swords size={14} className="text-titan-cyan" />
+                                            <span className="text-sm font-bold text-white tracking-wide">{user.ign}</span>
+                                            <button
+                                                onClick={() => navigator.clipboard.writeText(user.ign)}
+                                                className="text-white/40 hover:text-titan-cyan transition-colors"
+                                                title="Copy IGN"
+                                            >
+                                                <Copy size={12} />
+                                            </button>
+                                        </div>
+                                    )}
+                                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10 border border-white/10">
+                                        <Shield size={14} className={isAdmin ? 'text-titan-purple' : 'text-blue-400'} />
+                                        <span className="text-sm font-bold text-white tracking-wide">{user?.role}</span>
+                                    </div>
                                 </div>
                                 <p className="text-white/60 font-medium italic mb-2">
                                     {user?.bio || "No bio yet."}
@@ -164,11 +193,12 @@ export default function ProfilePage() {
                     </div>
 
                     {!isEditing && (
-                        <div className="flex gap-4">
-                            <Link to="/settings" className="btn-secondary px-6 flex items-center gap-2">
+                        <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+                            {/* Admin Panel button moved to Quick Actions below Performance */}
+                            <Link to="/settings" className="btn-secondary px-6 flex items-center justify-center gap-2">
                                 <Edit size={16} /> Edit Profile
                             </Link>
-                            <Link to="/wallet" className="btn-ghost px-6">Wallet</Link>
+                            <Link to="/wallet" className="btn-ghost px-6 flex items-center justify-center">Wallet</Link>
                         </div>
                     )}
                 </div>
@@ -315,14 +345,14 @@ export default function ProfilePage() {
                         <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-6">
                             <h3 className="font-bold text-white text-lg mb-4">Quick Actions</h3>
                             <div className="space-y-2">
-                                {(user?.role === 'ADMIN' || user?.role === 'SUPERADMIN') && (
-                                    <Link to="/admin" className="flex items-center gap-3 p-3 rounded-xl bg-titan-purple/20 hover:bg-titan-purple/30 text-white transition-all border border-titan-purple/30">
-                                        <LayoutDashboard size={18} className="text-titan-purple" />
-                                        <span>Admin Dashboard</span>
+                                {isAdmin && (
+                                    <Link to="/admin" className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-red-900/40 to-red-600/20 hover:from-red-900/60 hover:to-red-600/30 text-white transition-all border border-red-500/30 group">
+                                        <LayoutDashboard size={18} className="text-red-400 group-hover:text-red-200" />
+                                        <span className="font-medium text-red-100">Admin Panel</span>
                                         <ArrowRight className="ml-auto opacity-50" size={16} />
                                     </Link>
                                 )}
-                                {(user?.role === 'HOST' || user?.role === 'ADMIN' || user?.role === 'SUPERADMIN') && (
+                                {isHost && (
                                     <Link to="/host" className="flex items-center gap-3 p-3 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-white transition-all border border-blue-500/30">
                                         <Crown size={18} className="text-blue-400" />
                                         <span>Host Dashboard</span>
@@ -353,5 +383,3 @@ export default function ProfilePage() {
         </div>
     )
 }
-
-

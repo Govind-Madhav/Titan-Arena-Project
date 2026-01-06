@@ -23,6 +23,8 @@ export default function AuthPage() {
     const [rememberMe, setRememberMe] = useState(false)
     const [isVerificationSent, setIsVerificationSent] = useState(false)
     const [resendTimer, setResendTimer] = useState(0)
+    const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
+    const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false) // NEW: Reset Password Modal
 
     // Wizard State
     // Wizard State
@@ -41,6 +43,7 @@ export default function AuthPage() {
         ign: '',              // NEW
         username: '',
         email: '',
+        identifier: '', // Login field (Email or Username)
         password: '',
         confirmPassword: '', // NEW
         legalName: '',
@@ -72,6 +75,7 @@ export default function AuthPage() {
             ign: '',
             username: '',
             email: '',
+            identifier: '',
             password: '',
             confirmPassword: '',
             legalName: '',
@@ -88,7 +92,35 @@ export default function AuthPage() {
     }, [isLogin])
 
     // Resend cooldown timer
-    // (Removed phone OTP resend)
+
+    // Resend Email Timer
+    useEffect(() => {
+        let interval;
+        if (resendTimer > 0) {
+            interval = setInterval(() => {
+                setResendTimer((prev) => prev - 1);
+            }, 1000);
+        }
+        return () => clearInterval(interval);
+    }, [resendTimer]);
+
+    const handleResendEmail = async () => {
+        if (resendTimer > 0) return;
+
+        try {
+            await api.post('/auth/resend-verification', {
+                email: formData.email
+            });
+            toast.success('Verification code resent!');
+            setResendTimer(60); // 60s cooldown
+        } catch (error) {
+            console.error('Resend failed:', error);
+            // Ignore "No active session" if it happens, assuming backend might not require auth for this specific flow if email is provided
+            // But wait, resendVerification typically requires auth OR email in body.
+            // Let's check backend implementation.
+            toast.error(error.response?.data?.message || 'Failed to resend code');
+        }
+    };
 
     // Debounced IGN Check (NEW)
     useEffect(() => {
@@ -136,22 +168,138 @@ export default function AuthPage() {
         return () => clearTimeout(timer);
     }, [formData.username, isLogin]);
 
+    // Validation before advancing to next step
     const handleBeforeNextStep = async (stepCalled) => {
         if (stepCalled === 1) {
             if (!formData.username || !formData.legalName || !formData.dateOfBirth || !formData.country || !formData.state) {
                 toast.error('Please fill in all personal details')
                 return false
             }
-            // Additional validation if needed
             return true
         }
+
+        // Step 2 → Step 3: Trigger signup and send OTP
+        if (stepCalled === 2) {
+            if (!formData.termsAccepted) {
+                toast.error('Accept terms to proceed')
+                return false
+            }
+
+            // Frontend validation
+            if (formData.password !== formData.confirmPassword) {
+                toast.error("Passwords don't match")
+                return false
+            }
+
+            // Block if checking IGN
+            if (isCheckingIgn) {
+                toast.error("Please wait for gamertag availability check")
+                return false
+            }
+
+            // Check IGN is available
+            if (ignAvailable === false) {
+                toast.error("Gamertag is already taken")
+                return false
+            }
+
+            setIsAuthProcessing(true)
+            try {
+                // Prepare payload
+                const payload = {
+                    ign: formData.ign.trim(),
+                    username: formData.username,
+                    legalName: formData.legalName,
+                    email: formData.email,
+                    password: formData.password,
+                    confirmPassword: formData.confirmPassword,
+                    phone: formData.phone || '',
+                    region: Number(formData.region),
+                    subRegion: formData.subRegion || '',
+                    country: formData.country,
+                    state: formData.state,
+                    city: formData.city || '',
+                    dateOfBirth: formData.dateOfBirth,
+                    termsAccepted: formData.termsAccepted
+                }
+
+                console.log('Sending payload:', payload)
+
+                // Call custom backend signup
+                const response = await api.post('/auth/signup', payload)
+
+                // toast.success('Verification code sent to your email!')
+                setIsAuthProcessing(false)
+                return true // Allow advancing to Step 3
+            } catch (error) {
+                console.error('Signup Failed:', error)
+                console.error('Error response:', error.response?.data)
+
+                // Show detailed validation errors if available
+                if (error.response?.data?.errors) {
+                    console.error('Validation errors:', error.response.data.errors)
+                    error.response.data.errors.forEach((err, index) => {
+                        console.error(`Error ${index + 1}:`, err)
+                        toast.error(err.message || err)
+                    })
+                } else {
+                    toast.error(error.response?.data?.message || 'Registration failed')
+                }
+                setIsAuthProcessing(false)
+                return false // Don't advance to Step 3
+            }
+        }
+
         return true
     }
 
-    const handleRegistrationComplete = () => {
-        // Trigger the form submission logic for registration
-        // We can simulate an event or just call the logic
-        handleSubmit({ preventDefault: () => { } })
+    const handleRegistrationComplete = async () => {
+        // Step 3 complete: Verify OTP
+        const otpInput = document.querySelector('input[name="otp"]');
+        const otp = otpInput?.value;
+
+        if (!otp || otp.length !== 6) {
+            toast.error('Please enter the 6-digit verification code');
+            return;
+        }
+
+        setIsAuthProcessing(true);
+        try {
+            // Call backend to verify OTP
+            const response = await api.post('/auth/verify-email', {
+                email: formData.email,
+                otp: otp
+            });
+
+            toast.success('Registration complete! Redirecting to login...');
+
+            // Wait 1 second then redirect to login
+            setTimeout(() => {
+                setIsLogin(true); // Switch to login mode
+                // Reset form
+                setFormData({
+                    ign: '',
+                    username: '',
+                    email: '',
+                    password: '',
+                    confirmPassword: '',
+                    legalName: '',
+                    dateOfBirth: '',
+                    phone: '',
+                    region: '',
+                    subRegion: '',
+                    country: '',
+                    state: '',
+                    city: '',
+                    termsAccepted: false
+                });
+            }, 1000);
+        } catch (error) {
+            console.error('OTP Verification Failed:', error);
+            toast.error(error.response?.data?.message || 'Invalid verification code');
+        } finally {
+            setIsAuthProcessing(false);
+        }
     }
 
     const [isAuthProcessing, setIsAuthProcessing] = useState(false)
@@ -159,15 +307,32 @@ export default function AuthPage() {
     const handleSubmit = async (e) => {
         e.preventDefault()
         const { auth } = await import('../lib/firebase')
-        const { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification } = await import('firebase/auth')
+        const { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, setPersistence, browserLocalPersistence, browserSessionPersistence } = await import('firebase/auth')
 
         if (isLogin) {
             // --- FIREBASE LOGIN (Email/Password) ---
-            if (!formData.email || !formData.password) return toast.error('Email and password required')
+            if (!formData.identifier || !formData.password) return toast.error('Email/Username and password required')
 
             setIsAuthProcessing(true)
             try {
-                const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password)
+                // 1. Resolve Email
+                let loginEmail = formData.identifier;
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(loginEmail)) {
+                    try {
+                        const lookupRes = await api.post('/auth/lookup-email', { username: formData.identifier });
+                        loginEmail = lookupRes.data.email;
+                    } catch (err) {
+                        if (err.response?.status === 404) throw new Error('User not found');
+                        throw err;
+                    }
+                }
+
+                // 2. Set Persistence (Remember Me)
+                await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+
+                // 3. Sign In
+                const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password)
                 const user = userCredential.user
 
                 // 🚨 Frontend Check (Pre-sync)
@@ -208,56 +373,8 @@ export default function AuthPage() {
                 setIsAuthProcessing(false)
             }
         } else {
-            // --- CUSTOM BACKEND SIGNUP (Email/Password with OTP) ---
-            if (currentStep === 2) {
-                if (!formData.termsAccepted) return toast.error('Accept terms to proceed')
-
-                // Frontend validation
-                if (formData.password !== formData.confirmPassword) {
-                    return toast.error("Passwords don't match")
-                }
-
-                // Block if checking IGN
-                if (isCheckingIgn) {
-                    return toast.error("Please wait for gamertag availability check")
-                }
-
-                // Check IGN is available
-                if (ignAvailable === false) {
-                    return toast.error("Gamertag is already taken")
-                }
-
-                setIsAuthProcessing(true)
-                try {
-                    // Prepare payload (remove confirmPassword)
-                    const payload = {
-                        ign: formData.ign.trim(),
-                        username: formData.username,
-                        legalName: formData.legalName,
-                        email: formData.email,
-                        password: formData.password,
-                        phone: formData.phone,
-                        region: Number(formData.region),
-                        subRegion: formData.subRegion || null,
-                        country: formData.country,
-                        state: formData.state,
-                        city: formData.city || null,
-                        dateOfBirth: formData.dateOfBirth,
-                        termsAccepted: formData.termsAccepted
-                    }
-
-                    // Call custom backend signup
-                    const response = await api.post('/auth/signup', payload)
-
-                    setIsVerificationSent(true)
-                    toast.success('Verification code sent to your email!')
-                } catch (error) {
-                    console.error('Signup Failed:', error)
-                    toast.error(error.response?.data?.message || 'Registration failed')
-                } finally {
-                    setIsAuthProcessing(false)
-                }
-            }
+            // Registration is now handled in handleBeforeNextStep (Step 2 → Step 3)
+            // This section is no longer used
         }
     }
 
@@ -268,33 +385,6 @@ export default function AuthPage() {
             region: e.target.value,
             subRegion: '' // Reset sub-region when region changes
         })
-    }
-
-    const handleResendEmail = async () => {
-        const { auth } = await import('../lib/firebase')
-        const { sendEmailVerification } = await import('firebase/auth')
-
-        if (!auth.currentUser) return toast.error('No active session found.')
-
-        try {
-            await api.post('/auth/trigger-verification', {
-                email: auth.currentUser.email,
-                username: formData.username || auth.currentUser.displayName
-            });
-            toast.success('Verification link resent!')
-            setResendTimer(60)
-            const interval = setInterval(() => {
-                setResendTimer(prev => {
-                    if (prev <= 1) {
-                        clearInterval(interval)
-                        return 0
-                    }
-                    return prev - 1
-                })
-            }, 1000)
-        } catch (error) {
-            toast.error('Failed to resend email. Try again later.')
-        }
     }
 
     const handleChange = (e) => {
@@ -338,8 +428,19 @@ export default function AuthPage() {
         return () => clearInterval(timer)
     }, [])
 
+    // Check for Password Reset Mode
+    useEffect(() => {
+        const queryParams = new URLSearchParams(location.search);
+        const mode = queryParams.get('mode');
+        const oobCode = queryParams.get('oobCode');
+
+        if (mode === 'resetPassword' && oobCode) {
+            setIsResetPasswordOpen(true);
+        }
+    }, [location.search]);
+
     return (
-        <div className="min-h-screen bg-[#050505] text-white overflow-x-hidden flex flex-col">
+        <div className="min-h-screen bg-[#050505] text-white selection:bg-titan-purple/30 font-sans overflow-hidden relative">
             {/* Navbar Re-integrated */}
             <div className="fixed top-0 left-0 right-0 z-50">
                 <Navbar />
@@ -348,8 +449,8 @@ export default function AuthPage() {
             {/* Main Content Split - Account for Navbar height with pt-20 */}
             <div className="flex-1 flex pt-20 min-h-screen">
 
-                {/* LEFT SIDE: BANNER / SLIDESHOW (Hidden on mobile) */}
-                <div className="hidden lg:flex lg:w-1/2 relative bg-titan-bg-light overflow-hidden items-center justify-center p-12 border-r border-white/5">
+                {/* LEFT SIDE: BANNER / SLIDESHOW (Hidden on mobile/tablet) */}
+                <div className="hidden xl:flex xl:w-1/2 relative bg-titan-bg-light overflow-hidden items-center justify-center p-12 border-r border-white/5">
                     {/* Background Effects */}
                     <div className="absolute inset-0 bg-[#050505]" />
                     <div className="absolute inset-0 bg-[linear-gradient(rgba(139,92,246,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(139,92,246,0.05)_1px,transparent_1px)] bg-[size:50px_50px] opacity-50" />
@@ -409,10 +510,10 @@ export default function AuthPage() {
                 </div>
 
                 {/* RIGHT SIDE: AUTH FORM */}
-                <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-8 lg:p-12 relative">
+                <div className="w-full xl:w-1/2 flex items-center justify-center p-4 sm:p-8 lg:p-12 relative">
 
-                    {/* Mobile Only Background */}
-                    <div className="absolute inset-0 lg:hidden bg-[#050505]">
+                    {/* Mobile/Tablet Background (shows when not xl) */}
+                    <div className="absolute inset-0 xl:hidden bg-[#050505]">
                         <div className="absolute top-[-20%] right-[-20%] w-[80%] h-[80%] bg-titan-purple/20 blur-[100px] rounded-full" />
                     </div>
 
@@ -429,49 +530,10 @@ export default function AuthPage() {
                                 </h2>
 
                                 <p className="text-white/40 text-sm mb-2 font-mono leading-relaxed">
-                                    {isLogin ? 'Access the mainframe.' : (currentStep === 1 ? 'Establish personal profile.' : 'Secure credentials.')}
+                                    {isLogin ? 'Access the mainframe.' : (currentStep === 1 ? 'Establish personal profile.' : currentStep === 2 ? 'Secure credentials.' : 'Verify identity.')}
                                 </p>
 
-                                <form onSubmit={handleSubmit} className="space-y-2 relative z-10">
-
-                                    {/* --- VERIFICATION PENDING OVERLAY --- */}
-                                    {isVerificationSent && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.95 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            className="absolute inset-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center"
-                                        >
-                                            <div className="w-16 h-16 rounded-full bg-titan-purple/20 flex items-center justify-center mb-6 animate-pulse">
-                                                <Mail size={32} className="text-titan-purple" />
-                                            </div>
-                                            <h3 className="font-display text-xl font-bold mb-2">VERIFICATION REQUIRED</h3>
-                                            <p className="text-white/60 text-sm mb-8">
-                                                A secure uplink link has been sent to <span className="text-white font-mono">{formData.email}</span>.
-                                                <br />Please verify your identity to proceed.
-                                            </p>
-
-                                            <div className="space-y-4 w-full">
-                                                <button
-                                                    onClick={handleResendEmail}
-                                                    disabled={resendTimer > 0}
-                                                    className="btn-neon w-full h-10 text-xs font-bold flex items-center justify-center gap-2"
-                                                >
-                                                    {resendTimer > 0 ? `RESEND IN ${resendTimer}s` : 'RESEND VERIFICATION'}
-                                                </button>
-
-                                                <button
-                                                    onClick={() => {
-                                                        setIsVerificationSent(false)
-                                                        setIsLogin(true)
-                                                    }}
-                                                    className="w-full text-white/40 hover:text-white text-xs font-mono transition-colors"
-                                                >
-                                                    ← BACK TO LOGIN
-                                                </button>
-                                            </div>
-                                        </motion.div>
-                                    )}
-
+                                <form onSubmit={handleSubmit} className="space-y-2 relative z-10" noValidate>
 
                                     {/* --- LOGIN MODE --- */}
                                     {isLogin && (
@@ -479,13 +541,13 @@ export default function AuthPage() {
                                             <div className="relative group">
                                                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
                                                 <input
-                                                    type="email"
-                                                    name="email"
-                                                    placeholder="Email"
-                                                    value={formData.email}
+                                                    type="text"
+                                                    name="identifier"
+                                                    placeholder="Email or Username"
+                                                    value={formData.identifier}
                                                     onChange={handleChange}
                                                     className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
-                                                    autoComplete="email"
+                                                    autoComplete="username"
                                                     required
                                                 />
                                             </div>
@@ -511,7 +573,7 @@ export default function AuthPage() {
                                                     <input type="checkbox" checked={rememberMe} onChange={() => setRememberMe(!rememberMe)} className="rounded bg-white/10 border-white/20 w-3.5 h-3.5 text-titan-purple focus:ring-0 checked:bg-titan-purple" />
                                                     Remember me
                                                 </label>
-                                                <Link to="/forgot-password" className="hover:text-titan-cyan transition-colors">Forgot Password?</Link>
+                                                <button type="button" onClick={() => setIsForgotPasswordOpen(true)} className="hover:text-titan-cyan transition-colors">Forgot Password?</button>
                                             </div>
 
                                             <button
@@ -551,7 +613,6 @@ export default function AuthPage() {
                                                             onChange={(e) => setFormData({ ...formData, ign: e.target.value })}
                                                             minLength={3}
                                                             maxLength={20}
-                                                            pattern="[a-zA-Z0-9_]+"
                                                             className={`w-full bg-white/10 border ${ignAvailable === false ? 'border-red-500 focus:border-red-500' : (ignAvailable === true ? 'border-green-500 focus:border-green-500' : 'border-white/10')} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
                                                             autoFocus
                                                             required
@@ -566,6 +627,7 @@ export default function AuthPage() {
                                                             ) : null
                                                         )}
                                                     </div>
+                                                    <p className="text-white/40 text-xs font-mono -mt-1">3-20 characters, any characters allowed</p>
                                                     <div className="relative group">
                                                         <User className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
                                                         <input
@@ -639,9 +701,20 @@ export default function AuthPage() {
                                                             </select>
                                                         </div>
                                                     </div>
-                                                    <div className="grid grid-cols-2 gap-2.5">
-                                                        {/* Phone field removed per request */}
+                                                    {/* Phone Number Field */}
+                                                    <div className="relative group">
+                                                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="tel"
+                                                            name="phone"
+                                                            placeholder="Phone Number (with country code, e.g. +919876543210)"
+                                                            value={formData.phone}
+                                                            onChange={handleChange}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner"
+                                                            required
+                                                        />
                                                     </div>
+                                                    <p className="text-white/40 text-xs font-mono -mt-1">Required: For account recovery and important notifications</p>
                                                     {/* Dynamic Location Fields */}
                                                     {formData.country === 'IN' ? (
                                                         <>
@@ -819,6 +892,47 @@ export default function AuthPage() {
                                                     </label>
                                                 </div>
                                             </Step>
+
+                                            {/* Step 3: Email Verification */}
+                                            <Step>
+                                                <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300 pt-0.5">
+                                                    <div className="text-center mb-6">
+                                                        <div className="w-16 h-16 rounded-full bg-titan-purple/20 flex items-center justify-center mb-4 mx-auto animate-pulse">
+                                                            <Mail size={32} className="text-titan-purple" />
+                                                        </div>
+                                                        <h3 className="font-display text-lg font-bold mb-2">VERIFICATION REQUIRED</h3>
+                                                        <p className="text-white/60 text-sm">
+                                                            A secure verification code has been sent to<br />
+                                                            <span className="text-white font-mono">{formData.email}</span>
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="relative group">
+                                                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
+                                                        <input
+                                                            type="text"
+                                                            name="otp"
+                                                            placeholder="Enter 6-digit code"
+                                                            maxLength={6}
+                                                            className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-mono text-lg tracking-widest text-center shadow-inner"
+                                                            autoFocus
+                                                        />
+                                                    </div>
+
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleResendEmail}
+                                                        disabled={resendTimer > 0}
+                                                        className="w-full text-white/40 hover:text-white text-xs font-mono transition-colors disabled:opacity-50"
+                                                    >
+                                                        {resendTimer > 0 ? `RESEND IN ${resendTimer}s` : 'RESEND CODE'}
+                                                    </button>
+
+                                                    <p className="text-white/40 text-xs font-mono text-center">
+                                                        Check your email inbox and spam folder
+                                                    </p>
+                                                </div>
+                                            </Step>
                                         </Stepper>
                                     )}
 
@@ -842,6 +956,223 @@ export default function AuthPage() {
                     </motion.div>
                 </div>
             </div>
+
+            {/* --- FORGOT PASSWORD MODAL --- */}
+            <AnimatePresence>
+                {isForgotPasswordOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            exit={{ scale: 0.95, y: 20 }}
+                            className="bg-[#0a0a0a] border border-white/10 rounded-xl max-w-md w-full p-6 relative shadow-2xl shadow-titan-purple/20"
+                        >
+                            <button
+                                onClick={() => setIsForgotPasswordOpen(false)}
+                                className="absolute right-4 top-4 text-white/30 hover:text-white transition-colors"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+
+                            <h3 className="text-xl font-bold font-display text-white mb-2">Recover Access</h3>
+                            <p className="text-white/50 text-sm mb-6">Enter your email address to receive a password reset link.</p>
+
+                            <ForgotPasswordForm onSuccess={() => setIsForgotPasswordOpen(false)} />
+
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* --- RESET PASSWORD MODAL (From Email Link) --- */}
+            <AnimatePresence>
+                {isResetPasswordOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            exit={{ scale: 0.95, y: 20 }}
+                            className="bg-[#0a0a0a] border border-white/10 rounded-xl max-w-md w-full p-8 relative shadow-2xl shadow-titan-cyan/20 ring-1 ring-titan-cyan/30"
+                        >
+                            <h3 className="text-2xl font-bold font-display text-white mb-2 text-center">Set New Password</h3>
+                            <p className="text-white/50 text-sm mb-6 text-center">Secure your account with a fresh password.</p>
+
+                            <ResetPasswordForm
+                                onSuccess={() => {
+                                    setIsResetPasswordOpen(false);
+                                    navigate('/auth', { replace: true });
+                                    toast.success('Password updated! Please login.');
+                                }}
+                            />
+
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
+    )
+}
+
+function ResetPasswordForm({ onSuccess }) {
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const location = useLocation();
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+
+        if (newPassword.length < 8) return toast.error('Password too short (min 8 chars)');
+        if (newPassword !== confirmPassword) return toast.error('Passwords do not match');
+
+        const queryParams = new URLSearchParams(location.search);
+        const oobCode = queryParams.get('oobCode');
+
+        if (!oobCode) return toast.error('Invalid reset link. Please request a new one.');
+
+        setIsLoading(true);
+        try {
+            const { auth } = await import('../lib/firebase'); // Lazy load
+            const { confirmPasswordReset } = await import('firebase/auth');
+
+            await confirmPasswordReset(auth, oobCode, newPassword);
+
+            onSuccess();
+        } catch (error) {
+            console.error('Reset Confirm Error:', error);
+            const msg = error.code === 'auth/invalid-action-code' ? 'Expired or invalid link.' : error.message;
+            toast.error(msg);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            <div className="space-y-2">
+                <label className="text-xs font-bold text-white/70 uppercase tracking-wider">New Password</label>
+                <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 px-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-cyan/50 transition-all font-sans text-sm"
+                    placeholder="Min 8 characters"
+                    required
+                />
+            </div>
+            <div className="space-y-2">
+                <label className="text-xs font-bold text-white/70 uppercase tracking-wider">Confirm Password</label>
+                <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 px-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-cyan/50 transition-all font-sans text-sm"
+                    placeholder="Re-enter password"
+                    required
+                />
+            </div>
+            <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-titan-cyan hover:bg-titan-cyan/80 text-black font-bold py-3 rounded-lg transition-all mt-4"
+            >
+                {isLoading ? 'Updating...' : 'Update Password'}
+            </button>
+        </form>
+    )
+}
+
+function ForgotPasswordForm({ onSuccess }) {
+    const [email, setEmail] = useState('')
+    const [error, setError] = useState('')
+    const [isLoading, setIsLoading] = useState(false)
+    const [isSent, setIsSent] = useState(false)
+
+    const handleReset = async (e) => {
+        e.preventDefault()
+        setError('')
+
+        if (!email) {
+            setError('Email is required')
+            return
+        }
+
+        // Manual validation since native is disabled
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            setError('Please enter a valid email address')
+            return
+        }
+
+        setIsLoading(true)
+        try {
+            // Use custom backend endpoint for branded email
+            await api.post('/auth/trigger-password-reset', { email: email.trim() })
+
+            setIsSent(true)
+            setTimeout(() => {
+                onSuccess()
+            }, 3000)
+        } catch (error) {
+            console.error('Reset Error:', error)
+            setError(error.response?.data?.message || 'Failed to send reset link')
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    if (isSent) {
+        return (
+            <div className="text-center py-4 space-y-3">
+                <div className="mx-auto w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center text-green-500">
+                    <Check size={24} />
+                </div>
+                <p className="text-white font-medium">Link Sent!</p>
+                <p className="text-white/40 text-xs">Check your inbox. Closing in 3s...</p>
+            </div>
+        )
+    }
+
+    return (
+        <form onSubmit={handleReset} className="space-y-4" noValidate>
+            <div className="space-y-2">
+                <label className="text-xs font-bold text-white/70 uppercase tracking-wider">Email Address</label>
+                <div className="relative group">
+                    <Mail className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${error ? 'text-red-500' : 'text-white/40 group-focus-within:text-titan-cyan'}`} size={16} />
+                    <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => {
+                            setEmail(e.target.value)
+                            if (error) setError('')
+                        }}
+                        placeholder="Enter your registered email"
+                        className={`w-full bg-white/5 border ${error ? 'border-red-500/50 focus:border-red-500' : 'border-white/10 focus:border-titan-purple/50'} rounded-lg py-2.5 pl-10 pr-4 text-white placeholder-white/30 focus:outline-none focus:bg-white/10 transition-all font-sans text-sm`}
+                        autoFocus
+                        required
+                    />
+                </div>
+                {error && (
+                    <p className="text-red-500 text-xs font-medium pl-1 animate-in slide-in-from-left-1">{error}</p>
+                )}
+            </div>
+            <button
+                type="submit"
+                disabled={isLoading}
+                className="btn-neon w-full h-10 flex items-center justify-center gap-2 text-sm tracking-widest font-bold uppercase"
+            >
+                {isLoading ? <div className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" /> : <>Send Link <ArrowRight size={16} /></>}
+            </button>
+        </form >
     )
 }

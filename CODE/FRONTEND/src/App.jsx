@@ -45,24 +45,32 @@ function App() {
   return (
     <BrowserRouter>
       <Toaster
-        position="top-right"
+        position="bottom-right"
         toastOptions={{
           style: {
-            background: '#1A1A1A',
+            background: '#050505',
             color: '#fff',
-            border: '1px solid rgba(139, 92, 246, 0.3)',
+            border: '1px solid rgba(139, 92, 246, 0.5)',
+            padding: '16px',
+            borderRadius: '12px',
           },
           success: {
             iconTheme: {
               primary: '#10B981',
               secondary: '#fff',
             },
+            style: {
+              border: '1px solid rgba(16, 185, 129, 0.4)',
+            }
           },
           error: {
             iconTheme: {
               primary: '#EF4444',
               secondary: '#fff',
             },
+            style: {
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+            }
           },
         }}
       />
