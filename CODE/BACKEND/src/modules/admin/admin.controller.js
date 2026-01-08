@@ -304,24 +304,18 @@ const getAllTournaments = async (req, res) => {
             name: tournaments.name,
             status: tournaments.status,
             hostId: tournaments.hostId,
+            game: tournaments.game,
+            type: tournaments.type,
+            startTime: tournaments.startTime,
+            registrationEnd: tournaments.registrationEnd,
             entryFee: tournaments.entryFee,
             prizePool: tournaments.prizePool,
-            createdAt: tournaments.createdAt,
-            game: tournaments.game,
-            active: tournaments.status, // Mapping for frontend which might expect 'active' boolean or status string
-            startDate: tournaments.startTime,
-            joiningFee: tournaments.entryFee,
-            gameType: tournaments.type
+            createdAt: tournaments.createdAt
         })
             .from(tournaments)
             .orderBy(desc(tournaments.createdAt));
 
-        const mapped = result.map(t => ({
-            ...t,
-            active: t.status === 'ONGOING' || t.status === 'UPCOMING' || t.status === 'REGISTRATION' // Simple mapping
-        }));
-
-        res.json({ success: true, data: mapped });
+        res.json({ success: true, data: result });
     } catch (error) {
         console.error('Admin get tournaments error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch tournaments' });

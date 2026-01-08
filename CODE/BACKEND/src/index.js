@@ -6,6 +6,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 // Initialize Firebase and Redis
 const { initializeFirebase, checkFirebaseHealth, closeFirebase } = require('./config/firebase.config');
@@ -159,6 +160,10 @@ app.use('/api/social', require('./modules/social/social.routes')); // New Social
 app.use('/api/stats', require('./modules/stats/stats.routes')); // Stats & Leaderboard
 app.use('/api/notifications', require('./modules/notification/notification.routes')); // Notifications
 app.use('/api/users', require('./modules/user/user.routes')); // User Profile Routes
+app.use('/api/upload', require('./routes/upload.routes')); // File Upload Routes
+
+// Serve uploaded files statically
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

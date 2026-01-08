@@ -25,11 +25,12 @@ import useAuthStore from '../../store/authStore'
 const NotificationDropdown = () => {
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState([]);
-    const { getNotifications } = useAuthStore();
+    const { getNotifications, isAuthenticated, isInitialized } = useAuthStore();
     const dropdownRef = useRef(null);
 
     useEffect(() => {
         const fetchNotifications = async () => {
+            if (!isInitialized || !isAuthenticated) return;
             const res = await getNotifications();
             if (res.success) setNotifications(res.data);
         }
@@ -40,7 +41,7 @@ const NotificationDropdown = () => {
         // Poll every 30s
         const interval = setInterval(fetchNotifications, 30000);
         return () => clearInterval(interval);
-    }, [getNotifications]);
+    }, [isInitialized, isAuthenticated, getNotifications]);
 
     // Refetch when opening to ensure read status is accurate
     useEffect(() => {

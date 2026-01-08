@@ -34,6 +34,7 @@ const HostDashboard = () => {
 
   useEffect(() => {
     const fetchStats = async () => {
+      if (!user) return;
       try {
         const result = await getHostDashboard();
         if (result && result.success && result.data && result.data.stats) {

@@ -4,3 +4,4 @@ node_modules
 *.db-journal
 Firebase/serviceAccount.json
 .vercel
+uploads/

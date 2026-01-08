@@ -207,6 +207,7 @@ const tournaments = mysqlTable('tournament', {
     name: varchar('name', { length: 255 }).notNull(),
     game: varchar('game', { length: 100 }).notNull(),
     description: text('description'),
+    highlightUrl: varchar('highlightUrl', { length: 500 }), // Tournament highlight video
     type: varchar('type', { length: 50 }).notNull(),
     teamSize: int('teamSize'),
     hostId: varchar('hostId', { length: 191 }).notNull().references(() => users.id),

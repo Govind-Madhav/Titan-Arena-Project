@@ -19,6 +19,7 @@ import toast from 'react-hot-toast';
 import api from '../../lib/api';
 import Layout from '../../Components/layout/Layout';
 import { GradientText, SpotlightCard } from '../../Components/effects/ReactBits';
+import useAuthStore from '../../store/authStore';
 
 const ManageTournamentsPage = () => {
   const [tournaments, setTournaments] = useState([]);
@@ -26,19 +27,20 @@ const ManageTournamentsPage = () => {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    startDate: '',
-    endDate: '',
-    gameType: '',
-    joiningFee: '',
-    image: '',
-    status: 'Active',
+    game: '', // PRO FIX: Sync with backend 'game'
+    startTime: '', // PRO FIX: Sync with backend 'startTime'
+    entryFee: '', // PRO FIX: Sync with backend 'entryFee'
+    prizePool: '', // Added prizePool
+    maxParticipants: '', // Added maxParticipants
+    rules: '', // Added rules
+    type: 'SOLO', // Added type
   });
   const [editing, setEditing] = useState(false);
   const [editId, setEditId] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const navigate = useNavigate();
-  const { user } = useAuthStore(); // Use global user state if needed
+  const { user } = useAuthStore();
 
   useEffect(() => {
     fetchData();
@@ -47,14 +49,11 @@ const ManageTournamentsPage = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      // Fetch "My Tournaments" directly from the dashboard/host endpoint
-      // Using /tournaments/host/dashboard which returns { tournaments, stats }
       const [tournRes, gameRes] = await Promise.all([
         api.get('/tournaments/host/dashboard'),
         api.get('/games')
       ]);
 
-      // The endpoint returns { data: { tournaments: [], stats: {} } }
       setTournaments(tournRes.data.data.tournaments || []);
       setGames(gameRes.data.data || []);
     } catch (err) {
@@ -67,39 +66,59 @@ const ManageTournamentsPage = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    // Handle numeric fields correctly for Zod validation on backend
+    const numFields = ['entryFee', 'prizePool', 'maxParticipants'];
+    const processedValue = numFields.includes(name) ? (value === '' ? '' : Number(value)) : value;
+    setFormData(prev => ({ ...prev, [name]: processedValue }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      // PRO FIX: Ensure strict ISO 8601 with timezone (UTC is fine via toISOString)
+      const submitData = {
+        ...formData,
+        startTime: formData.startTime ? new Date(formData.startTime).toISOString() : '',
+      };
+
       if (editing) {
-        await api.put(`/tournaments/${editId}`, formData);
+        await api.put(`/tournaments/${editId}`, submitData);
         toast.success('Tournament updated');
       } else {
-        await api.post('/tournaments', formData);
+        await api.post('/tournaments', submitData);
         toast.success('Tournament created');
       }
       resetForm();
       fetchData();
     } catch (err) {
+      const errorMsg = err.response?.data?.message || 'Failed to save tournament';
+      const zodErrors = err.response?.data?.errors;
+      if (zodErrors) {
+        toast.error(`Validation Error: ${zodErrors[0].message}`);
+      } else {
+        toast.error(errorMsg);
+      }
       console.error(err);
-      toast.error('Failed to save tournament');
     }
   };
 
   const handleEdit = (id) => {
     const tournament = tournaments.find(t => t.id === id);
     if (!tournament) return;
+
+    // Format date for <input type="date" /> (YYYY-MM-DD)
+    const startDateFormatted = tournament.startTime ? new Date(tournament.startTime).toISOString().split('T')[0] : '';
+
     setFormData({
       name: tournament.name,
-      description: tournament.description,
-      startDate: tournament.startDate,
-      endDate: tournament.endDate,
-      gameType: tournament.gameType,
-      joiningFee: tournament.joiningFee,
-      image: tournament.imageUrl || '',
-      status: tournament.active ? 'Active' : 'Inactive',
+      description: tournament.description || '',
+      game: tournament.game,
+      startTime: startDateFormatted,
+      entryFee: Number(tournament.entryFee),
+      prizePool: Number(tournament.prizePool || 0),
+      maxParticipants: Number(tournament.maxParticipants || 100),
+      rules: tournament.rules || '',
+      type: tournament.type || 'SOLO',
     });
     setEditing(true);
     setEditId(id);
@@ -113,8 +132,8 @@ const ManageTournamentsPage = () => {
       toast.success('Tournament deleted');
       fetchData();
     } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to delete tournament');
       console.error(err);
-      toast.error('Failed to delete tournament');
     }
   };
 
@@ -122,12 +141,13 @@ const ManageTournamentsPage = () => {
     setFormData({
       name: '',
       description: '',
-      startDate: '',
-      endDate: '',
-      gameType: '',
-      joiningFee: '',
-      image: '',
-      status: 'Active',
+      game: '',
+      startTime: '',
+      entryFee: '',
+      prizePool: '',
+      maxParticipants: '',
+      rules: '',
+      type: 'SOLO',
     });
     setEditing(false);
     setEditId(null);
@@ -168,68 +188,105 @@ const ManageTournamentsPage = () => {
                       placeholder="e.g. Summer Championship 2024"
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-white/60 mb-1">Game Title</label>
-                    <div className="relative">
-                      <Gamepad2 className="absolute left-3 top-3.5 text-white/40" size={18} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-white/60 mb-1">Game Title</label>
+                      <div className="relative">
+                        <Gamepad2 className="absolute left-3 top-3.5 text-white/40" size={18} />
+                        <select
+                          name="game"
+                          value={formData.game}
+                          onChange={handleChange}
+                          required
+                          className="w-full bg-black/40 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-white focus:border-titan-purple focus:outline-none appearance-none cursor-pointer"
+                        >
+                          <option value="" disabled className="bg-gray-900">Select Game</option>
+                          {games.map(game => (
+                            <option key={game.id} value={game.name} className="bg-gray-900">{game.name}</option>
+                          ))}
+                          <option value="Other" className="bg-gray-900">Other</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-white/60 mb-1">Format</label>
                       <select
-                        name="gameType"
-                        value={formData.gameType}
+                        name="type"
+                        value={formData.type}
                         onChange={handleChange}
                         required
-                        className="w-full bg-black/40 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-white focus:border-titan-purple focus:outline-none appearance-none cursor-pointer"
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-titan-purple focus:outline-none appearance-none cursor-pointer"
                       >
-                        <option value="" disabled className="bg-gray-900">Select Game</option>
-                        {games.map(game => (
-                          <option key={game.id} value={game.name} className="bg-gray-900">{game.name}</option>
-                        ))}
-                        <option value="Other" className="bg-gray-900">Other</option>
+                        <option value="SOLO" className="bg-gray-900">Solo</option>
+                        <option value="DUO" className="bg-gray-900">Duo</option>
+                        <option value="SQUAD" className="bg-gray-900">Squad</option>
                       </select>
                     </div>
                   </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-white/60 mb-1">Start Date</label>
                       <input
                         type="date"
-                        name="startDate"
-                        value={formData.startDate}
+                        name="startTime"
+                        value={formData.startTime}
                         onChange={handleChange}
                         required
-                        className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-titan-purple focus:outline-none cancel-calendar-icon"
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-titan-purple focus:outline-none"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-white/60 mb-1">End Date</label>
+                      <label className="block text-sm font-medium text-white/60 mb-1">Max Players</label>
                       <input
-                        type="date"
-                        name="endDate"
-                        value={formData.endDate}
+                        type="number"
+                        name="maxParticipants"
+                        value={formData.maxParticipants}
                         onChange={handleChange}
                         required
-                        className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-titan-purple focus:outline-none cancel-calendar-icon"
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-titan-purple focus:outline-none"
+                        placeholder="100"
                       />
                     </div>
                   </div>
                 </div>
+
                 <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-white/60 mb-1">Joining Fee (₹)</label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-3.5 text-white/40" size={18} />
-                      <input
-                        type="number"
-                        name="joiningFee"
-                        value={formData.joiningFee}
-                        onChange={handleChange}
-                        required
-                        className="w-full bg-black/40 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-white focus:border-titan-purple focus:outline-none"
-                        placeholder="0"
-                      />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-white/60 mb-1">Entry Fee (₹)</label>
+                      <div className="relative">
+                        <DollarSign className="absolute left-3 top-3.5 text-white/40" size={18} />
+                        <input
+                          type="number"
+                          name="entryFee"
+                          value={formData.entryFee}
+                          onChange={handleChange}
+                          required
+                          className="w-full bg-black/40 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-white focus:border-titan-purple focus:outline-none"
+                          placeholder="0"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-white/60 mb-1">Prize Pool (₹)</label>
+                      <div className="relative">
+                        <Trophy className="absolute left-3 top-3.5 text-white/40" size={18} />
+                        <input
+                          type="number"
+                          name="prizePool"
+                          value={formData.prizePool}
+                          onChange={handleChange}
+                          required
+                          className="w-full bg-black/40 border border-white/10 rounded-lg pl-10 pr-4 py-3 text-white focus:border-titan-purple focus:outline-none"
+                          placeholder="0"
+                        />
+                      </div>
                     </div>
                   </div>
+
                   <div>
-                    <label className="block text-sm font-medium text-white/60 mb-1">Description</label>
+                    <label className="block text-sm font-medium text-white/60 mb-1">Rules & Description</label>
                     <textarea
                       name="description"
                       value={formData.description}
@@ -241,6 +298,7 @@ const ManageTournamentsPage = () => {
                     />
                   </div>
                 </div>
+
                 <div className="md:col-span-2 flex justify-end gap-3 pt-4 border-t border-white/5">
                   {editing && (
                     <button
@@ -288,25 +346,37 @@ const ManageTournamentsPage = () => {
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 to-transparent" />
                     <div className="absolute top-3 right-3 flex gap-2">
                       <span className="bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold text-white border border-white/10">
-                        {tournament.gameType}
+                        {tournament.game}
                       </span>
                     </div>
                     <div className="absolute bottom-3 left-3 right-3">
                       <h3 className="font-heading font-bold text-xl text-white truncate">{tournament.name}</h3>
-                      <p className="text-white/60 text-xs line-clamp-1">{tournament.description}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${tournament.status === 'REGISTRATION' ? 'bg-green-500/20 text-green-400' :
+                          tournament.status === 'ONGOING' ? 'bg-blue-500/20 text-blue-400' :
+                            'bg-white/10 text-white/40'
+                          }`}>
+                          {tournament.status}
+                        </span>
+                        <span className="text-white/40 text-[10px] uppercase">{tournament.type}</span>
+                      </div>
                     </div>
                   </div>
 
                   <div className="space-y-3 mb-6 flex-1 px-2">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-white/40 flex items-center gap-2"><Calendar size={14} /> Schedule</span>
+                      <span className="text-white/40 flex items-center gap-2"><Calendar size={14} /> Date</span>
                       <span className="text-white font-medium text-xs">
-                        {new Date(tournament.startDate).toLocaleDateString()} - {new Date(tournament.endDate).toLocaleDateString()}
+                        {new Date(tournament.startTime).toLocaleDateString(undefined, { dateStyle: 'medium' })}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-white/40 flex items-center gap-2"><DollarSign size={14} /> Entry</span>
-                      <span className="text-titan-purple font-bold">₹{tournament.joiningFee}</span>
+                      <span className="text-titan-purple font-bold">₹{tournament.entryFee}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-white/40 flex items-center gap-2"><Trophy size={14} /> Prize</span>
+                      <span className="text-green-400 font-bold">₹{tournament.prizePool}</span>
                     </div>
                   </div>
 

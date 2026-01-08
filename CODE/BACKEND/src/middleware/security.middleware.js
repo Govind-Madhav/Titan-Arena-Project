@@ -9,7 +9,7 @@
  * - NO blind sanitization (Anti-pattern removal)
  */
 
-const { RateLimiterRedis } = require('rate-limiter-flexible');
+const { RateLimiterRedis, RateLimiterMemory } = require('rate-limiter-flexible');
 const helmet = require('helmet');
 const hpp = require('hpp');
 const { getRedisClient } = require('../config/redis.config');
@@ -17,9 +17,17 @@ const { getRedisClient } = require('../config/redis.config');
 // 1. Fail-Closed Redis Client Getter
 const getClientOrFail = () => {
     const client = getRedisClient();
+
+    if (client && client.isMock) {
+        return null; // Signals fallback to Memory
+    }
+
     if (!client || !client.isOpen) {
-        // FAIL-CLOSED: The security block MUST be active. 
-        // If Redis is down, we cannot guarantee security, so we stop traffic.
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('⚠️ Security: Redis unavailable, using Memory Fallback.');
+            return null;
+        }
+        // FAIL-CLOSED (Production): The security block MUST be active. 
         throw new Error('SECURITY CRITICAL: Redis unreachable. Traffic blocked for safety.');
     }
     return client;
@@ -34,32 +42,23 @@ const initLimiters = () => {
     try {
         const redisClient = getClientOrFail();
 
-        // Global: 500 req / 15 mins
-        globalRateLimiter = new RateLimiterRedis({
-            storeClient: redisClient,
-            keyPrefix: 'middleware_global',
-            points: 500, // Increased from 100
-            duration: 15 * 60, // per 15 minutes
-            blockDuration: 0,
+        const limiterOptions = (points, duration, blockDuration = 0) => ({
+            points,
+            duration,
+            blockDuration,
         });
 
-        // Auth: 20 req / 15 mins (Allow normal retries)
-        authRateLimiter = new RateLimiterRedis({
-            storeClient: redisClient,
-            keyPrefix: 'middleware_auth',
-            points: 20, // Increased from 5/hour to 20/15m
-            duration: 15 * 60, // 15 mins
-            blockDuration: 60 * 5, // Block for 5 mins if exceeded
-        });
-
-        // Availability Check: 100 req / 15 mins (For real-time validation)
-        availabilityCheckLimiter = new RateLimiterRedis({
-            storeClient: redisClient,
-            keyPrefix: 'middleware_availability',
-            points: 100, // More lenient for typing checks
-            duration: 15 * 60, // 15 mins
-            blockDuration: 60, // Block for 1 min if exceeded
-        });
+        if (redisClient) {
+            // Redis Mode
+            globalRateLimiter = new RateLimiterRedis({ ...limiterOptions(500, 15 * 60), storeClient: redisClient, keyPrefix: 'global' });
+            authRateLimiter = new RateLimiterRedis({ ...limiterOptions(20, 15 * 60, 60 * 5), storeClient: redisClient, keyPrefix: 'auth' });
+            availabilityCheckLimiter = new RateLimiterRedis({ ...limiterOptions(100, 15 * 60, 60), storeClient: redisClient, keyPrefix: 'avail' });
+        } else {
+            // Memory Fallback (Dev Only)
+            globalRateLimiter = new RateLimiterMemory(limiterOptions(500, 15 * 60));
+            authRateLimiter = new RateLimiterMemory(limiterOptions(20, 15 * 60, 60 * 5));
+            availabilityCheckLimiter = new RateLimiterMemory(limiterOptions(100, 15 * 60, 60));
+        }
 
     } catch (e) {
         console.error('FAILED TO INITIALIZE RATELIMITERS:', e.message);

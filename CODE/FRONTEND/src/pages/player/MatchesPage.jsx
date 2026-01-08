@@ -17,6 +17,38 @@ import { SpotlightCard, GradientText } from '../../Components/effects/ReactBits'
 
 export default function MatchesPage() {
     const [activeTab, setActiveTab] = useState('upcoming')
+    const [matches, setMatches] = useState({
+        upcoming: [],
+        live: [],
+        completed: [],
+        disputed: [],
+    })
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        const fetchMatches = async () => {
+            setLoading(true)
+            try {
+                // TODO: Replace with actual API endpoint when available
+                // const response = await api.get('/matches')
+                // setMatches(response.data.data)
+
+                // For now, set empty arrays
+                setMatches({
+                    upcoming: [],
+                    live: [],
+                    completed: [],
+                    disputed: [],
+                })
+            } catch (error) {
+                console.error('Failed to fetch matches:', error)
+            } finally {
+                setLoading(false)
+            }
+        }
+
+        fetchMatches()
+    }, [])
 
     const tabs = [
         { id: 'upcoming', label: 'Upcoming', icon: Clock },
@@ -24,23 +56,6 @@ export default function MatchesPage() {
         { id: 'completed', label: 'Completed', icon: CheckCircle },
         { id: 'disputed', label: 'Disputed', icon: AlertTriangle },
     ]
-
-    const mockMatches = {
-        upcoming: [
-            { id: '1', tournament: 'BGMI Pro League', opponent: 'Team Alpha', time: 'Today, 8:00 PM', game: 'BGMI', round: 'Quarter Final' },
-            { id: '2', tournament: 'Valorant Cup', opponent: 'Phoenix Squad', time: 'Tomorrow, 6:00 PM', game: 'Valorant', round: 'Semi Final' },
-        ],
-        live: [
-            { id: '3', tournament: 'Free Fire Weekly', opponent: 'FireLords', score: '2 - 1', game: 'Free Fire', round: 'Final' },
-        ],
-        completed: [
-            { id: '4', tournament: 'CS2 Showdown', opponent: 'Elite Warriors', score: '3 - 1', result: 'win', game: 'CS2', round: 'Group Stage' },
-            { id: '5', tournament: 'BGMI Rookie Cup', opponent: 'Noob Squad', score: '0 - 2', result: 'loss', game: 'BGMI', round: 'Semi Final' },
-        ],
-        disputed: [
-            { id: '6', tournament: 'COD Mobile Elite', opponent: 'Hackers Inc', reason: 'Cheating suspected', game: 'COD Mobile', round: 'Quarter Final' },
-        ],
-    }
 
     return (
         <div className="min-h-screen bg-titan-bg py-8 px-4">
@@ -76,7 +91,7 @@ export default function MatchesPage() {
                         >
                             <tab.icon size={18} />
                             {tab.label}
-                            {tab.id === 'live' && mockMatches.live.length > 0 && (
+                            {tab.id === 'live' && matches.live.length > 0 && (
                                 <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
                             )}
                         </button>
@@ -85,7 +100,16 @@ export default function MatchesPage() {
 
                 {/* Match List */}
                 <div className="space-y-4">
-                    {mockMatches[activeTab].length === 0 ? (
+                    {loading ? (
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="text-center py-20"
+                        >
+                            <Swords size={48} className="text-white/20 mx-auto mb-4 animate-pulse" />
+                            <h3 className="font-heading text-xl font-semibold mb-2">Loading matches...</h3>
+                        </motion.div>
+                    ) : matches[activeTab].length === 0 ? (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
@@ -96,7 +120,7 @@ export default function MatchesPage() {
                             <p className="text-white/40">Check back later</p>
                         </motion.div>
                     ) : (
-                        mockMatches[activeTab].map((match, i) => (
+                        matches[activeTab].map((match, i) => (
                             <motion.div
                                 key={match.id}
                                 initial={{ opacity: 0, x: -20 }}

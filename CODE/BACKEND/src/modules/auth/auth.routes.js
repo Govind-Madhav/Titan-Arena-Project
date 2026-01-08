@@ -36,7 +36,7 @@ const { firebaseAuth } = require('../../middleware/auth.middleware');
 // ⚡ HYBRID IDENTITY ENDPOINTS
 router.post('/sync', firebaseAuth, authController.sync);
 router.get('/me', firebaseAuth, authController.getMe);
-router.get('/dashboard', firebaseAuth, authController.getDashboard);
+router.get('/dashboard', authRequired, authController.getDashboard);
 router.post('/logout-all', firebaseAuth, authController.logoutAllDevices);
 
 module.exports = router;

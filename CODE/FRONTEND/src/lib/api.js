@@ -16,88 +16,49 @@ const api = axios.create({
 
 import { auth } from './firebase'
 
-// Request interceptor to add auth token (Hardened Firebase Identity)
+// Request interceptor to add auth token
 api.interceptors.request.use(
     async (config) => {
-        // 1. Check for active Firebase user
-        const firebaseUser = auth.currentUser
+        // 1. Priority: Use access token from live store (NOT localStorage)
+        const { accessToken } = useAuthStore.getState()
 
+        if (accessToken) {
+            console.log('🔐 API: Using accessToken from store for', config.url)
+            config.headers.Authorization = `Bearer ${accessToken}`
+            return config
+        }
+
+        // 2. Fallback: Use Firebase ID token (ONLY for initial login/sync)
+        const firebaseUser = auth.currentUser
         if (firebaseUser) {
             try {
-                // Firebase handles refresh automatically, we just pull the current token
                 const token = await firebaseUser.getIdToken()
+                console.log('🔐 API: Using Firebase token for', config.url)
                 config.headers.Authorization = `Bearer ${token}`
-                return config
             } catch (e) {
-                console.error('🔐 API Security: Failed to fetch Firebase ID token')
+                console.error('🔐 API: Failed to fetch Firebase ID token')
             }
+        } else {
+            console.warn('🔐 API: No token available for', config.url)
         }
 
-        // 2. Legacy Fallback (for existing sessions during migration)
-        const authData = localStorage.getItem('titan-auth')
-        if (authData) {
-            try {
-                const { state } = JSON.parse(authData)
-                if (state?.accessToken) {
-                    config.headers.Authorization = `Bearer ${state.accessToken}`
-                }
-            } catch (e) {
-                console.warn('API: Failed to parse legacy auth data')
-            }
-        }
         return config
     },
     (error) => Promise.reject(error)
 )
 
-// Response interceptor for error handling
+// Response interceptor - Let Zustand own refresh logic
 api.interceptors.response.use(
     (response) => response,
-    async (error) => {
-        const originalRequest = error.config
+    (error) => {
+        // Avoid clearing auth on expected 401s from auth endpoints
+        const isAuthEndpoint =
+            error.config?.url?.includes('/auth/refresh') ||
+            error.config?.url?.includes('/auth/me') ||
+            error.config?.url?.includes('/auth/sync')
 
-        if (error.response?.status === 401 && !originalRequest._retry) {
-            // Prevent Redirect Loop for Auth Checks
-            const isAuthCheck = originalRequest.url.includes('/auth/me') || originalRequest.url.includes('/auth/sync')
-
-            if (isAuthCheck) {
-                // If /auth/me fails, it means even the cookie revival failed. Clear local auth.
-                localStorage.removeItem('titan-auth')
-                return Promise.reject(error)
-            }
-
-            originalRequest._retry = true
-
-            try {
-                // Attempt to refresh the token using the refreshToken cookie
-                const response = await axios.post(`${api.defaults.baseURL}/auth/refresh`, {}, { withCredentials: true })
-
-                if (response.data.success) {
-                    const { accessToken, expiresAt } = response.data.data
-
-                    // Update global state
-                    useAuthStore.setState({
-                        accessToken,
-                        tokenExpiresAt: expiresAt,
-                        isAuthenticated: true
-                    })
-
-                    // Update the Authorization header and retry the original request
-                    originalRequest.headers.Authorization = `Bearer ${accessToken}`
-
-                    // Re-try the original request
-                    return api(originalRequest)
-                }
-            } catch (refreshError) {
-                // Refresh failed, probably cookie expired or revoked.
-                console.error('🔐 API: Refresh token invalid or expired.')
-
-                // Only redirect if not already on auth page and not a background sync
-                if (window.location.pathname !== '/auth' && !isAuthCheck) {
-                    localStorage.removeItem('titan-auth')
-                    window.location.href = '/auth'
-                }
-            }
+        if (error.response?.status === 401 && !isAuthEndpoint) {
+            useAuthStore.getState().clearAuth()
         }
 
         return Promise.reject(error)

@@ -9,9 +9,10 @@ import { Link } from 'react-router-dom'
 import { User, Shield, Calendar, Trophy, Mail, CheckCircle, XCircle, Edit, MapPin, Activity, TrendingUp, Swords, Clock, AlertCircle, LayoutDashboard, Crown, ArrowRight, Fingerprint, Copy } from 'lucide-react'
 import useAuthStore from '../../store/authStore'
 import { Particles } from '../../Components/effects/ReactBits'
+import FileUpload from '../../Components/common/FileUpload'
 
 export default function ProfilePage() {
-    const { user, getDashboard, getProfile } = useAuthStore()
+    const { user, getDashboard, getProfile, isInitialized, isAuthenticated, uploadAvatar } = useAuthStore()
     const [loading, setLoading] = useState(true)
     const [dashboardData, setDashboardData] = useState({
         tournamentsJoined: 0,
@@ -26,6 +27,8 @@ export default function ProfilePage() {
 
     useEffect(() => {
         const fetchData = async () => {
+            if (!isInitialized || !isAuthenticated) return;
+
             // Fetch latest profile data to ensure local state is synced
             await getProfile()
 
@@ -36,7 +39,7 @@ export default function ProfilePage() {
             setLoading(false)
         }
         fetchData()
-    }, [getDashboard, getProfile])
+    }, [isInitialized, isAuthenticated, getDashboard, getProfile])
 
     // Calculate K/D Ratio (Mock calculation since we don't have kills/deaths in schema yet)
     // We'll use Win/Loss ratio as a proxy for "Performance Ratio" for now
@@ -67,6 +70,13 @@ export default function ProfilePage() {
         if (result.success) {
             setIsEditing(false)
             // You might want to show a toast here
+        }
+    }
+
+    const handleAvatarUpload = async (file, onProgress) => {
+        const result = await uploadAvatar(file, onProgress)
+        if (!result.success) {
+            throw new Error(result.message)
         }
     }
 
@@ -120,13 +130,13 @@ export default function ProfilePage() {
                         {isEditing ? (
                             <div className="space-y-4 max-w-lg">
                                 <div>
-                                    <label className="text-xs text-white/40 block mb-1">Avatar URL</label>
-                                    <input
-                                        type="text"
-                                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-titan-purple outline-none"
-                                        placeholder="https://imgur.com/..."
-                                        value={editForm.avatarUrl}
-                                        onChange={(e) => setEditForm({ ...editForm, avatarUrl: e.target.value })}
+                                    <label className="text-xs text-white/40 block mb-1">Profile Picture</label>
+                                    <FileUpload
+                                        onUpload={handleAvatarUpload}
+                                        accept="image/*"
+                                        maxSize={5 * 1024 * 1024}
+                                        type="image"
+                                        currentFile={user?.avatarUrl}
                                     />
                                 </div>
                                 <div>

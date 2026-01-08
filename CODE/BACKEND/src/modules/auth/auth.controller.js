@@ -304,23 +304,7 @@ exports.login = async (req, res) => {
             });
         }
 
-        // 4. Token & Session
-        const tokenPayload = {
-            id: user.id,
-            uid: user.id, // Legacy
-            username: user.username,
-            platformUid: user.platformUid,
-            role: user.isAdmin ? (user.role === 'SUPERADMIN' ? 'SUPERADMIN' : 'ADMIN') : 'PLAYER',
-            isAdmin: user.isAdmin,
-            isHost: user.hostProfileStatus === 'ACTIVE',
-            playerCode: user.playerCode
-        };
-
-        const accessToken = jwt.sign(
-            tokenPayload,
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+        const accessToken = generateAccessToken(user.id, user.platformUid);
 
         // Generate Refresh Token
         const refreshToken = crypto.randomUUID();
@@ -417,7 +401,10 @@ exports.refresh = async (req, res) => {
         // Get user data for new access token
         const userResult = await db.select({
             id: users.id,
-            platformUid: users.platformUid
+            platformUid: users.platformUid,
+            isBanned: users.isBanned,
+            emailVerified: users.emailVerified,
+            hostStatus: users.hostStatus // If needed for roles
         }).from(users).where(eq(users.id, storedToken.userId)).limit(1);
 
         const user = userResult[0];
@@ -428,10 +415,41 @@ exports.refresh = async (req, res) => {
             });
         }
 
+        // 🚨 Security Check: Ban/Verification Status
+        if (user.isBanned) {
+            return res.status(403).json({ success: false, message: 'Account is banned' });
+        }
+        if (!user.emailVerified) {
+            return res.status(403).json({ success: false, message: 'Email not verified' });
+        }
+
+        // 🔄 Rotate Refresh Token (Security Best Practice)
+        // 1. Delete old token
+        await db.delete(refreshTokens).where(eq(refreshTokens.token, refreshToken));
+
+        // 2. Generate new token
+        const newRefreshToken = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+        await db.insert(refreshTokens).values({
+            token: newRefreshToken,
+            userId: user.id,
+            expiresAt
+        });
+
+        // 3. Set new cookie
+        res.cookie('refreshToken', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/'
+        });
+
         // Generate new access token
         const accessToken = generateAccessToken(user.id, user.platformUid);
 
-        // Calculate token expiry
+        // Calculate token expiry (15m)
         const accessTokenExpiry = new Date();
         accessTokenExpiry.setMinutes(accessTokenExpiry.getMinutes() + 15);
 
@@ -530,10 +548,41 @@ exports.sync = async (req, res) => {
         const metadata = metadataSchema.parse(req.body);
         const user = await syncUser(req.firebaseUser, metadata);
 
+        // 🔄 Session Exchange: Issue Backend Tokens
+
+        // 1. Generate Access Token (15m)
+        const accessToken = generateAccessToken(user.id, user.platformUid);
+        const accessTokenExpiry = new Date();
+        accessTokenExpiry.setMinutes(accessTokenExpiry.getMinutes() + 15);
+
+        // 2. Generate Refresh Token (7d)
+        const refreshToken = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+        // 3. Store Refresh Token
+        await db.insert(refreshTokens).values({
+            token: refreshToken,
+            userId: user.id,
+            expiresAt
+        });
+
+        // 4. Set Cookie
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/'
+        });
+
         res.json({
             success: true,
             message: 'Identity synchronized successfully',
-            data: user
+            data: {
+                user,
+                accessToken,
+                expiresAt: accessTokenExpiry.toISOString()
+            }
         });
     } catch (error) {
         if (error instanceof z.ZodError) {
@@ -815,62 +864,7 @@ exports.verifyEmail = async (req, res) => {
     }
 };
 
-// Resend verification email
-exports.resendVerification = async (req, res) => {
-    try {
-        const { email } = req.body;
 
-        if (!email) {
-            return res.status(400).json({
-                success: false,
-                message: 'Email is required'
-            });
-        }
-
-        // Check if there's a pending registration in Redis
-        const { getRedisClient } = require('../../config/redis.config');
-        const redis = getRedisClient();
-        const pendingKey = `pending_registration:${email}`;
-        const pendingDataStr = await redis.get(pendingKey);
-
-        if (!pendingDataStr) {
-            // Check if user already exists and is verified
-            const result = await db.select()
-                .from(users)
-                .where(eq(users.email, email))
-                .limit(1);
-
-            if (result[0]?.emailVerified) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Email already verified. Please login.'
-                });
-            }
-
-            return res.status(404).json({
-                success: false,
-                message: 'No pending registration found. Please sign up first.'
-            });
-        }
-
-        const data = JSON.parse(pendingDataStr);
-
-        // Generate & Send new OTP
-        const otp = await otpService.generateOtp(email);
-        await emailService.sendVerificationEmail(email, otp, data.username);
-
-        res.json({
-            success: true,
-            message: 'Verification code sent successfully'
-        });
-    } catch (error) {
-        console.error('Resend verification error:', error);
-        res.status(500).json({
-            success: false,
-            message: error.message || 'Failed to resend verification email'
-        });
-    }
-};
 // Get user dashboard data (Stats + History)
 exports.getDashboard = async (req, res) => {
     try {

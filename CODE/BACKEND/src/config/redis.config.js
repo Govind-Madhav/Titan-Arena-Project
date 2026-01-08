@@ -67,6 +67,12 @@ const createRedisClient = async () => {
         redisClient = client;
         return client;
     } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('⚠️ Redis: Connection failed. Falling back to Memory Mode for development.');
+            redisClient = { isMock: true };
+            isConnected = true; // Set to true so getRedisClient doesn't throw
+            return redisClient;
+        }
         console.error('❌ Failed to connect to Redis:', error.message);
         isConnected = false;
         throw error;

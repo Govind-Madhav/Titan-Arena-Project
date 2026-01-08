@@ -61,7 +61,7 @@ const ManageTournaments = () => {
 
         try {
             setActionLoadingId(id);
-            await api.delete(`/admin/delete-tournament/${id}`);
+            await api.delete(`/admin/tournaments/${id}`);
             toast.success('Tournament deleted');
             fetchTournaments();
         } catch (error) {
@@ -120,16 +120,16 @@ const ManageTournaments = () => {
                                         />
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
                                         <div className="absolute top-3 right-3">
-                                            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${tournament.active
-                                                ? 'bg-green-500/20 text-green-400 border-green-500/30'
-                                                : 'bg-red-500/20 text-red-400 border-red-500/30'
+                                            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${tournament.status === 'CANCELLED' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                                tournament.status === 'COMPLETED' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
+                                                    'bg-green-500/20 text-green-400 border-green-500/30'
                                                 }`}>
-                                                {tournament.active ? 'Active' : 'Offline'}
+                                                {tournament.status}
                                             </span>
                                         </div>
                                         <div className="absolute bottom-3 left-3 right-3">
                                             <h3 className="font-heading font-bold text-xl text-white truncate">{tournament.name}</h3>
-                                            <p className="text-white/60 text-sm">{tournament.gameType}</p>
+                                            <p className="text-white/60 text-sm">{tournament.game}</p>
                                         </div>
                                     </div>
 
@@ -137,15 +137,15 @@ const ManageTournaments = () => {
                                     <div className="space-y-3 mb-6 flex-1">
                                         <div className="flex items-center justify-between text-sm">
                                             <span className="text-white/40 flex items-center gap-2"><DollarSign size={14} /> Entry Fee</span>
-                                            <span className="text-white font-medium">₹{tournament.joiningFee}</span>
+                                            <span className="text-white font-medium">₹{tournament.entryFee}</span>
                                         </div>
                                         <div className="flex items-center justify-between text-sm">
                                             <span className="text-white/40 flex items-center gap-2"><Calendar size={14} /> Start Date</span>
-                                            <span className="text-white font-medium">{new Date(tournament.startDate).toLocaleDateString()}</span>
+                                            <span className="text-white font-medium">{new Date(tournament.startTime).toLocaleDateString()}</span>
                                         </div>
                                         <div className="flex items-center justify-between text-sm">
                                             <span className="text-white/40 flex items-center gap-2"><Trophy size={14} /> Prize Pool</span>
-                                            <span className="text-titan-purple font-bold">₹{tournament.prizePool || '10,000'}</span>
+                                            <span className="text-titan-purple font-bold">₹{tournament.prizePool}</span>
                                         </div>
                                     </div>
 
