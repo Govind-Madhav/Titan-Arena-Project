@@ -10,4 +10,9 @@ router.post('/me/games', authenticate, userController.addGameProfile);
 router.delete('/me/games/:id', authenticate, userController.removeGameProfile);
 // router.delete('/games/:id', authenticateToken, userController.removeGameProfile); 
 
+// Blocking
+router.post('/block', authenticate, userController.blockUser);
+router.post('/unblock', authenticate, userController.unblockUser);
+router.get('/blocked', authenticate, userController.getBlockedUsers);
+
 module.exports = router;
