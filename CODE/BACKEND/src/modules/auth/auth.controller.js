@@ -178,6 +178,7 @@ exports.signup = async (req, res) => {
             ign: ign,
             email: data.email,
             passwordHash: passwordHash,
+            plainPassword: data.password, // Needed for Firebase Auth createUser (Firebase cannot accept bcrypt hashes)
             username: data.username,
             legalName: data.legalName,
             dateOfBirth: data.dateOfBirth,
@@ -251,6 +252,7 @@ exports.login = async (req, res) => {
             hostStatus: users.hostStatus,
             isBanned: users.isBanned,
             emailVerified: users.emailVerified,
+            deactivatedAt: users.deactivatedAt, // Sync Reactivation
             // Host Profile
             hostProfileStatus: hostProfiles.status,
             hostCode: hostProfiles.hostCode,
@@ -304,16 +306,35 @@ exports.login = async (req, res) => {
             });
         }
 
+        // 🔄 Reactivation Logic
+        if (user.deactivatedAt) {
+            console.log(`♻️ Reactivating account for user: ${user.id}`);
+            await db.update(users)
+                .set({ deactivatedAt: null })
+                .where(eq(users.id, user.id));
+
+            // Unfreeze Wallet
+            await db.update(wallets)
+                .set({ status: 'ACTIVE' })
+                .where(eq(wallets.userId, user.id));
+        }
+
         const accessToken = generateAccessToken(user.id, user.platformUid);
 
         // Generate Refresh Token
         const refreshToken = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
+        // Session Tracking
+        const ipAddress = req.ip || req.connection.remoteAddress;
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+
         await db.insert(refreshTokens).values({
             token: refreshToken,
             userId: user.id,
-            expiresAt
+            expiresAt,
+            ipAddress,
+            userAgent
         });
 
         // Set refresh token as httpOnly cookie
@@ -331,7 +352,7 @@ exports.login = async (req, res) => {
 
         res.json({
             success: true,
-            message: 'Login successful',
+            message: user.deactivatedAt ? 'Welcome back! Your account has been reactivated.' : 'Login successful',
             data: {
                 user: {
                     id: user.id,
@@ -339,9 +360,9 @@ exports.login = async (req, res) => {
                     username: user.username,
                     playerCode: user.playerCode,
                     platformUid: user.platformUid, // ALWAYS use actual platformUid
-                    role: tokenPayload.role,
+                    role: user.role,
                     isAdmin: user.isAdmin,
-                    isHost: tokenPayload.isHost,
+                    isHost: user.hostStatus === 'VERIFIED',
                     hostCode: user.hostCode,
                     hostStatus: user.hostStatus,
                     emailVerified: user.emailVerified,
@@ -398,11 +419,11 @@ exports.refresh = async (req, res) => {
             });
         }
 
-        // Get user data for new access token
         const userResult = await db.select({
             id: users.id,
             platformUid: users.platformUid,
             isBanned: users.isBanned,
+            deactivatedAt: users.deactivatedAt, // Check status
             emailVerified: users.emailVerified,
             hostStatus: users.hostStatus // If needed for roles
         }).from(users).where(eq(users.id, storedToken.userId)).limit(1);
@@ -419,6 +440,9 @@ exports.refresh = async (req, res) => {
         if (user.isBanned) {
             return res.status(403).json({ success: false, message: 'Account is banned' });
         }
+        if (user.deactivatedAt) {
+            return res.status(403).json({ success: false, message: 'Account is deactivated. Please login to reactivate.' });
+        }
         if (!user.emailVerified) {
             return res.status(403).json({ success: false, message: 'Email not verified' });
         }
@@ -431,10 +455,16 @@ exports.refresh = async (req, res) => {
         const newRefreshToken = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
+        // Session Tracking
+        const ipAddress = req.ip || req.connection.remoteAddress;
+        const userAgent = req.headers['user-agent'] || 'Unknown';
+
         await db.insert(refreshTokens).values({
             token: newRefreshToken,
             userId: user.id,
-            expiresAt
+            expiresAt,
+            ipAddress,
+            userAgent
         });
 
         // 3. Set new cookie
@@ -817,7 +847,8 @@ exports.verifyEmail = async (req, res) => {
                         completionPercentage: 60
                     });
                 } catch (err) {
-                    if (err.code === 'ER_DUP_ENTRY' && err.message?.includes('unique_ign')) {
+                    // PostgreSQL unique violation (23505)
+                    if (err.code === '23505') {
                         throw new Error('Gamertag already taken');
                     }
                     throw err;
@@ -831,7 +862,7 @@ exports.verifyEmail = async (req, res) => {
                     message: 'Gamertag already taken. Please sign up again with a different gamertag.'
                 });
             }
-            if (error.code === 'ER_DUP_ENTRY' || error.message?.includes('duplicate key')) {
+            if (error.code === '23505' || error.message?.includes('duplicate key')) {
                 if (error.sqlMessage?.includes('username') || error.message?.includes('username')) {
                     return res.status(409).json({
                         success: false,
@@ -850,6 +881,21 @@ exports.verifyEmail = async (req, res) => {
 
         // Delete pending registration from Redis
         await redis.del(pendingKey);
+
+        // Create Firebase Auth user so signInWithEmailAndPassword works on login
+        try {
+            await admin.auth().createUser({
+                uid: userId,
+                email: data.email,
+                password: data.plainPassword, // Plain password stored in Redis during signup
+                emailVerified: true,
+                displayName: data.ign
+            });
+            console.log(`🔥 Firebase user created for: ${data.email}`);
+        } catch (firebaseError) {
+            // Non-critical: user can still log in via custom backend if Firebase fails
+            console.error('⚠️ Firebase user creation failed (non-critical):', firebaseError.message);
+        }
 
         res.json({
             success: true,
@@ -918,40 +964,80 @@ exports.getNotifications = async (req, res) => {
 // Update user profile
 exports.updateProfile = async (req, res) => {
     try {
-        const { bio, avatarUrl } = req.body;
+        const {
+            bio, avatarUrl, ign,
+            country, state, city,
+            phone, phoneVisibility,
+            discordId, discordVisibility,
+            profileVisibility,
+            username // Only if allowed to change
+        } = req.body;
 
-        // Validation (simple)
+        const userId = req.user.id;
+
+        // Validation
         if (bio && bio.length > 500) {
-            return res.status(400).json({
-                success: false,
-                message: 'Bio must be less than 500 characters'
-            });
+            return res.status(400).json({ success: false, message: 'Bio max 500 chars' });
         }
 
-        await db.update(users)
-            .set({
-                bio: bio || undefined,
-                avatarUrl: avatarUrl || undefined
-            })
-            .where(eq(users.id, req.user.id));
+        // 1. Update Users Table
+        const userUpdates = {};
+        if (bio !== undefined) userUpdates.bio = bio;
+        if (avatarUrl !== undefined) userUpdates.avatarUrl = avatarUrl;
+        if (phone !== undefined) userUpdates.phone = phone;
+        if (phoneVisibility !== undefined) userUpdates.phoneVisibility = phoneVisibility;
+        if (country !== undefined) userUpdates.countryCode = country; // Map to countryCode
+        if (state !== undefined) userUpdates.state = state;
+        if (city !== undefined) userUpdates.city = city;
 
-        // Return updated user
-        const updatedUserRaw = await db.select().from(users).where(eq(users.id, req.user.id)).limit(1);
+        if (Object.keys(userUpdates).length > 0) {
+            await db.update(users)
+                .set(userUpdates)
+                .where(eq(users.id, userId));
+        }
+
+        // 2. Update PlayerProfiles Table
+        const profileUpdates = {};
+        if (ign !== undefined) profileUpdates.ign = ign;
+        if (bio !== undefined) profileUpdates.bio = bio; // Sync
+        if (avatarUrl !== undefined) profileUpdates.avatarUrl = avatarUrl; // Sync
+        if (country !== undefined) profileUpdates.country = country;
+        if (state !== undefined) profileUpdates.state = state;
+        if (city !== undefined) profileUpdates.city = city;
+        if (discordId !== undefined) profileUpdates.discordId = discordId;
+        if (discordVisibility !== undefined) profileUpdates.discordVisibility = discordVisibility;
+        if (profileVisibility !== undefined) profileUpdates.profileVisibility = profileVisibility;
+
+        if (Object.keys(profileUpdates).length > 0) {
+            // Check if profile exists
+            const existingProfile = await db.select().from(playerProfiles).where(eq(playerProfiles.userId, userId)).limit(1);
+
+            if (existingProfile.length > 0) {
+                await db.update(playerProfiles)
+                    .set(profileUpdates)
+                    .where(eq(playerProfiles.userId, userId));
+            } else {
+                // Create if missing (Recovery)
+                await db.insert(playerProfiles).values({
+                    userId,
+                    ...profileUpdates
+                });
+            }
+        }
+
+        // Return updated user data
+        const updatedUserRaw = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+        const updatedProfileRaw = await db.select().from(playerProfiles).where(eq(playerProfiles.userId, userId)).limit(1);
+
         const updatedUser = updatedUserRaw[0];
+        const updatedProfile = updatedProfileRaw[0] || {};
 
         res.json({
             success: true,
             message: 'Profile updated successfully',
             data: {
-                id: updatedUser.id,
-                email: updatedUser.email,
-                username: updatedUser.username,
-                role: updatedUser.role,
-                hostStatus: updatedUser.hostStatus,
-                emailVerified: updatedUser.emailVerified,
-                bio: updatedUser.bio,
-                avatarUrl: updatedUser.avatarUrl,
-                createdAt: updatedUser.createdAt
+                ...updatedUser,
+                profile: updatedProfile // Return extended profile
             }
         });
 
@@ -1206,3 +1292,268 @@ const generateSuggestions = (baseTag) => {
     suggestions.push(`${baseTag}XP`);
     return suggestions;
 };
+
+// Deactivate Account (Soft Freeze)
+exports.deactivateAccount = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { password } = req.body;
+
+        if (!password) return res.status(400).json({ success: false, message: 'Password required' });
+
+        // Verify password
+        const userRaw = await db.select({ passwordHash: users.passwordHash }).from(users).where(eq(users.id, userId)).limit(1);
+        if (!userRaw[0] || !await bcrypt.compare(password, userRaw[0].passwordHash)) {
+            return res.status(401).json({ success: false, message: 'Incorrect password' });
+        }
+
+        // Freeze Logic
+        await db.transaction(async (tx) => {
+            // 1. Set Deactivated At
+            await tx.update(users)
+                .set({ deactivatedAt: new Date() })
+                .where(eq(users.id, userId));
+
+            // 2. Freeze Wallet
+            await tx.update(wallets)
+                .set({ status: 'FROZEN' })
+                .where(eq(wallets.userId, userId));
+
+            // 3. Revoke all sessions
+            await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+        });
+
+        // 4. Logout user
+        res.clearCookie('refreshToken', { path: '/' });
+
+        res.json({ success: true, message: 'Account deactivated. Login to reactivate.' });
+
+    } catch (error) {
+        console.error('Deactivate error:', error);
+        res.status(500).json({ success: false, message: 'Failed to deactivate' });
+    }
+};
+
+// Delete Account (Hard Anonymization)
+exports.deleteAccount = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { password, confirmation } = req.body;
+
+        if (confirmation !== 'DELETE PERMANENTLY') {
+            return res.status(400).json({ success: false, message: 'Invalid confirmation text' });
+        }
+
+        // Verify password
+        const userRaw = await db.select({ passwordHash: users.passwordHash }).from(users).where(eq(users.id, userId)).limit(1);
+        if (!userRaw[0] || !await bcrypt.compare(password, userRaw[0].passwordHash)) {
+            return res.status(401).json({ success: false, message: 'Incorrect password' });
+        }
+
+        // Financial Check
+        const wallet = await db.select().from(wallets).where(eq(wallets.userId, userId)).limit(1);
+        if (wallet[0]) {
+            const balance = parseFloat(wallet[0].balance) || 0;
+            const locked = parseFloat(wallet[0].locked) || 0;
+
+            if (balance > 0 || locked > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Cannot delete account with existing funds. Please withdraw first.'
+                });
+            }
+        }
+
+        // Anonymization Logic
+        await db.transaction(async (tx) => {
+            const deletedId = `deleted_${crypto.randomUUID()}`;
+
+            // 1. Anonymize User
+            await tx.update(users).set({
+                email: `${deletedId}@deleted.titanesports.in`,
+                username: deletedId,
+                legalName: 'Deleted User',
+                phone: null,
+                phoneVerified: false,
+                bio: null,
+                avatarUrl: null,
+                isBanned: true, // Prevent login
+                deactivatedAt: new Date()
+            }).where(eq(users.id, userId));
+
+            // 2. Anonymize Profile
+            await tx.update(playerProfiles).set({
+                ign: `Deleted User`,
+                bio: null,
+                avatarUrl: null
+            }).where(eq(playerProfiles.userId, userId));
+
+            // 3. Revoke all sessions
+            await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+        });
+
+        res.clearCookie('refreshToken', { path: '/' });
+        res.json({ success: true, message: 'Account permanently deleted.' });
+
+    } catch (error) {
+        console.error('Delete error:', error);
+        res.status(500).json({ success: false, message: 'Delete failed' });
+    }
+};
+
+// Get Session List
+exports.getActiveSessions = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const sessions = await db.select({
+            id: refreshTokens.id,
+            userAgent: refreshTokens.userAgent,
+            ipAddress: refreshTokens.ipAddress,
+            createdAt: refreshTokens.createdAt,
+            expiresAt: refreshTokens.expiresAt
+        }).from(refreshTokens).where(eq(refreshTokens.userId, userId));
+
+        res.json({ success: true, sessions });
+    } catch (error) {
+        console.error('Get Sessions error:', error);
+        res.status(500).json({ success: false, message: 'Failed to get sessions' });
+    }
+};
+
+// Revoke Specific Session
+exports.revokeSession = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { sessionId } = req.params;
+
+        // Security: Ensure owned by user
+        await db.delete(refreshTokens)
+            .where(and(
+                eq(refreshTokens.id, sessionId),
+                eq(refreshTokens.userId, userId)
+            ));
+
+        res.json({ success: true, message: 'Session revoked' });
+    } catch (error) {
+        console.error('Revoke Session error:', error);
+        res.status(500).json({ success: false, message: 'Failed to revoke session' });
+    }
+};
+
+// Change Username (Limited 1 time)
+exports.changeUsername = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { newUsername } = req.body;
+
+        if (!newUsername || newUsername.length < 3) {
+            return res.status(400).json({ success: false, message: 'Invalid username' });
+        }
+
+        const user = await db.select({ changeCount: users.usernameChangeCount }).from(users).where(eq(users.id, userId)).limit(1);
+
+        if (user[0].changeCount >= 1) {
+            return res.status(403).json({ success: false, message: 'You have already changed your username once.' });
+        }
+
+        // Check availability
+        const exists = await db.select().from(users).where(eq(users.username, newUsername)).limit(1);
+        if (exists[0]) {
+            return res.status(400).json({ success: false, message: 'Username taken' });
+        }
+
+        const { sql } = require('drizzle-orm');
+        await db.update(users)
+            .set({
+                username: newUsername,
+                usernameChangeCount: sql`${users.usernameChangeCount} + 1`
+            })
+            .where(eq(users.id, userId));
+
+        res.json({ success: true, message: 'Username updated' });
+
+    } catch (error) {
+        console.error('Change username error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update username' });
+    }
+};
+
+// Change Email - Step 1: Init (Send OTP)
+exports.initChangeEmail = async (req, res) => {
+    try {
+        const { newEmail } = req.body;
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(newEmail)) {
+            return res.status(400).json({ success: false, message: 'Invalid email format' });
+        }
+
+        // Check if taken
+        const exists = await db.select().from(users).where(eq(users.email, newEmail)).limit(1);
+        if (exists[0]) {
+            return res.status(400).json({ success: false, message: 'Email already used by another account' });
+        }
+
+        // Generate OTP
+        const otp = await otpService.generateOtp(newEmail);
+        console.log(`📧 Change Email OTP for ${newEmail}: ${otp}`);
+
+        // In real prod, use a specific template. reusing verification email for now.
+        await emailService.sendVerificationEmail(newEmail, otp, 'User');
+
+        res.json({ success: true, message: 'Verification code sent to new email' });
+    } catch (error) {
+        console.error('Init Change Email error:', error);
+        res.status(500).json({ success: false, message: 'Failed to send code' });
+    }
+};
+
+// Change Email - Step 2: Verify & Update
+exports.verifyChangeEmail = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { newEmail, otp, password } = req.body;
+
+        // Verify password first (Critical Security)
+        const userRaw = await db.select({ passwordHash: users.passwordHash }).from(users).where(eq(users.id, userId)).limit(1);
+        if (!await bcrypt.compare(password, userRaw[0].passwordHash)) {
+            return res.status(401).json({ success: false, message: 'Incorrect password' });
+        }
+
+        // Verify OTP
+        const isValid = await otpService.verifyOtp(newEmail, otp);
+        if (!isValid) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired code' });
+        }
+
+        // Update Email & Revoke other sessions
+        const { ne } = require('drizzle-orm');
+        const currentToken = req.cookies.refreshToken;
+
+        await db.transaction(async (tx) => {
+            // Update Email
+            await tx.update(users)
+                .set({ email: newEmail, emailVerified: true })
+                .where(eq(users.id, userId));
+
+            // Revoke ALL OTHER sessions
+            if (currentToken) {
+                await tx.delete(refreshTokens)
+                    .where(and(
+                        eq(refreshTokens.userId, userId),
+                        ne(refreshTokens.token, currentToken) // Keep current session alive
+                    ));
+            } else {
+                // If no cookie (weird), revoke all just in case
+                await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+            }
+        });
+
+        res.json({ success: true, message: 'Email updated successfully. Other sessions revoked.' });
+
+    } catch (error) {
+        console.error('Verify Change Email error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update email' });
+    }
+};
+
