@@ -106,8 +106,13 @@ const ManageTournamentsPage = () => {
     const tournament = tournaments.find(t => t.id === id);
     if (!tournament) return;
 
-    // Format date for <input type="date" /> (YYYY-MM-DD)
-    const startDateFormatted = tournament.startTime ? new Date(tournament.startTime).toISOString().split('T')[0] : '';
+    // Format date for <input type="datetime-local" /> (YYYY-MM-DDThh:mm)
+    let startDateFormatted = '';
+    if (tournament.startTime) {
+      const date = new Date(tournament.startTime);
+      const tzOffset = date.getTimezoneOffset() * 60000;
+      startDateFormatted = (new Date(date.getTime() - tzOffset)).toISOString().slice(0, 16);
+    }
 
     setFormData({
       name: tournament.name,
@@ -226,9 +231,9 @@ const ManageTournamentsPage = () => {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-white/60 mb-1">Start Date</label>
+                      <label className="block text-sm font-medium text-white/60 mb-1">Start Date & Time</label>
                       <input
-                        type="date"
+                        type="datetime-local"
                         name="startTime"
                         value={formData.startTime}
                         onChange={handleChange}
