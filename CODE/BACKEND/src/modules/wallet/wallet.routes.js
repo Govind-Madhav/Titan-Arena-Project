@@ -18,6 +18,9 @@ router.get('/', walletController.getWallet);
 // Get transaction history
 router.get('/transactions', walletController.getTransactions);
 
+// Update billing details
+router.put('/billing', walletController.updateBillingAddress);
+
 // Deposit flow
 router.post('/deposit/init', walletController.initDeposit);
 router.post('/deposit/verify', walletController.verifyDeposit);
