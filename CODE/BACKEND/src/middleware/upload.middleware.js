@@ -23,6 +23,12 @@ Object.values(uploadDirs).forEach(dir => {
 
 // File filter for images
 const imageFilter = (req, file, cb) => {
+    // ❌ Deny-list: block dangerous extensions regardless of MIME type
+    const dangerousExts = /\.(svg|html|htm|php|js|ts|sh|exe|bat|py|rb)$/i
+    if (dangerousExts.test(file.originalname)) {
+        return cb(new Error('File type not permitted for security reasons'))
+    }
+
     const allowedTypes = /jpeg|jpg|png|gif|webp/
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase())
     const mimetype = allowedTypes.test(file.mimetype)
