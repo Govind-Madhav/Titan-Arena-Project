@@ -15,6 +15,7 @@ import Navbar from '../Components/layout/Navbar'
 import { countries } from '../lib/countries'
 import { getAllStates, getDistrictsByState } from '../lib/india-locations';
 import api from '../lib/api'; // Import API client
+import SearchableSelect from '../Components/ui/SearchableSelect';
 
 export default function AuthPage() {
 
@@ -307,74 +308,57 @@ export default function AuthPage() {
     const handleSubmit = async (e) => {
         e.preventDefault()
         const { auth } = await import('../lib/firebase')
-        const { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, setPersistence, browserLocalPersistence, browserSessionPersistence } = await import('firebase/auth')
+        const { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } = await import('firebase/auth')
 
         if (isLogin) {
-            // --- FIREBASE LOGIN (Email/Password) ---
+            // --- FIREBASE LOGIN ---
             if (!formData.identifier || !formData.password) return toast.error('Email/Username and password required')
 
             setIsAuthProcessing(true)
             try {
-                // 1. Resolve Email
+                // 1. Resolve Email from username if needed
                 let loginEmail = formData.identifier;
                 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                 if (!emailRegex.test(loginEmail)) {
                     try {
                         const lookupRes = await api.post('/auth/lookup-email', { username: formData.identifier });
-                        loginEmail = lookupRes.data.email;
+                        loginEmail = lookupRes.data.data?.email || lookupRes.data.email;
                     } catch (err) {
                         if (err.response?.status === 404) throw new Error('User not found');
                         throw err;
                     }
                 }
 
-                // 2. Set Persistence (Remember Me)
+                // 2. Persistence
                 await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
 
-                // 3. Sign In
+                // 3. Firebase Sign In
                 const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password)
                 const user = userCredential.user
 
-                // 🚨 Frontend Check (Pre-sync)
                 if (!user.emailVerified) {
                     setIsVerificationSent(true)
-                    toast.error('Uplink Interrupted: Email verification required.')
-
-                    // Dispatch custom branded verification link
-                    await api.post('/auth/trigger-verification', {
-                        email: user.email,
-                        username: formData.username || user.displayName
-                    });
-
+                    toast.error('Email verification required.')
                     setIsAuthProcessing(false)
                     return
                 }
 
                 toast.success('Identity Verified. Syncing profile...')
-
                 const syncResult = await syncWithBackend()
                 if (syncResult.success) {
-                    toast.success('Welcome to Titan Arena!')
+                    toast.success('Welcome to Titan Arena! 🎮')
                     navigate(from, { replace: true })
                 } else {
-                    if (syncResult.code === 'EMAIL_NOT_VERIFIED') {
-                        setIsVerificationSent(true)
-                        await api.post('/auth/trigger-verification', {
-                            email: user.email,
-                            username: formData.username || user.displayName
-                        });
-                    }
                     toast.error(syncResult.message)
                 }
             } catch (error) {
                 console.error('Login Failed:', error)
-                toast.error(error.message || 'Verification failed')
+                toast.error(error.message || 'Login failed')
             } finally {
                 setIsAuthProcessing(false)
             }
         } else {
-            // Registration is now handled in handleBeforeNextStep (Step 2 → Step 3)
-            // This section is no longer used
+            // Registration is handled in handleBeforeNextStep
         }
     }
 
@@ -673,32 +657,28 @@ export default function AuthPage() {
                                                                 required
                                                             />
                                                         </div>
-                                                        <div className="relative group">
-                                                            <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
-                                                            <select
-                                                                name="country"
+                                                        <div className="relative group z-30">
+                                                            <SearchableSelect
+                                                                icon={MapPin}
+                                                                options={countries.map(c => ({
+                                                                    value: c.code,
+                                                                    label: c.name,
+                                                                    searchTerms: [c.code, c.name]
+                                                                }))}
                                                                 value={formData.country}
-                                                                onChange={(e) => {
-                                                                    const selectedCode = e.target.value;
+                                                                onChange={(selectedCode) => {
                                                                     const selectedCountry = countries.find(c => c.code === selectedCode);
                                                                     const dialingCode = selectedCountry ? selectedCountry.dial_code : '';
-
                                                                     setFormData(prev => ({
                                                                         ...prev,
                                                                         country: selectedCode,
-                                                                        phone: prev.phone || dialingCode
+                                                                        // Update phone with dial code if phone is empty OR if user selected a completely new country.
+                                                                        // We overwrite phone with the new dialing code so they don't have mismatching codes.
+                                                                        phone: dialingCode
                                                                     }));
                                                                 }}
-                                                                className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner"
-                                                                required
-                                                            >
-                                                                <option value="" disabled className="bg-[#1a1a1a] text-white/50">Country</option>
-                                                                {countries.map(country => (
-                                                                    <option key={country.code} value={country.code} className="bg-[#1a1a1a] text-white">
-                                                                        {country.name}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
+                                                                placeholder="Country"
+                                                            />
                                                         </div>
                                                     </div>
                                                     {/* Phone Number Field */}
@@ -719,46 +699,24 @@ export default function AuthPage() {
                                                     {formData.country === 'IN' ? (
                                                         <>
                                                             <div className="grid grid-cols-2 gap-2.5">
-                                                                <div className="relative group">
-                                                                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
-                                                                    <select
-                                                                        name="state"
+                                                                <div className="relative group z-20">
+                                                                    <SearchableSelect
+                                                                        icon={MapPin}
+                                                                        options={getAllStates().map(s => ({ value: s.state, label: s.state }))}
                                                                         value={formData.state}
-                                                                        onChange={(e) => {
-                                                                            setFormData(prev => ({
-                                                                                ...prev,
-                                                                                state: e.target.value,
-                                                                                city: ''
-                                                                            }))
-                                                                        }}
-                                                                        className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner"
-                                                                        required
-                                                                    >
-                                                                        <option value="" disabled className="bg-[#1a1a1a] text-white/50">State</option>
-                                                                        {getAllStates().map(state => (
-                                                                            <option key={state.id} value={state.state} className="bg-[#1a1a1a] text-white">
-                                                                                {state.state}
-                                                                            </option>
-                                                                        ))}
-                                                                    </select>
+                                                                        onChange={(val) => setFormData(prev => ({ ...prev, state: val, city: '' }))}
+                                                                        placeholder="State"
+                                                                    />
                                                                 </div>
-                                                                <div className="relative group">
-                                                                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
-                                                                    <select
-                                                                        name="city"
+                                                                <div className="relative group z-20">
+                                                                    <SearchableSelect
+                                                                        icon={MapPin}
+                                                                        options={formData.state ? getDistrictsByState(formData.state).map(d => ({ value: d, label: d })) : []}
                                                                         value={formData.city}
-                                                                        onChange={handleChange}
-                                                                        className="w-full bg-white/10 border border-white/10 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-titan-purple/50 focus:bg-white/15 transition-all font-sans text-sm appearance-none cursor-pointer shadow-inner"
-                                                                        required
+                                                                        onChange={(val) => setFormData(prev => ({ ...prev, city: val }))}
+                                                                        placeholder="District"
                                                                         disabled={!formData.state}
-                                                                    >
-                                                                        <option value="" disabled className="bg-[#1a1a1a] text-white/50">District</option>
-                                                                        {formData.state && getDistrictsByState(formData.state).map((district, idx) => (
-                                                                            <option key={idx} value={district} className="bg-[#1a1a1a] text-white">
-                                                                                {district}
-                                                                            </option>
-                                                                        ))}
-                                                                    </select>
+                                                                    />
                                                                 </div>
                                                             </div>
                                                         </>
