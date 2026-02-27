@@ -3,98 +3,65 @@
  * This code is proprietary and confidential.
  */
 
-const { mysqlTable, varchar, boolean, datetime, int, text, index, uniqueIndex, primaryKey, bigint, timestamp, mysqlEnum } = require('drizzle-orm/mysql-core');
+const { pgTable, varchar, boolean, timestamp, integer, text, index, uniqueIndex, primaryKey, bigint, json, numeric, doublePrecision } = require('drizzle-orm/pg-core');
+const { pgEnum } = require('drizzle-orm/pg-core');
 const { sql } = require('drizzle-orm');
 const crypto = require('crypto');
 
-// Users table
-// UID Counters table (Region-Based)
-// One counter per region (1-6), no year dependency
-// UID Counters Table (Platform-wide)
-const uidCounters = mysqlTable('uid_counters', {
-    region: int('region').primaryKey(),
-    lastValue: bigint('last_value', { mode: 'number' }).notNull().default(0),
-    updatedAt: timestamp('updated_at').defaultNow().onUpdateNow()
-});
-
-// User Counters Table (Legacy/Specific)
-const userCounters = mysqlTable('user_counters', {
-    key: varchar('key', { length: 20 }).primaryKey(), // 'PLAYER_CODE', 'HOST_CODE', 'ADMIN_CODE'
-    lastNumber: int('last_number').notNull().default(0)
-});
-
-// Host Profiles (Operational Extension)
-const hostProfiles = mysqlTable('host_profiles', {
-    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('user_id', { length: 191 }).notNull().unique(), // FK to users.id
-    hostCode: varchar('host_code', { length: 20 }).unique().notNull(), // HTxxxx
-    status: mysqlEnum('status', ['PENDING', 'ACTIVE', 'SUSPENDED', 'REVOKED']).default('PENDING').notNull(),
-    verifiedAt: timestamp('verified_at'),
-    verifiedBy: varchar('verified_by', { length: 191 }), // FK to users.id (Admin)
-    createdAt: timestamp('created_at').defaultNow()
-});
-
-// Host Applications (Phase 3 Strict)
-const hostApplications = mysqlTable('host_applications', {
-    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
-    status: mysqlEnum('status', ['PENDING', 'APPROVED', 'REJECTED']).default('PENDING').notNull(),
-    documentsUrl: text('documents_url'),
-    notes: text('notes'),
-    createdAt: timestamp('created_at').defaultNow(),
-    reviewedAt: timestamp('reviewed_at'),
-    reviewedBy: varchar('reviewed_by', { length: 191 }).references(() => users.id)
-});
-
-// Posts (Phase 4 Strict)
-const posts = mysqlTable('posts', {
-    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
-    content: text('content').notNull(),
-    type: mysqlEnum('type', ['GENERAL', 'ACHIEVEMENT', 'TOURNAMENT_UPDATE']).notNull(),
-    mediaUrl: text('media_url'),
-    likesCount: int('likes_count').default(0),
-    isDeleted: boolean('is_deleted').default(false),
-    createdAt: timestamp('created_at').defaultNow()
-});
+// Define PostgreSQL Enums
+const authProviderEnum = pgEnum('auth_provider', ['FIREBASE', 'LEGACY']);
+const hostStatusEnum = pgEnum('host_status_enum', ['PENDING', 'ACTIVE', 'SUSPENDED', 'REVOKED']);
+const hostApplicationStatusEnum = pgEnum('host_application_status', ['PENDING', 'APPROVED', 'REJECTED']);
+const postTypeEnum = pgEnum('post_type', ['GENERAL', 'ACHIEVEMENT', 'TOURNAMENT_UPDATE']);
 
 // Users table
-const users = mysqlTable('users', {
+const users = pgTable('users', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     username: varchar('username', { length: 191 }).notNull().unique(),
     email: varchar('email', { length: 191 }).notNull().unique(),
     passwordHash: varchar('password_hash', { length: 255 }),
+    recoveryEmail: varchar('recovery_email', { length: 191 }),
+    mfaEnabled: boolean('mfa_enabled').default(false),
 
     // Firebase Auth Bridge (Hardened Identity)
     firebaseUid: varchar('firebase_uid', { length: 128 }).unique(),
-    authProvider: mysqlEnum('auth_provider', ['FIREBASE', 'LEGACY']).default('FIREBASE'),
+    authProvider: authProviderEnum('auth_provider').default('FIREBASE'),
 
     // New Identity Fields (Final Architecture)
-    playerCode: varchar('player_code', { length: 20 }).unique(), // PLxxxx (Nullable until migration)
+    playerCode: varchar('player_code', { length: 20 }).unique(),
     isAdmin: boolean('is_admin').default(false),
 
     // Legal & Private Info
     legalName: varchar('legalName', { length: 255 }).notNull(),
-    dateOfBirth: datetime('dateOfBirth').notNull(),
+    dateOfBirth: timestamp('dateOfBirth').notNull(),
     phone: varchar('phone', { length: 20 }),
     phoneVerified: boolean('phoneVerified').notNull().default(false),
     phoneVisibility: varchar('phoneVisibility', { length: 20 }).notNull().default('private'),
+
+    // Privacy & Media
+    mediaVisibility: varchar('media_visibility', { length: 20 }).default('public'),
+
+    // Billing (Structured)
+    invoiceEmail: varchar('invoice_email', { length: 191 }),
+    billingAddress: json('billing_address'),
+
+    // Lifecycle
+    deactivatedAt: timestamp('deactivated_at'),
+    usernameChangeCount: integer('username_change_count').default(0),
 
     // Location
     countryCode: varchar('country_code', { length: 3 }).notNull(),
     state: varchar('state', { length: 100 }).notNull(),
     city: varchar('city', { length: 100 }),
 
-    // Region System (NEW)
-    regionCode: int('region_code').notNull(),              // 1-6 (immutable, in UID)
-    subRegionCode: varchar('sub_region_code', { length: 10 }), // AS-SA, EU-W, etc (mutable)
+    // Region System
+    regionCode: integer('region_code').notNull(),
+    subRegionCode: varchar('sub_region_code', { length: 10 }),
 
     // Status Flags
-    // DEPRECATED (Migration Only): role, hostStatus, platformUid
-    role: varchar('role', { length: 50 }).notNull().default('PLAYER'), // -> use isAdmin / hostProfiles
-    hostStatus: varchar('hostStatus', { length: 50 }).notNull().default('NOT_VERIFIED'), // -> use hostProfiles.status
-    // Keeping platformUid briefly - mapped to old UID logic
-    platformUid: varchar('platformUid', { length: 20 }).unique(), // -> use playerCode
+    role: varchar('role', { length: 50 }).notNull().default('PLAYER'),
+    hostStatus: varchar('hostStatus', { length: 50 }).notNull().default('NOT_VERIFIED'),
+    platformUid: varchar('platformUid', { length: 20 }).unique(),
 
     isBanned: boolean('isBanned').notNull().default(false),
     emailVerified: boolean('emailVerified').notNull().default(false),
@@ -102,16 +69,16 @@ const users = mysqlTable('users', {
     termsAccepted: boolean('termsAccepted').notNull().default(false),
 
     // Enterprise Security Fields
-    passwordUpdatedAt: datetime('passwordUpdatedAt'),
-    lastLoginAt: datetime('lastLoginAt'),
-    failedLoginCount: int('failedLoginCount').default(0),
+    passwordUpdatedAt: timestamp('passwordUpdatedAt'),
+    lastLoginAt: timestamp('lastLoginAt'),
+    failedLoginCount: integer('failedLoginCount').default(0),
 
     // Profile
     bio: text('bio'),
     avatarUrl: varchar('avatarUrl', { length: 500 }),
 
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     platformUidIdx: uniqueIndex('user_platformUid_idx').on(table.platformUid),
     usernameIdx: uniqueIndex('user_username_idx').on(table.username),
@@ -121,41 +88,92 @@ const users = mysqlTable('users', {
     firebaseUidIdx: index('idx_firebase_uid').on(table.firebaseUid),
 }));
 
+// UID Counters Table (Platform-wide)
+const uidCounters = pgTable('uid_counters', {
+    region: integer('region').primaryKey(),
+    lastValue: bigint('last_value', { mode: 'number' }).notNull().default(0),
+    updatedAt: timestamp('updated_at').defaultNow()
+});
+
+// User Counters Table (Legacy/Specific)
+const userCounters = pgTable('user_counters', {
+    key: varchar('key', { length: 20 }).primaryKey(),
+    lastNumber: integer('last_number').notNull().default(0)
+});
+
+// Host Profiles
+const hostProfiles = pgTable('host_profiles', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().unique(),
+    hostCode: varchar('host_code', { length: 20 }).unique().notNull(),
+    status: hostStatusEnum('status').default('PENDING').notNull(),
+    verifiedAt: timestamp('verified_at'),
+    verifiedBy: varchar('verified_by', { length: 191 }),
+    createdAt: timestamp('created_at').defaultNow()
+});
+
+// Host Applications
+const hostApplications = pgTable('host_applications', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
+    status: hostApplicationStatusEnum('status').default('PENDING').notNull(),
+    documentsUrl: text('documents_url'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at').defaultNow(),
+    reviewedAt: timestamp('reviewed_at'),
+    reviewedBy: varchar('reviewed_by', { length: 191 }).references(() => users.id)
+});
+
+// Posts
+const posts = pgTable('posts', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('user_id', { length: 191 }).notNull().references(() => users.id),
+    content: text('content').notNull(),
+    type: postTypeEnum('type').notNull(),
+    mediaUrl: text('media_url'),
+    likesCount: integer('likes_count').default(0),
+    isDeleted: boolean('is_deleted').default(false),
+    createdAt: timestamp('created_at').defaultNow()
+});
+
 // Refresh Tokens table
-const refreshTokens = mysqlTable('refreshtoken', {
+const refreshTokens = pgTable('refreshtoken', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     token: varchar('token', { length: 500 }).notNull().unique(),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
-    expiresAt: datetime('expiresAt').notNull(),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    expiresAt: timestamp('expiresAt').notNull(),
+    userAgent: varchar('user_agent', { length: 255 }),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
 }, (table) => ({
     userIdIdx: index('refreshToken_userId_idx').on(table.userId),
 }));
 
 // Wallets table
-const wallets = mysqlTable('wallet', {
+const wallets = pgTable('wallet', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().unique().references(() => users.id),
     balance: bigint('balance', { mode: 'number' }).notNull(),
     locked: bigint('locked', { mode: 'number' }).notNull(),
-    createdAt: datetime('createdAt').notNull(),
-    updatedAt: datetime('updatedAt').notNull(),
+    status: varchar('status', { length: 50 }).notNull().default('ACTIVE'),
+    createdAt: timestamp('createdAt').notNull(),
+    updatedAt: timestamp('updatedAt').notNull(),
 });
 
 // Transactions table
-const transactions = mysqlTable('transaction', {
+const transactions = pgTable('transaction', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     walletId: varchar('walletId', { length: 191 }).notNull().references(() => wallets.id),
-    type: varchar('type', { length: 50 }).notNull(), // CREDIT or DEBIT
-    source: varchar('source', { length: 50 }).notNull(), // TOURNAMENT_ENTRY, WINNING, HOST_EARNING, WITHDRAWAL, DEPOSIT
+    type: varchar('type', { length: 50 }).notNull(),
+    source: varchar('source', { length: 50 }).notNull(),
     amount: bigint('amount', { mode: 'number' }).notNull(),
-    balanceAfter: bigint('balanceAfter', { mode: 'number' }).notNull().default(0), // Ledger snapshot
+    balanceAfter: bigint('balanceAfter', { mode: 'number' }).notNull().default(0),
     tournamentId: varchar('tournamentId', { length: 191 }),
     message: varchar('message', { length: 255 }),
-    metadata: text('metadata'), // New JSON metadata field (using text for MySQL compatibility if json not supported perfectly in all versions, or use json mode)
+    metadata: text('metadata'),
     status: varchar('status', { length: 50 }).notNull().default('COMPLETED'),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
 }, (table) => ({
     userIdIdx: index('transaction_userId_idx').on(table.userId),
     walletIdIdx: index('transaction_walletId_idx').on(table.walletId),
@@ -164,7 +182,7 @@ const transactions = mysqlTable('transaction', {
 }));
 
 // KYC Requests table
-const kycRequests = mysqlTable('kycrequest', {
+const kycRequests = pgTable('kycrequest', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().unique().references(() => users.id),
     documentType: varchar('documentType', { length: 100 }).notNull(),
@@ -173,58 +191,62 @@ const kycRequests = mysqlTable('kycrequest', {
     rankProofUrl: varchar('rankProofUrl', { length: 500 }),
     status: varchar('status', { length: 50 }).notNull().default('PENDING'),
     adminNotes: text('adminNotes'),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 });
 
 // Teams table
-const teams = mysqlTable('team', {
+const teams = pgTable('team', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     name: varchar('name', { length: 191 }).notNull(),
     captainId: varchar('captainId', { length: 191 }).notNull().references(() => users.id),
-    maxMembers: int('maxMembers').notNull().default(5),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    maxMembers: integer('maxMembers').notNull().default(5),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     captainIdIdx: index('team_captainId_idx').on(table.captainId),
 }));
 
 // Team Members table
-const teamMembers = mysqlTable('teammember', {
+const teamMembers = pgTable('teammember', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     teamId: varchar('teamId', { length: 191 }).notNull().references(() => teams.id),
     role: varchar('role', { length: 50 }).notNull().default('MEMBER'),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
 }, (table) => ({
     teamIdIdx: index('teamMember_teamId_idx').on(table.teamId),
     userTeamUnique: uniqueIndex('teamMember_userId_teamId_unique').on(table.userId, table.teamId),
 }));
 
 // Tournaments table
-const tournaments = mysqlTable('tournament', {
+const tournaments = pgTable('tournament', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     name: varchar('name', { length: 255 }).notNull(),
     game: varchar('game', { length: 100 }).notNull(),
     description: text('description'),
-    highlightUrl: varchar('highlightUrl', { length: 500 }), // Tournament highlight video
+    highlightUrl: varchar('highlightUrl', { length: 500 }),
     type: varchar('type', { length: 50 }).notNull(),
-    teamSize: int('teamSize'),
+    format: varchar('format', { length: 50 }).notNull().default('SINGLE_ELIMINATION'), // bracket format
+    seeding: varchar('seeding', { length: 20 }).notNull().default('RANDOM'),           // RANDOM | MMR
+    teamSize: integer('teamSize'),
     hostId: varchar('hostId', { length: 191 }).notNull().references(() => users.id),
     entryFee: bigint('entryFee', { mode: 'number' }).notNull(),
     prizePool: bigint('prizePool', { mode: 'number' }).notNull(),
-    minTeamsRequired: int('minTeamsRequired').notNull(),
+    minTeamsRequired: integer('minTeamsRequired').notNull(),
     insufficientRegPolicy: varchar('insufficientRegPolicy', { length: 50 }).notNull().default('CANCEL'),
-    status: varchar('status', { length: 50 }).notNull().default('UPCOMING'), // CREATED, REGISTRATION, ONGOING, COMPLETED, CANCELLED
-    currentRound: int('currentRound').default(0),
-    totalRounds: int('totalRounds').default(0),
+    status: varchar('status', { length: 50 }).notNull().default('UPCOMING'),
+    currentRound: integer('currentRound').default(0),
+    totalRounds: integer('totalRounds').default(0),
     winnerId: varchar('winnerId', { length: 191 }),
-    startTime: datetime('startTime').notNull(),
-    registrationEnd: datetime('registrationEnd').notNull(),
+    startTime: timestamp('startTime').notNull(),
+    registrationEnd: timestamp('registrationEnd').notNull(),
+    checkinStart: timestamp('checkinStart'),      // check-in window opens
+    checkinEnd: timestamp('checkinEnd'),          // check-in window closes
     collected: bigint('collected', { mode: 'number' }).notNull().default(0),
     hostProfit: bigint('hostProfit', { mode: 'number' }).notNull().default(0),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     hostIdIdx: index('tournament_hostId_idx').on(table.hostId),
     statusIdx: index('tournament_status_idx').on(table.status),
@@ -232,7 +254,7 @@ const tournaments = mysqlTable('tournament', {
 }));
 
 // Notifications table
-const notifications = mysqlTable('notification', {
+const notifications = pgTable('notification', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
     title: varchar('title', { length: 255 }).notNull(),
@@ -240,45 +262,43 @@ const notifications = mysqlTable('notification', {
     type: varchar('type', { length: 50 }).notNull().default('INFO'),
     isRead: boolean('isRead').notNull().default(false),
     meta: text('meta'),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
 }, (table) => ({
     userIdIdx: index('notification_userId_idx').on(table.userId),
     isReadIdx: index('notification_isRead_idx').on(table.isRead),
 }));
 
 // Audit Logs table
-const auditLogs = mysqlTable('auditlog', {
+const auditLogs = pgTable('auditlog', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
-    action: varchar('action', { length: 100 }).notNull(), // TOURNAMENT_START, MATCH_OVERRIDE, etc.
-    targetId: varchar('targetId', { length: 191 }), // ID of the object being acted upon
-    details: text('details'), // JSON string
+    action: varchar('action', { length: 100 }).notNull(),
+    targetId: varchar('targetId', { length: 191 }),
+    details: text('details'),
     ipAddress: varchar('ipAddress', { length: 45 }),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
 }, (table) => ({
     targetIdIdx: index('auditLog_targetId_idx').on(table.targetId),
     userIdIdx: index('auditLog_userId_idx').on(table.userId),
-    createdAtIdx: index('auditLog_createdAt_idx').on(table.createdAt), // Enterprise: Time-based lookup
+    createdAtIdx: index('auditLog_createdAt_idx').on(table.createdAt),
 }));
 
-// Admin Assignments Table (Enterprise Delegation History)
-const adminAssignments = mysqlTable('adminassignment', {
+// Admin Assignments Table
+const adminAssignments = pgTable('adminassignment', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    adminId: varchar('adminId', { length: 191 }).notNull().references(() => users.id), // The Manager
-    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),   // The Managed User/Host
-    assignedBy: varchar('assignedBy', { length: 191 }).notNull().references(() => users.id), // Super Admin who did it
-    assignedAt: datetime('assignedAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    revokedAt: datetime('revokedAt'), // Null = Active, Timestamp = History
+    adminId: varchar('adminId', { length: 191 }).notNull().references(() => users.id),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
+    assignedBy: varchar('assignedBy', { length: 191 }).notNull().references(() => users.id),
+    assignedAt: timestamp('assignedAt').notNull().defaultNow(),
+    revokedAt: timestamp('revokedAt'),
 }, (table) => ({
     adminIdIdx: index('adminAssignment_adminId_idx').on(table.adminId),
     userIdIdx: index('adminAssignment_userId_idx').on(table.userId),
-    // NOTE: MySQL cannot enforce partial uniqueness (WHERE revokedAt IS NULL).
-    // Active assignment uniqueness is enforced via transactional locking in logic.
-    activeAssignmentIdx: index('adminAssignment_active_idx').on(table.userId, table.revokedAt), // Optimization for "Who manages this user now?"
+    activeAssignmentIdx: index('adminAssignment_active_idx').on(table.userId, table.revokedAt),
 }));
 
 // Games table
-const games = mysqlTable('game', {
+const games = pgTable('game', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     name: varchar('name', { length: 191 }).notNull().unique(),
     slug: varchar('slug', { length: 191 }).notNull().unique(),
@@ -287,22 +307,22 @@ const games = mysqlTable('game', {
     bannerUrl: text('bannerUrl'),
     description: text('description'),
     isActive: boolean('isActive').notNull().default(true),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     slugIdx: index('game_slug_idx').on(table.slug),
 }));
 
 // Registrations table
-const registrations = mysqlTable('registration', {
+const registrations = pgTable('registration', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     tournamentId: varchar('tournamentId', { length: 191 }).notNull(),
     teamId: varchar('teamId', { length: 191 }),
     userId: varchar('userId', { length: 191 }),
     status: varchar('status', { length: 50 }).notNull().default('PENDING'),
     paymentStatus: varchar('paymentStatus', { length: 50 }).notNull().default('PENDING'),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     tournamentIdIdx: index('registration_tournamentId_idx').on(table.tournamentId),
     teamIdIdx: index('registration_teamId_idx').on(table.teamId),
@@ -310,39 +330,43 @@ const registrations = mysqlTable('registration', {
 }));
 
 // Matches table
-const matches = mysqlTable('match', {
+const matches = pgTable('match', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     tournamentId: varchar('tournamentId', { length: 191 }).notNull(),
-    round: int('round').notNull(),
-    matchNumber: int('matchNumber').notNull(),
-    participantAId: varchar('participantAId', { length: 191 }), // User or Team ID
+    round: integer('round').notNull(),
+    matchNumber: integer('matchNumber').notNull(),
+    participantAId: varchar('participantAId', { length: 191 }),
     participantBId: varchar('participantBId', { length: 191 }),
-    nextMatchId: varchar('nextMatchId', { length: 191 }), // Self-relation
-    positionInNextMatch: int('positionInNextMatch'), // 1 or 2
-    scoreA: int('scoreA').default(0),
-    scoreB: int('scoreB').default(0),
+    nextMatchId: varchar('nextMatchId', { length: 191 }),
+    positionInNextMatch: integer('positionInNextMatch'),
+    scoreA: integer('scoreA').default(0),
+    scoreB: integer('scoreB').default(0),
     winnerId: varchar('winnerId', { length: 191 }),
-    status: varchar('status', { length: 50 }).notNull().default('SCHEDULED'), // SCHEDULED, AWAITING_RESULT, COMPLETED, DISPUTED
+    status: varchar('status', { length: 50 }).notNull().default('SCHEDULED'),
     isBye: boolean('isBye').default(false),
-    locked: boolean('locked').default(false), // For concussion safety
-    startTime: datetime('startTime'),
-    endTime: datetime('endTime'),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    locked: boolean('locked').default(false),
+    startTime: timestamp('startTime'),
+    endTime: timestamp('endTime'),
+    proofUrl: text('proofUrl'),            // screenshot/video URL submitted by host
+    streamUrl: text('streamUrl'),          // Twitch/YouTube live stream link
+    vodUrl: text('vodUrl'),                // post-match VOD/replay link
+    spectatorCode: varchar('spectatorCode', { length: 100 }), // in-game spectator password
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     tournamentIdIdx: index('match_tournamentId_idx').on(table.tournamentId),
     winnerIdIdx: index('match_winnerId_idx').on(table.winnerId),
 }));
 
-// Player Profiles table (Core Identity)
-const playerProfiles = mysqlTable('playerprofile', {
+// Player Profiles table
+const playerProfiles = pgTable('playerprofile', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
-    userId: varchar('userId', { length: 191 }).notNull().unique(), // Foreign Key to users
+    userId: varchar('userId', { length: 191 }).notNull().unique(),
 
     // Identity
-    ign: varchar('ign', { length: 191 }), // In-Game Name
+    ign: varchar('ign', { length: 191 }),
     realName: varchar('realName', { length: 255 }),
-    dateOfBirth: datetime('dateOfBirth'),
+    dateOfBirth: timestamp('dateOfBirth'),
     avatarUrl: varchar('avatarUrl', { length: 500 }),
     bio: text('bio'),
 
@@ -350,71 +374,213 @@ const playerProfiles = mysqlTable('playerprofile', {
     country: varchar('country', { length: 100 }),
     state: varchar('state', { length: 100 }),
     city: varchar('city', { length: 100 }),
-    preferredServer: varchar('preferredServer', { length: 50 }), // Asia, SEA, MiddleEast
+    preferredServer: varchar('preferredServer', { length: 50 }),
 
     // Contact (Discord)
     discordId: varchar('discordId', { length: 100 }),
-    discordVisibility: varchar('discordVisibility', { length: 20 }).default('private'), // public, team, private
+    discordVisibility: varchar('discordVisibility', { length: 20 }).default('private'),
 
     // Preferences
-    skillLevel: varchar('skillLevel', { length: 50 }), // Beginner, SemiPro, Pro
-    playStyle: varchar('playStyle', { length: 50 }), // Aggressive, Tactical, Balanced
+    skillLevel: varchar('skillLevel', { length: 50 }),
+    playStyle: varchar('playStyle', { length: 50 }),
 
     // Availability
-    availableDays: varchar('availableDays', { length: 50 }), // Weekdays, Weekends, Both
-    availableTime: varchar('availableTime', { length: 50 }), // Morning, Evening, Night
+    availableDays: varchar('availableDays', { length: 50 }),
+    availableTime: varchar('availableTime', { length: 50 }),
 
     // System
-    completionPercentage: int('completionPercentage').default(0),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    completionPercentage: integer('completionPercentage').default(0),
+    profileVisibility: varchar('profileVisibility', { length: 20 }).default('public'),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     userIdIdx: uniqueIndex('playerProfile_userId_idx').on(table.userId),
     ignIdx: index('playerProfile_ign_idx').on(table.ign),
 }));
 
-// Player Game Profiles table (Multi-Game)
-const playerGameProfiles = mysqlTable('playergameprofile', {
+// Player Game Profiles table
+const playerGameProfiles = pgTable('playergameprofile', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     userId: varchar('userId', { length: 191 }).notNull(),
 
-    game: varchar('game', { length: 50 }).notNull(), // BGMI, Valorant, CS2, FreeFire
+    game: varchar('game', { length: 50 }).notNull(),
     inGameName: varchar('inGameName', { length: 191 }).notNull(),
     inGameId: varchar('inGameId', { length: 191 }).notNull(),
 
-    verificationStatus: varchar('verificationStatus', { length: 50 }).default('PENDING'), // PENDING, VERIFIED, REJECTED
-    verifiedBy: varchar('verifiedBy', { length: 191 }), // Admin ID
+    verificationStatus: varchar('verificationStatus', { length: 50 }).default('PENDING'),
+    verifiedBy: varchar('verifiedBy', { length: 191 }),
 
-    meta: text('meta'), // JSON: rank, tier, level
+    meta: text('meta'),
 
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     userIdIdx: index('playerGameProfile_userId_idx').on(table.userId),
     gameIdIdx: index('playerGameProfile_game_inGameId_idx').on(table.game, table.inGameId),
 }));
 
 // Disputes table
-const disputes = mysqlTable('dispute', {
+const disputes = pgTable('dispute', {
     id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
     matchId: varchar('matchId', { length: 191 }).notNull().references(() => matches.id),
     raisedById: varchar('raisedById', { length: 191 }).notNull().references(() => users.id),
     reason: text('reason').notNull(),
     evidenceUrl: varchar('evidenceUrl', { length: 500 }),
-    status: varchar('status', { length: 50 }).notNull().default('OPEN'), // OPEN, RESOLVED, REJECTED
+    status: varchar('status', { length: 50 }).notNull().default('OPEN'),
     resolution: text('resolution'),
-    resolvedAt: datetime('resolvedAt'),
-    createdAt: datetime('createdAt').notNull().default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: datetime('updatedAt').notNull().default(sql`CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`),
+    resolvedAt: timestamp('resolvedAt'),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     matchIdIdx: index('dispute_matchId_idx').on(table.matchId),
     raisedByIdIdx: index('dispute_raisedById_idx').on(table.raisedById),
     statusIdx: index('dispute_status_idx').on(table.status),
 }));
 
+// ─── Payouts table (prize distribution) ───────────────────────────────────────
+const payouts = pgTable('payout', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    tournamentId: varchar('tournamentId', { length: 191 }).notNull().references(() => tournaments.id),
+    userId: varchar('userId', { length: 191 }).references(() => users.id),
+    teamId: varchar('teamId', { length: 191 }).references(() => teams.id),
+    position: integer('position').notNull(),                          // 1st, 2nd, 3rd
+    amount: bigint('amount', { mode: 'number' }).notNull(),           // in paise/cents
+    status: varchar('status', { length: 50 }).notNull().default('PENDING'), // PENDING | PAID | FAILED
+    paidAt: timestamp('paidAt'),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, (table) => ({
+    tournamentIdIdx: index('payout_tournamentId_idx').on(table.tournamentId),
+    userIdIdx: index('payout_userId_idx').on(table.userId),
+}));
 
+// ─── Check-ins table (player attendance before bracket lock) ──────────────────
+const checkins = pgTable('checkin', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    tournamentId: varchar('tournamentId', { length: 191 }).notNull().references(() => tournaments.id),
+    userId: varchar('userId', { length: 191 }).references(() => users.id),
+    teamId: varchar('teamId', { length: 191 }).references(() => teams.id),
+    checkedInAt: timestamp('checkedInAt').notNull().defaultNow(),
+}, (table) => ({
+    tournamentIdIdx: index('checkin_tournamentId_idx').on(table.tournamentId),
+    uniqueCheckin: uniqueIndex('checkin_tournament_participant_unique').on(table.tournamentId, table.userId),
+}));
+
+// ─── MMR / ELO Ratings table ──────────────────────────────────────────────────
+const mmrRatings = pgTable('mmr_rating', {
+    userId: varchar('userId', { length: 191 }).primaryKey().references(() => users.id),
+    rating: integer('rating').notNull().default(1000),
+    gamesPlayed: integer('gamesPlayed').notNull().default(0),
+    wins: integer('wins').notNull().default(0),
+    losses: integer('losses').notNull().default(0),
+    peakRating: integer('peakRating').notNull().default(1000),
+    currentStreak: integer('currentStreak').notNull().default(0),  // positive=win streak, negative=loss streak
+    tier: varchar('tier', { length: 30 }).notNull().default('BRONZE'), // BRONZE | SILVER | GOLD | PLATINUM | DIAMOND | CHAMPION
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => ({
+    ratingIdx: index('mmr_rating_idx').on(table.rating),
+    tierIdx: index('mmr_tier_idx').on(table.tier),
+}));
+
+// ─── Achievements definitions table ──────────────────────────────────────────
+const achievements = pgTable('achievement', {
+    id: varchar('id', { length: 50 }).primaryKey(),  // e.g. 'FIRST_BLOOD', 'CHAMPION'
+    name: varchar('name', { length: 100 }).notNull(),
+    description: text('description').notNull(),
+    iconUrl: text('iconUrl'),
+    tier: varchar('tier', { length: 20 }).notNull().default('BRONZE'), // BRONZE | SILVER | GOLD | LEGENDARY
+    points: integer('points').notNull().default(10),
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+});
+
+// ─── User Achievements junction table ─────────────────────────────────────────
+const userAchievements = pgTable('user_achievement', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
+    achievementId: varchar('achievementId', { length: 50 }).notNull().references(() => achievements.id),
+    unlockedAt: timestamp('unlockedAt').notNull().defaultNow(),
+    meta: json('meta'),  // e.g. { tournamentId, matchId } for context
+}, (table) => ({
+    userIdIdx: index('userAchievement_userId_idx').on(table.userId),
+    unique: uniqueIndex('userAchievement_user_achievement_unique').on(table.userId, table.achievementId),
+}));
+
+// ─── Clans / Organisations table ──────────────────────────────────────────────
+const clans = pgTable('clan', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    name: varchar('name', { length: 100 }).notNull().unique(),
+    tag: varchar('tag', { length: 10 }).notNull().unique(),   // e.g. [NOVA]
+    description: text('description'),
+    logoUrl: text('logoUrl'),
+    bannerUrl: text('bannerUrl'),
+    ownerId: varchar('ownerId', { length: 191 }).notNull().references(() => users.id),
+    totalWins: integer('totalWins').notNull().default(0),
+    membersCount: integer('membersCount').notNull().default(1),
+    isOpen: boolean('isOpen').notNull().default(true),  // open = anyone can apply
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => ({
+    tagIdx: uniqueIndex('clan_tag_idx').on(table.tag),
+    ownerIdx: index('clan_owner_idx').on(table.ownerId),
+}));
+
+// ─── Clan Members table ────────────────────────────────────────────────────────
+const clanMembers = pgTable('clan_member', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    clanId: varchar('clanId', { length: 191 }).notNull().references(() => clans.id),
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),
+    role: varchar('role', { length: 30 }).notNull().default('MEMBER'), // OWNER | OFFICER | MEMBER
+    joinedAt: timestamp('joinedAt').notNull().defaultNow(),
+}, (table) => ({
+    clanIdIdx: index('clanMember_clanId_idx').on(table.clanId),
+    unique: uniqueIndex('clanMember_user_unique').on(table.userId), // one clan per user
+}));
+
+// Blocked Users Table
+const blockedUsers = pgTable('blocked_users', {
+    blockerId: varchar('blocker_id', { length: 191 }).notNull().references(() => users.id),
+    blockedId: varchar('blocked_id', { length: 191 }).notNull().references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow()
+}, (table) => ({
+    pk: primaryKey({ columns: [table.blockerId, table.blockedId] })
+}));
+
+// ─── Team MMR / ELO Ratings table ────────────────────────────────────────────
+const teamMmrRatings = pgTable('team_mmr_rating', {
+    teamId: varchar('teamId', { length: 191 }).primaryKey().references(() => teams.id),
+    rating: integer('rating').notNull().default(1000),
+    gamesPlayed: integer('gamesPlayed').notNull().default(0),
+    wins: integer('wins').notNull().default(0),
+    losses: integer('losses').notNull().default(0),
+    peakRating: integer('peakRating').notNull().default(1000),
+    currentStreak: integer('currentStreak').notNull().default(0),
+    tier: varchar('tier', { length: 30 }).notNull().default('BRONZE'),
+    updatedAt: timestamp('updatedAt').notNull().defaultNow(),
+}, (table) => ({
+    ratingIdx: index('team_mmr_rating_idx').on(table.rating),
+    tierIdx: index('team_mmr_tier_idx').on(table.tier),
+}));
+
+// ─── Match MVPs table ─────────────────────────────────────────────────────────
+const matchMvps = pgTable('match_mvp', {
+    id: varchar('id', { length: 191 }).primaryKey().$defaultFn(() => crypto.randomUUID()),
+    matchId: varchar('matchId', { length: 191 }).notNull().references(() => matches.id),
+    tournamentId: varchar('tournamentId', { length: 191 }).notNull(),
+    teamId: varchar('teamId', { length: 191 }).notNull(),  // the winning team
+    userId: varchar('userId', { length: 191 }).notNull().references(() => users.id),  // the MVP player
+    mmrBonus: integer('mmrBonus').notNull().default(0),     // extra MMR awarded to MVP
+    reason: varchar('reason', { length: 255 }),              // optional note from host
+    createdAt: timestamp('createdAt').notNull().defaultNow(),
+}, (table) => ({
+    matchIdIdx: uniqueIndex('match_mvp_matchId_unique').on(table.matchId), // one MVP per match
+    userIdIdx: index('match_mvp_userId_idx').on(table.userId),
+    tournamentIdIdx: index('match_mvp_tournamentId_idx').on(table.tournamentId),
+}));
 
 module.exports = {
+    authProviderEnum,
+    hostStatusEnum,
+    hostApplicationStatusEnum,
+    postTypeEnum,
     users,
     refreshTokens,
     wallets,
@@ -435,6 +601,18 @@ module.exports = {
     uidCounters,
     userCounters,
     hostProfiles,
-    hostApplications, // New
-    posts // New
+    hostApplications,
+    posts,
+    blockedUsers,
+    // Phase A-D additions
+    payouts,
+    checkins,
+    mmrRatings,
+    achievements,
+    userAchievements,
+    clans,
+    clanMembers,
+    // Team MMR + MVP
+    teamMmrRatings,
+    matchMvps,
 };
