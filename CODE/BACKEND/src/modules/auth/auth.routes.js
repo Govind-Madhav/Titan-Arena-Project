@@ -39,5 +39,17 @@ router.get('/me', firebaseAuth, authController.getMe);
 router.get('/dashboard', authRequired, authController.getDashboard);
 router.post('/logout-all', firebaseAuth, authController.logoutAllDevices);
 
+// Extended Settings Routes
+router.put('/profile', authRequired, authController.updateProfile);
+router.post('/change-username', authLimiter, authRequired, authController.changeUsername);
+router.post('/change-email/init', authLimiter, authRequired, authController.initChangeEmail);
+router.post('/change-email/verify', authLimiter, authRequired, authController.verifyChangeEmail);
+router.post('/deactivate', authLimiter, authRequired, authController.deactivateAccount);
+router.post('/delete', authLimiter, authRequired, authController.deleteAccount);
+
+// Session Management
+router.get('/sessions', authRequired, authController.getActiveSessions);
+router.delete('/sessions/:sessionId', authRequired, authController.revokeSession);
+
 module.exports = router;
 
