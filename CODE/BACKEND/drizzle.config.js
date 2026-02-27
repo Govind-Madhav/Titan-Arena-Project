@@ -10,13 +10,9 @@ const { defineConfig } = require('drizzle-kit');
 module.exports = defineConfig({
     schema: './src/db/schema.js',
     out: './drizzle',
-    dialect: 'mysql',
+    dialect: 'postgresql',
     dbCredentials: {
         url: process.env.DATABASE_URL,
-        host: process.env.DB_HOST || 'localhost',
-        port: parseInt(process.env.DB_PORT || '3306'),
-        user: process.env.DB_USER || 'root',
-        password: process.env.DB_PASSWORD || 'root1',
-        database: process.env.DB_NAME || 'esports_tournament',
+        ssl: false, // Disable SSL for local development
     },
 });
