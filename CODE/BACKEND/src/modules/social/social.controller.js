@@ -4,8 +4,8 @@
  */
 
 const { db } = require('../../db');
-const { posts, users, playerProfiles, hostProfiles } = require('../../db/schema');
-const { eq, desc, and, isNull, sql } = require('drizzle-orm');
+const { posts, users, playerProfiles, hostProfiles, blockedUsers } = require('../../db/schema');
+const { eq, desc, and, isNull, sql, notInArray } = require('drizzle-orm');
 
 // 1. Create Post
 const createPost = async (req, res) => {
@@ -13,31 +13,22 @@ const createPost = async (req, res) => {
         const userId = req.user.id;
         const { content, mediaUrl, type = 'GENERAL' } = req.body;
 
-        if (!content) {
-            return res.status(400).json({ success: false, message: 'Content is required' });
+        if (!content && !mediaUrl) {
+            return res.status(400).json({ success: false, message: 'Content or media is required' });
         }
 
-        // Strict Check: TOURNAMENT_UPDATE only for Hosts
-        if (type === 'TOURNAMENT_UPDATE') {
-            const hostProfile = await db.select()
-                .from(hostProfiles)
-                .where(eq(hostProfiles.userId, userId))
-                .limit(1);
-
-            if (!hostProfile[0] || hostProfile[0].status !== 'ACTIVE') {
-                return res.status(403).json({ success: false, message: 'Only active Hosts can post Tournament Updates.' });
-            }
-        }
-
-        await db.insert(posts).values({
+        const newPost = {
             userId,
-            content,
+            content: content || '',
             mediaUrl,
             type,
-            // likesCount defaults to 0
-        });
+            likesCount: 0,
+            isDeleted: false
+        };
 
-        res.status(201).json({ success: true, message: 'Post created successfully' });
+        const result = await db.insert(posts).values(newPost);
+
+        res.status(201).json({ success: true, message: 'Post created', postId: result[0].insertId || 'created' }); // insertId might differ based on driver/uuid, but standardizing response
     } catch (error) {
         console.error('Create post error:', error);
         res.status(500).json({ success: false, message: 'Failed to create post' });
@@ -47,6 +38,26 @@ const createPost = async (req, res) => {
 // 2. Get Feed (Global for now, can be followers-only later)
 const getFeed = async (req, res) => {
     try {
+        const conditions = [eq(posts.isDeleted, false)];
+
+        // Privacy: Filter Blocked Users if Authenticated
+        if (req.user) {
+            const currentUserId = req.user.id;
+
+            // 1. Exclude posts from users who BLOCKED ME (I am blockedId)
+            const blockersQuery = db.select({ id: blockedUsers.blockerId })
+                .from(blockedUsers)
+                .where(eq(blockedUsers.blockedId, currentUserId));
+
+            // 2. Exclude posts from users I BLOCKED (I am blockerId)
+            const blockedQuery = db.select({ id: blockedUsers.blockedId })
+                .from(blockedUsers)
+                .where(eq(blockedUsers.blockerId, currentUserId));
+
+            conditions.push(notInArray(posts.userId, blockersQuery));
+            conditions.push(notInArray(posts.userId, blockedQuery));
+        }
+
         const feed = await db.select({
             id: posts.id,
             content: posts.content,
@@ -68,7 +79,7 @@ const getFeed = async (req, res) => {
             .innerJoin(users, eq(posts.userId, users.id))
             .leftJoin(playerProfiles, eq(users.id, playerProfiles.userId))
             .leftJoin(hostProfiles, eq(users.id, hostProfiles.userId)) // New Join
-            .where(eq(posts.isDeleted, false))
+            .where(and(...conditions))
             .orderBy(desc(posts.createdAt))
             .limit(50); // Hard limit for MVP
 
