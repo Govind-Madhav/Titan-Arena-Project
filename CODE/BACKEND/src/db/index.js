@@ -3,21 +3,20 @@
  * This code is proprietary and confidential.
  */
 
-const { drizzle } = require('drizzle-orm/mysql2');
-const mysql = require('mysql2/promise');
+const { drizzle } = require('drizzle-orm/node-postgres');
+const { Pool } = require('pg');
 const schema = require('./schema');
 
-// Create MySQL connection pool (URI only - production-safe)
-const pool = mysql.createPool({
-    uri: process.env.DATABASE_URL,
-    waitForConnections: true,
-    connectionLimit: 10,
+// Create PostgreSQL connection pool
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: 10,
+    ssl: false, // Disable SSL for local development
 });
 
-// Create Drizzle instance (STRICT MySQL MODE - prevents DEFAULT keyword injection)
+// Create Drizzle instance
 const db = drizzle(pool, {
     schema,
-    mode: 'mysql', // CRITICAL: Prevents Postgres-style DEFAULT injection
     logger: true,  // Enable for debugging, disable in production if noisy
 });
 
