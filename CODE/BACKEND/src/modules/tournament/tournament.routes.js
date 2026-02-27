@@ -6,8 +6,9 @@
 const express = require('express');
 const router = express.Router();
 const tournamentController = require('./tournament.controller');
+const checkinController = require('./checkin.controller');
 const { authenticate, authorize } = require('../../middleware/auth.middleware');
-const { actionLimiter } = require('../../middleware/security.middleware');
+const { globalLimiter } = require('../../middleware/security.middleware');
 
 // Public routes
 router.get('/', tournamentController.getAllTournaments);
@@ -24,9 +25,13 @@ router.delete('/:id', authenticate, authorize('HOST', 'ADMIN'), tournamentContro
 router.get('/:id/participants', authenticate, tournamentController.getParticipants);
 router.put('/:id/participants/:participantId/status', authenticate, authorize('HOST', 'ADMIN'), tournamentController.updateParticipantStatus);
 
-// Tournament Lifecycle (Enterprise)
-// router.post('/:id/start', authenticate, authorize('HOST', 'ADMIN'), actionLimiter, tournamentController.startTournament);
-// router.post('/:id/finalize', authenticate, authorize('HOST', 'ADMIN'), actionLimiter, tournamentController.finalizeTournament);
+// Tournament Cancellation (with auto-refund)
+router.post('/:id/cancel', authenticate, authorize('HOST', 'ADMIN', 'SUPERADMIN'), globalLimiter, tournamentController.cancelTournament);
+
+// Check-in System
+router.post('/:id/checkin', authenticate, authorize('PLAYER'), checkinController.checkIn);
+router.delete('/:id/checkin', authenticate, authorize('PLAYER'), checkinController.withdrawCheckin);
+router.get('/:id/checkins', authenticate, authorize('HOST', 'ADMIN', 'SUPERADMIN'), checkinController.getCheckins);
 
 // Player routes
 router.post('/:id/join', authenticate, authorize('PLAYER'), tournamentController.joinTournament);
@@ -36,7 +41,8 @@ router.delete('/:id/leave', authenticate, authorize('PLAYER'), tournamentControl
 router.post('/:id/winners', authenticate, authorize('HOST', 'ADMIN'), tournamentController.declareWinners);
 router.get('/:id/winners', tournamentController.getWinners);
 
-// Get tournaments by host (Legacy route, redirecting logic)
+// Get tournaments by host (Legacy route)
 router.get('/host/:hostId', authenticate, tournamentController.getTournamentsByHost);
 
 module.exports = router;
+
