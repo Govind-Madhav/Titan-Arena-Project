@@ -1,8 +1,4 @@
-/**
- * Copyright (c) 2025 Titan E-sports. All rights reserved.
- * This code is proprietary and confidential.
- */
-
+const http = require('http');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -13,6 +9,12 @@ const { initializeFirebase, checkFirebaseHealth, closeFirebase } = require('./co
 const { createRedisClient, checkRedisHealth, closeRedis } = require('./config/redis.config');
 const { db } = require('./db');
 const { sql } = require('drizzle-orm');
+const { disconnectProducer } = require('./config/kafka.config');
+const { startNotificationConsumer } = require('./modules/notification/notification.consumer');
+const { startStatsConsumer } = require('./modules/stats/stats.consumer');
+const { startLeaderboardConsumer } = require('./modules/stats/leaderboard.consumer');
+const { initSocket } = require('./config/socket.config');
+const { seedAchievements } = require('./services/achievement.service');
 
 
 // Import routes
@@ -47,8 +49,10 @@ app.use(cors({
       'https://titan-arena-ui.vercel.app'
     ];
 
-    // Check if origin is in defaults OR ends with .vercel.app
-    if (allowedDefaults.includes(origin) || origin.endsWith('.vercel.app')) {
+    // Check if origin is in defaults OR is a Titan Arena Vercel preview URL
+    // ⚠️ Explicitly reject any arbitrary .vercel.app subdomain — only our project's previews are allowed
+    const isTitanVercel = /^https:\/\/titan-arena(-[a-z0-9]+)?\.vercel\.app$/.test(origin);
+    if (allowedDefaults.includes(origin) || isTitanVercel) {
       return callback(null, true);
     }
 
@@ -127,9 +131,19 @@ const initializeServices = async () => {
       console.log('✅ Database: Connected and ready');
     } catch (e) {
       console.error('❌ Database Init Warning:', e.message);
-      // We don't throw here to allow partial startup if DB is momentarily down, 
-      // but typically DB is critical.
     }
+
+    // Start Kafka Consumers (non-blocking — failures are soft)
+    try {
+      await startNotificationConsumer();
+      await startStatsConsumer();
+      await startLeaderboardConsumer();
+    } catch (e) { console.warn('⚠️  Kafka Consumers Init Warning:', e.message); }
+
+    // Seed achievement definitions (idempotent)
+    try {
+      await seedAchievements();
+    } catch (e) { console.warn('⚠️  Achievement seed warning:', e.message); }
 
     servicesInitialized = true;
     console.log('✅ Services initialized');
@@ -158,9 +172,12 @@ app.use('/api/payment', require('./modules/payment/payment.routes'));
 app.use('/api/host', require('./modules/host/host.routes')); // Host Module
 app.use('/api/social', require('./modules/social/social.routes')); // New Social Module
 app.use('/api/stats', require('./modules/stats/stats.routes')); // Stats & Leaderboard
+app.use('/api/stats', require('./modules/stats/stats.advanced.routes')); // MMR, Predictions, Overlay
 app.use('/api/notifications', require('./modules/notification/notification.routes')); // Notifications
 app.use('/api/users', require('./modules/user/user.routes')); // User Profile Routes
 app.use('/api/upload', require('./routes/upload.routes')); // File Upload Routes
+app.use('/api/disputes', require('./modules/dispute/dispute.routes')); // Dispute Resolution
+app.use('/api/clans', require('./modules/clans/clan.routes')); // Clan/Org System
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -191,14 +208,17 @@ app.use((req, res) => {
 // Start server if run directly (Local/Docker)
 if (require.main === module) {
   const startServer = async () => {
-    const PORT = process.env.PORT || 5001;
+    const PORT = process.env.PORT || 5000;
     try {
       console.log('🚀 Starting E-sports Tournament API...');
 
       // Explicit initialization for local server
       await initializeServices();
 
-      const server = app.listen(PORT, '0.0.0.0', () => {
+      const httpServer = http.createServer(app);
+      initSocket(httpServer); // Attach Socket.io to the HTTP server
+
+      const server = httpServer.listen(PORT, '0.0.0.0', () => {
         console.log(`\n✅ Server running successfully!`);
         console.log(`📊 API URL: http://0.0.0.0:${PORT}`);
         console.log(`ENVIRONMENT: ${process.env.NODE_ENV || 'development'}\n`);
@@ -211,6 +231,7 @@ if (require.main === module) {
           console.log('🔒 HTTP server closed');
           await closeFirebase();
           await closeRedis();
+          await disconnectProducer();
           console.log('✅ Graceful shutdown complete\n');
           process.exit(0);
         });
