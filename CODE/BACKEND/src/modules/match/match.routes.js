@@ -12,8 +12,12 @@ const { requireNotBanned, requireAdmin } = require('../../middleware/role.middle
 // Get matches for tournament
 router.get('/tournament/:tournamentId', authOptional, matchController.getMatches);
 
+// Get current user's matches (dashboard / live score page)
+router.get('/my', authRequired, matchController.getMyMatches);
+
 // Get single match
 router.get('/:id', authOptional, matchController.getMatch);
+
 
 // Generate bracket (host/admin)
 router.post('/tournament/:tournamentId/generate', authRequired, requireNotBanned, matchController.generateBracket);
