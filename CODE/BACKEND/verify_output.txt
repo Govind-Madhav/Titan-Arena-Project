@@ -1,0 +1,33 @@
+≡ƒÜÇ Starting Extended Settings Verification...
+
+1∩╕ÅΓâú Creating Test User: test_verify_d2bc0dd6@example.com
+Query: insert into `users` (`id`, `username`, `email`, `password_hash`, `recovery_email`, `mfa_enabled`, `firebase_uid`, `auth_provider`, `player_code`, `is_admin`, `legalName`, `dateOfBirth`, `phone`, `phoneVerified`, `phoneVisibility`, `media_visibility`, `invoice_email`, `billing_address`, `deactivated_at`, `username_change_count`, `country_code`, `state`, `city`, `region_code`, `sub_region_code`, `role`, `hostStatus`, `platformUid`, `isBanned`, `emailVerified`, `registrationCompleted`, `termsAccepted`, `passwordUpdatedAt`, `lastLoginAt`, `failedLoginCount`, `bio`, `avatarUrl`, `createdAt`, `updatedAt`) values (?, ?, ?, ?, default, default, default, default, default, default, ?, ?, ?, default, default, default, default, default, default, default, ?, ?, default, ?, default, default, default, default, default, ?, default, ?, default, default, default, default, default, default, default) -- params: ["d53d6e11-d95b-4a10-b7c6-bd3f1b3078d7", "user_dfeaa981", "test_verify_d2bc0dd6@example.com", "$2a$10$jLNQdwhGBjrZ5AfaCwdyE./y888I9LXUplUOXYjhF9hmTzOXbmUS.", "Test User Legal", "2000-01-01 00:00:00.000", "1234567890", "IND", "TestState", 1, true, true]
+Query: insert into `wallet` (`id`, `userId`, `balance`, `locked`, `createdAt`, `updatedAt`) values (?, ?, ?, ?, ?, ?) -- params: ["d692f16c-b9ac-4e83-aaf6-31fbdbb33403", "d53d6e11-d95b-4a10-b7c6-bd3f1b3078d7", "0.00", "0.00", "2026-01-08 17:12:00.435", "2026-01-08 17:12:00.435"]
+Γ£à User created.
+
+2∩╕ÅΓâú Testing Deactivation (Manual DB Update)
+Query: update `users` set `deactivated_at` = ? where `users`.`id` = ? -- params: ["2026-01-08 17:12:00.674", "d53d6e11-d95b-4a10-b7c6-bd3f1b3078d7"]
+Query: update `wallet` set  where `wallet`.`userId` = ? -- params: ["d53d6e11-d95b-4a10-b7c6-bd3f1b3078d7"]
+DrizzleQueryError: Failed query: update `wallet` set  where `wallet`.`userId` = ?
+params: d53d6e11-d95b-4a10-b7c6-bd3f1b3078d7
+    at MySql2PreparedQuery.queryWithCache (E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\drizzle-orm\mysql-core\session.cjs:50:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async MySql2PreparedQuery.execute (E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\drizzle-orm\mysql2\session.cjs:73:19)
+    at async runVerification (E:\My projects\Esports Tournament Website\CODE\BACKEND\scripts\development\verify_settings_logic.js:56:5) {
+  query: 'update `wallet` set  where `wallet`.`userId` = ?',
+  params: [ 'd53d6e11-d95b-4a10-b7c6-bd3f1b3078d7' ],
+  cause: Error: You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'where `wallet`.`userId` = 'd53d6e11-d95b-4a10-b7c6-bd3f1b3078d7'' at line 1
+      at PromisePool.query (E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\mysql2\lib\promise\pool.js:36:22)
+      at E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\drizzle-orm\mysql2\session.cjs:74:29
+      at MySql2PreparedQuery.queryWithCache (E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\drizzle-orm\mysql-core\session.cjs:48:22)
+      at MySql2PreparedQuery.execute (E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\drizzle-orm\mysql2\session.cjs:73:30)
+      at QueryPromise.execute (E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\drizzle-orm\mysql-core\query-builders\update.cjs:133:27)
+      at QueryPromise.then (E:\My projects\Esports Tournament Website\CODE\BACKEND\node_modules\drizzle-orm\query-promise.cjs:44:17)
+      at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+    code: 'ER_PARSE_ERROR',
+    errno: 1064,
+    sql: "update `wallet` set  where `wallet`.`userId` = 'd53d6e11-d95b-4a10-b7c6-bd3f1b3078d7'",
+    sqlState: '42000',
+    sqlMessage: "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'where `wallet`.`userId` = 'd53d6e11-d95b-4a10-b7c6-bd3f1b3078d7'' at line 1"
+  }
+}
