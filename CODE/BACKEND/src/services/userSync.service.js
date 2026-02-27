@@ -9,6 +9,7 @@ const { eq, and } = require('drizzle-orm');
 const crypto = require('crypto');
 const uidService = require('./uid.service');
 const { getRegionForCountry, validateSubRegion } = require('../config/regions.config');
+const { publishEvent } = require('../config/kafka.config');
 
 const syncUser = async (firebaseUser, metadata = {}) => {
     const { uid, phone_number, email } = firebaseUser;
@@ -117,7 +118,8 @@ const syncUser = async (firebaseUser, metadata = {}) => {
                         completionPercentage: metadata.ign ? 60 : 5
                     });
                 } catch (err) {
-                    if (err.code === 'ER_DUP_ENTRY') {
+                    // PostgreSQL unique violation error code
+                    if (err.code === '23505') {
                         throw new Error('Gamertag already taken');
                     }
                     throw err;
@@ -125,6 +127,17 @@ const syncUser = async (firebaseUser, metadata = {}) => {
 
                 const created = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
                 user = created[0];
+            });
+
+            // 🔔 KAFKA: Publish user.registered event for welcome notifications / analytics
+            await publishEvent('user.registered', {
+                eventType: 'USER_REGISTERED',
+                userId: user.id,
+                username: user.username,
+                email: user.email,
+                region: user.regionCode,
+                platformUid: user.platformUid,
+                timestamp: new Date().toISOString()
             });
         } else if (metadata.username && !user.registrationCompleted) {
             // 4. Update existing incomplete user with metadata (Catch-up)
