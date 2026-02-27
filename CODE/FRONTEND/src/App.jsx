@@ -200,7 +200,7 @@ function App() {
         <Route
           path="/host"
           element={
-            <ProtectedRoute allowedRoles={['HOST', 'ADMIN', 'SUPERADMIN']}>
+            <ProtectedRoute allowedRoles={['HOST']}>
               <HostDashboard />
             </ProtectedRoute>
           }
@@ -208,7 +208,7 @@ function App() {
         <Route
           path="/hostTourn"
           element={
-            <ProtectedRoute allowedRoles={['HOST', 'ADMIN', 'SUPERADMIN']}>
+            <ProtectedRoute allowedRoles={['HOST']}>
               <HostManageTourn />
             </ProtectedRoute>
           }
@@ -216,7 +216,7 @@ function App() {
         <Route
           path="/hostUsers"
           element={
-            <ProtectedRoute allowedRoles={['HOST', 'ADMIN', 'SUPERADMIN']}>
+            <ProtectedRoute allowedRoles={['HOST']}>
               <HostManageUser />
             </ProtectedRoute>
           }
@@ -224,7 +224,7 @@ function App() {
         <Route
           path="/hostUsersPayment"
           element={
-            <ProtectedRoute allowedRoles={['HOST', 'ADMIN', 'SUPERADMIN']}>
+            <ProtectedRoute allowedRoles={['HOST']}>
               <HostUserPayments />
             </ProtectedRoute>
           }
@@ -232,7 +232,7 @@ function App() {
         <Route
           path="/declare-winners"
           element={
-            <ProtectedRoute allowedRoles={['HOST', 'ADMIN', 'SUPERADMIN']}>
+            <ProtectedRoute allowedRoles={['HOST']}>
               <HostDeclareWinners />
             </ProtectedRoute>
           }
