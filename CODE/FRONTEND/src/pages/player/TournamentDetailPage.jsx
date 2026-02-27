@@ -29,6 +29,8 @@ export default function TournamentDetailPage() {
     const [tournament, setTournament] = useState(null)
     const [loading, setLoading] = useState(true)
     const [registering, setRegistering] = useState(false)
+    const [collisionData, setCollisionData] = useState(null)
+    const [showCollisionModal, setShowCollisionModal] = useState(false)
 
     useEffect(() => {
         fetchTournament()
@@ -67,7 +69,7 @@ export default function TournamentDetailPage() {
         }
     }
 
-    const handleRegister = async () => {
+    const handleRegister = async (force = false) => {
         if (!isAuthenticated) {
             navigate('/auth', { state: { from: location.pathname } })
             return
@@ -75,11 +77,17 @@ export default function TournamentDetailPage() {
 
         setRegistering(true)
         try {
-            await api.post(`/tournaments/${id}/join`)
+            await api.post(`/tournaments/${id}/join`, { force })
             toast.success('Registered successfully!')
             fetchTournament()
+            setShowCollisionModal(false)
         } catch (error) {
-            toast.error(error.response?.data?.message || 'Registration failed')
+            if (error.response?.status === 409 && error.response?.data?.code === 'COLLISION_WARNING') {
+                setCollisionData(error.response.data.collisionData)
+                setShowCollisionModal(true)
+            } else {
+                toast.error(error.response?.data?.message || 'Registration failed')
+            }
         } finally {
             setRegistering(false)
         }
@@ -313,6 +321,51 @@ export default function TournamentDetailPage() {
                     </div>
                 </div>
             </div>
+            {/* Collision Warning Modal */}
+            {showCollisionModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="bg-[#1a1a2e] border border-red-500/30 rounded-2xl p-6 max-w-md w-full shadow-2xl shadow-red-500/10"
+                    >
+                        <h2 className="text-xl font-bold text-red-400 mb-4 flex items-center gap-2">
+                            <span>⚠️</span> Schedule Collision Warning
+                        </h2>
+
+                        <div className="space-y-4 text-white/80">
+                            <p>
+                                You are already registered for <strong>{collisionData?.name}</strong> which starts around the same time ({collisionData?.startTime ? formatDate(collisionData.startTime) : 'soon'}).
+                            </p>
+
+                            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-sm mt-4">
+                                <p className="font-bold text-red-300 mb-2">Disclaimer:</p>
+                                <ul className="list-disc pl-4 space-y-2 text-red-200/80">
+                                    <li>If you proceed to register and are a no-show on the date, the registering amount <strong>will not be refunded</strong>.</li>
+                                    <li>Providing your game ID to another person to play on your behalf is <strong>illegal</strong> and grounds for an account ban.</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 mt-8">
+                            <button
+                                onClick={() => setShowCollisionModal(false)}
+                                className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-white transition-colors font-medium"
+                                disabled={registering}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => handleRegister(true)}
+                                className="flex-1 py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold transition-colors disabled:opacity-50"
+                                disabled={registering}
+                            >
+                                {registering ? 'Processing...' : 'I Understand & Proceed'}
+                            </button>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
         </div>
     )
 }
