@@ -1,47 +1,34 @@
 /**
- * Copyright (c) 2025 Titan E-sports. All rights reserved.
- * This code is proprietary and confidential.
+ * Admin Routes — /api/admin/*
+ * All routes protected by auth + requireAdmin middleware
  */
 
 const express = require('express');
 const router = express.Router();
 const adminController = require('./admin.controller');
-const { authRequired: authenticate, authorize } = require('../../middleware/auth.middleware');
+const { authRequired, isAdmin } = require('../../middleware/auth.middleware');
 
-// All admin routes require ADMIN role
-router.use(authenticate, authorize('ADMIN'));
+// All admin routes: must be authenticated + admin
+router.use(authRequired, isAdmin);
 
-// User management
-router.get('/users', adminController.getAllUsers);
-router.get('/admins', adminController.getAdmins);
-router.get('/pending-players', adminController.getPendingPlayers);
-router.get('/verified-players', adminController.getVerifiedPlayers);
-
-// Host Management (Legacy/Simple)
-router.get('/pending-hosts', adminController.getPendingHosts); // NEW
-router.get('/verified-hosts', adminController.getVerifiedHosts); // NEW
-router.put('/approve-player/:id', adminController.approvePlayer);
-router.delete('/delete-player/:id', adminController.deletePlayer);
-
-router.get('/users/:id', adminController.getUserById);
-router.put('/users/:id', adminController.updateUser);
-// router.delete('/users/:id', adminController.deleteUser);
-router.put('/users/:id/role', adminController.updateUserRole);
-
-// Tournament management
-router.get('/tournaments', adminController.getAllTournaments);
-router.delete('/tournaments/:id', adminController.deleteTournament);
-router.put('/toggle-tournament-status/:id', adminController.toggleTournamentStatus);
-
-// Statistics/Dashboard
+// Stats
 router.get('/stats', adminController.getStats);
 
-// Super Admin Operations
-router.post('/reassign-workload', authorize('SUPERADMIN'), adminController.reassignWorkload);
+// User Management
+router.get('/users', adminController.getUsers);
+router.post('/users/:id/ban', adminController.banUser);
+router.patch('/users/:id/role', adminController.updateUserRole);
 
-// Host Application Management (Phase 3)
-router.get('/applications', adminController.getPendingHostApplications);
-router.post('/applications/:applicationId/approve', adminController.approveHostApplication);
-router.post('/applications/:applicationId/reject', adminController.rejectHostApplication);
+// Tournament Management
+router.get('/tournaments', adminController.getTournaments);
+router.post('/tournaments/:id/cancel', adminController.cancelTournament);
+
+// Host Applications
+router.get('/host-applications', adminController.getHostApplications);
+router.post('/host-applications/:id/review', adminController.reviewHostApplication);
+
+// Wallet Management
+router.get('/wallets', adminController.getWallets);
+router.post('/wallets/adjust', adminController.adjustWallet);
 
 module.exports = router;
