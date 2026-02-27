@@ -1,1 +1,0 @@
-ALTER TABLE `tournament` ADD `highlightUrl` varchar(500);
