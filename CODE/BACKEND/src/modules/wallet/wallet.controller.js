@@ -4,7 +4,7 @@
  */
 
 const { db } = require('../../db');
-const { wallets, transactions } = require('../../db/schema');
+const { wallets, transactions, users } = require('../../db/schema');
 const { eq, desc } = require('drizzle-orm');
 
 // 1. Get Wallet
@@ -18,7 +18,18 @@ const getWallet = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Wallet not found' });
         }
 
-        res.json({ success: true, data: wallet[0] });
+        // Fetch billing address from users
+        const user = await db.select({ billingAddress: users.billingAddress, invoiceEmail: users.invoiceEmail })
+            .from(users).where(eq(users.id, userId)).limit(1);
+
+        res.json({
+            success: true,
+            data: {
+                ...wallet[0],
+                billingAddress: user[0]?.billingAddress || null,
+                invoiceEmail: user[0]?.invoiceEmail || null
+            }
+        });
     } catch (error) {
         console.error('Get wallet error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch wallet' });
@@ -44,6 +55,32 @@ const getTransactions = async (req, res) => {
     }
 };
 
+// 3. Update Billing Address
+const updateBillingAddress = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { billingAddress, invoiceEmail } = req.body;
+
+        // Simple validation
+        if (billingAddress && typeof billingAddress !== 'object') {
+            return res.status(400).json({ success: false, message: 'Invalid address format' });
+        }
+
+        await db.update(users)
+            .set({
+                billingAddress: billingAddress || undefined,
+                invoiceEmail: invoiceEmail || undefined
+            })
+            .where(eq(users.id, userId));
+
+        res.json({ success: true, message: 'Billing details updated' });
+
+    } catch (error) {
+        console.error('Update billing error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update billing details' });
+    }
+};
+
 // Stubs for Payments features (Later)
 const stubHandler = (req, res) => {
     res.status(501).json({ success: false, message: 'Feature coming soon' });
@@ -53,6 +90,7 @@ module.exports = {
     getWallet,
     updateWallet: stubHandler,
     getTransactions,
+    updateBillingAddress,
     createTransaction: stubHandler,
     initDeposit: stubHandler,
     verifyDeposit: stubHandler,
