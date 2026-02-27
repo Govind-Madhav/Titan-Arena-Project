@@ -1,7 +1,7 @@
 
 const { db } = require('../../db');
-const { users, playerProfiles, playerGameProfiles } = require('../../db/schema');
-const { eq } = require('drizzle-orm');
+const { users, playerProfiles, playerGameProfiles, blockedUsers } = require('../../db/schema');
+const { eq, and } = require('drizzle-orm');
 
 // Get User Profile (Combined)
 exports.getProfile = async (req, res) => {
@@ -123,5 +123,71 @@ exports.removeGameProfile = async (req, res) => {
     } catch (error) {
         console.error('Remove game error:', error);
         res.status(500).json({ success: false, message: 'Failed to remove game profile' });
+    }
+};
+
+// Block User
+exports.blockUser = async (req, res) => {
+    try {
+        const blockerId = req.user.id;
+        const { blockedId } = req.body;
+
+        if (!blockedId || blockerId === blockedId) {
+            return res.status(400).json({ success: false, message: 'Invalid user ID' });
+        }
+
+        await db.insert(blockedUsers).values({
+            blockerId,
+            blockedId
+        });
+
+        res.json({ success: true, message: 'User blocked' });
+    } catch (error) {
+        if (error.code === '23505') {
+            return res.json({ success: true, message: 'User already blocked' });
+        }
+        console.error('Block user error:', error);
+        res.status(500).json({ success: false, message: 'Failed to block user' });
+    }
+};
+
+// Unblock User
+exports.unblockUser = async (req, res) => {
+    try {
+        const blockerId = req.user.id;
+        const { blockedId } = req.body;
+
+        await db.delete(blockedUsers)
+            .where(and(
+                eq(blockedUsers.blockerId, blockerId),
+                eq(blockedUsers.blockedId, blockedId)
+            ));
+
+        res.json({ success: true, message: 'User unblocked' });
+    } catch (error) {
+        console.error('Unblock user error:', error);
+        res.status(500).json({ success: false, message: 'Failed to unblock user' });
+    }
+};
+
+// Get Blocked Users
+exports.getBlockedUsers = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const blockedList = await db.select({
+            userId: users.id,
+            username: users.username,
+            avatarUrl: playerProfiles.avatarUrl
+        })
+            .from(blockedUsers)
+            .innerJoin(users, eq(blockedUsers.blockedId, users.id))
+            .leftJoin(playerProfiles, eq(users.id, playerProfiles.userId))
+            .where(eq(blockedUsers.blockerId, userId));
+
+        res.json({ success: true, data: blockedList });
+    } catch (error) {
+        console.error('Get blocked users error:', error);
+        res.status(500).json({ success: false, message: 'Failed to get blocked users' });
     }
 };
