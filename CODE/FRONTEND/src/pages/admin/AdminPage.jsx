@@ -50,10 +50,10 @@ const AdminDashboard = () => {
                 const res = await api.get('/admin/stats');
                 const data = res.data.data;
                 setStats({
-                    totalUsers: data.users || 0,
-                    totalTournaments: data.tournaments || 0,
-                    activeHosts: 0,
-                    revenue: 0,
+                    totalUsers: data.users?.total || 0,
+                    totalTournaments: data.tournaments?.total || 0,
+                    activeHosts: data.users?.hosts || 0,
+                    revenue: data.platform?.totalBalance || 0,
                     pendingKYC: 0
                 });
             } catch (error) {
@@ -291,6 +291,14 @@ const AdminDashboard = () => {
                                         icon={Trophy}
                                         color="bg-pink-500/10 hover:bg-pink-500/20"
                                         borderColor="border-pink-500/20"
+                                    />
+                                    <ActionCard
+                                        to="/manageTourn?create=true"
+                                        title="Create Tournament"
+                                        desc="Host a new tournament as admin."
+                                        icon={Target}
+                                        color="bg-green-500/10 hover:bg-green-500/20"
+                                        borderColor="border-green-500/20"
                                     />
                                 </div>
                             </section>
