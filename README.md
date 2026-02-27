@@ -1,96 +1,241 @@
-# 🌌 Titan Arena — The Next Generation Esports Battlefield
+# 🌌 Titan Arena — Enterprise-Grade Esports Infrastructure
 
-Titan Arena is a premium, high-performance esports tournament management platform designed for the modern gaming era. Built with a focus on immersive aesthetics, real-time persistence, and secure competitive play.
+Titan Arena is a premium, high-fidelity esports tournament management platform engineered for low-latency tournament orchestration, secure financial transactions, and high-engagement user experiences.
 
-![Titan Arena Logo](https://img.shields.io/badge/TITAN-ARENA-8B5CF6?style=for-the-badge&logo=riot-games&logoColor=white)
-![React 19](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)
-![Node J](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=node.js&logoColor=white)
-![Drizzle ORM](https://img.shields.io/badge/Drizzle-ORM-C5F74F?style=for-the-badge&logo=drizzle&logoColor=black)
-
----
-
-## ✨ Key Features
-
-### 🛡️ Hardened Authentication
-- **Hybrid Security**: Unified Firebase Identity and JWT-based session management.
-- **Silent Refresh**: Seamless session persistence via HttpOnly cookies and automatic token renewal.
-- **Uplink Verification**: Secure OTP-based email verification flow with branded templates.
-
-### 🏆 Tournament Lifecycle
-- **Elite Hosting**: Comprehensive tournament management system for verified hosts.
-- **Global Leaderboards**: Real-time rank tracking with local (IN) and global filters.
-- **Team Synergy**: Full-featured team management, scrim coordination, and player discovery.
-
-### 🎨 Immersive Experience
-- **Premium Aesthetics**: Vibrant dark-mode interface with glassmorphism, neon accents, and smooth GSAP/Framer Motion animations.
-- **3D Visuals**: Interactive background effects powered by Three.js and OGL.
-- **Dynamic Snapshots**: Optimized layout breakpoints ensuring a "Titan Look" across all screen sizes.
-
-### 💳 Titan Wallet
-- **Instant Rewards**: Secure wallet integration for crystalline transaction tracking and prize distribution.
-- **Currency**: Native integration with localized currency support (₹).
+![Titan Arena Banner](https://img.shields.io/badge/TITAN-ARENA-8B5CF6?style=for-the-badge&logo=riot-games&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-22-339933?style=flat&logo=node.js)
+![Java](https://img.shields.io/badge/Java-21-ED8B00?style=flat&logo=openjdk)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.2-6DB33F?style=flat&logo=spring)
+![Apache Kafka](https://img.shields.io/badge/Apache_Kafka-7.6-231F20?style=flat&logo=apache-kafka)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat&logo=postgresql)
+![React](https://img.shields.io/badge/React-19-61DAFB?style=flat&logo=react)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker)
 
 ---
 
-## 🛠️ Tech Stack
+## 🏗️ Architecture Overview
 
-### Frontend
-- **Framework**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
-- **Animation**: [Framer Motion](https://www.framer.com/motion/), [GSAP](https://gsap.com/)
-- **3D Graphics**: [Three.js](https://threejs.org/), [React Three Fiber](https://r3f.docs.pmnd.rs/)
-- **State Management**: [Zustand](https://zustand-demo.pmnd.rs/)
-- **Styling**: Vanilla CSS + [Tailwind CSS](https://tailwindcss.com/)
+Titan Arena is a **polyglot microservices** system. The Node.js backend handles realtime API traffic and publishes domain events to **Apache Kafka**. A dedicated **Java/Spring Boot** engine consumes those events to perform intensive bracket computation and match orchestration, fully decoupled from the user-facing API.
 
-### Backend
-- **Framework**: [Express.js](https://expressjs.com/) (Node.js)
-- **Database**: [MySQL](https://www.mysql.com/) + [Drizzle ORM](https://orm.drizzle.team/)
-- **Cache/Session**: [Redis](https://redis.io/)
-- **Identity**: [Firebase Admin SDK](https://firebase.google.com/docs/admin)
-- **Validation**: [Zod](https://zod.dev/)
+```mermaid
+graph TD
+    subgraph "Frontend Layer (React 19 + Vite)"
+        UI["SPA (GSAP / Three.js)"]
+        Store["Zustand Store (Auth/Sync)"]
+        Axios["Axios Interceptors"]
+    end
+
+    subgraph "Node.js Backend (Express.js)"
+        API["REST API — Port 5000"]
+        Auth["Firebase JWT Auth Guard"]
+        Modules["Domain Modules\n(Wallet / KYC / Tournament / Match / Dispute)"]
+        Consumers["Kafka Consumers\n(Notification / Stats)"]
+    end
+
+    subgraph "Java Tournament Engine (Spring Boot 3.2)"
+        JavaAPI["Bracket REST API — Port 8080"]
+        KConsumer["Kafka Consumer\n(tournament.created / match.completed)"]
+        BracketSvc["Bracket Service\n(Single Elimination)"]
+        KProducer["Kafka Producer\n(match.scheduled)"]
+    end
+
+    subgraph "Infrastructure Layer"
+        Kafka[("Apache Kafka + Zookeeper")]
+        PG[("PostgreSQL 16 (Drizzle ORM)")]
+        Redis[("Redis 7 (Cache / Sessions)")]
+        Firebase["Firebase Auth (Identity)"]
+    end
+
+    %% Frontend → Backend
+    UI --> Store --> Axios
+    Axios -- "Bearer JWT" --> API
+    API --> Auth --> Firebase
+    Auth --> Modules
+
+    %% Backend → DB + Kafka
+    Modules --> PG
+    Modules -- "publishEvent()" --> Kafka
+
+    %% Kafka → Java Engine
+    Kafka --> KConsumer --> BracketSvc --> KProducer --> Kafka
+
+    %% Kafka → Node.js Consumers
+    Kafka --> Consumers --> PG
+
+    %% Java REST → Node.js
+    API -- "GET /api/brackets/:id" --> JavaAPI
+
+    %% Session / Cache
+    Modules --> Redis
+```
+
+### Event Bus — Kafka Topics
+
+| Topic | Publisher | Consumer(s) |
+|---|---|---|
+| `user.registered` | Node.js (`userSync.service`) | *(future: welcome emails)* |
+| `tournament.created` | Node.js (`tournament.controller`) | Java Engine (bracket gen) |
+| `tournament.started` | Node.js (`tournament.controller`) | Node.js Notification Consumer |
+| `tournament.ended` | Node.js (`tournament.controller`) | Node.js Notification + Stats |
+| `match.completed` | Node.js (`match.controller`) | Java Engine + Notification + Stats |
+| `match.scheduled` | Java Engine | Node.js Notification Consumer |
+| `wallet.credited` | Node.js (`wallet.service`) | *(future: analytics)* |
+| `wallet.debited` | Node.js (`wallet.service`) | *(future: analytics)* |
+| `kyc.approved` | Node.js (`kyc.controller`) | *(future: role promotion)* |
+| `kyc.rejected` | Node.js (`kyc.controller`) | *(future: user notification)* |
+| `dispute.resolved` | Node.js (`dispute.controller`) | *(future: auto-refund)* |
 
 ---
 
-## 🚀 Getting Started
+## 📂 Project Structure
+
+```text
+Esports Tournament Website/
+├── docker-compose.yml            # Full stack orchestration (6 services)
+├── .env                          # Root env (JWT secrets, SMTP, Firebase, etc.)
+│
+└── CODE/
+    ├── BACKEND/                  # Node.js / Express API (Port 5000)
+    │   ├── Dockerfile
+    │   ├── package.json
+    │   └── src/
+    │       ├── index.js          # Entry point, service initialization
+    │       ├── config/
+    │       │   ├── firebase.config.js
+    │       │   ├── redis.config.js
+    │       │   ├── kafka.config.js   ← NEW: KafkaJS producer + consumer factory
+    │       │   └── regions.config.js
+    │       ├── db/
+    │       │   ├── index.js
+    │       │   └── schema.js         # Drizzle ORM — 25+ tables (source of truth)
+    │       ├── middleware/
+    │       │   ├── auth.middleware.js
+    │       │   └── rateLimiter.js
+    │       ├── modules/
+    │       │   ├── auth/
+    │       │   ├── tournament/
+    │       │   │   ├── tournament.controller.js
+    │       │   │   ├── tournament.events.js  ← NEW: Kafka publishers
+    │       │   │   ├── tournament.routes.js
+    │       │   │   ├── tournament.schema.js
+    │       │   │   └── tournament.constants.js
+    │       │   ├── match/
+    │       │   │   └── match.controller.js   ← publishes match.completed
+    │       │   ├── notification/
+    │       │   │   ├── notification.controller.js
+    │       │   │   └── notification.consumer.js  ← NEW: Kafka consumer
+    │       │   ├── stats/
+    │       │   │   └── stats.consumer.js    ← NEW: Kafka consumer
+    │       │   ├── wallet/
+    │       │   │   └── wallet.service.js    ← publishes wallet events
+    │       │   ├── dispute/
+    │       │   │   └── dispute.controller.js ← publishes dispute.resolved
+    │       │   ├── kyc/
+    │       │   │   └── kyc.controller.js    ← publishes kyc events
+    │       │   ├── team/
+    │       │   ├── admin/
+    │       │   └── payment/
+    │       └── services/
+    │           ├── userSync.service.js  ← publishes user.registered
+    │           ├── audit.service.js
+    │           ├── hostStats.service.js
+    │           ├── otp.service.js
+    │           ├── stats.service.js
+    │           └── uid.service.js
+    │
+    ├── JAVA-TOURNAMENT-ENGINE/   # Spring Boot 3.2 Microservice (Port 8080)
+    │   ├── Dockerfile            # Multi-stage Maven → JRE 21 Alpine
+    │   ├── pom.xml               # Spring Boot, Kafka, JPA, PostgreSQL, Lombok
+    │   └── src/main/
+    │       ├── resources/
+    │       │   └── application.yml
+    │       └── java/com/titanarena/tournamentengine/
+    │           ├── TournamentEngineApplication.java
+    │           ├── config/
+    │           │   ├── KafkaConfig.java     # Manual ack + idempotent producer
+    │           │   └── AsyncConfig.java     # Thread pool for @Async methods
+    │           ├── domain/                  # JPA entities + repos co-located
+    │           │   ├── Tournament.java
+    │           │   ├── Match.java
+    │           │   ├── TournamentRepository.java
+    │           │   └── MatchRepository.java
+    │           ├── bracket/                 # Bracket generation (open for extension)
+    │           │   ├── BracketService.java  # Facade — picks strategy by format
+    │           │   └── strategy/
+    │           │       ├── BracketStrategy.java           # Interface
+    │           │       └── SingleEliminationStrategy.java # Phase 2 ✓
+    │           │       # ↑ Add DoubleEliminationStrategy / RoundRobinStrategy here
+    │           ├── orchestration/           # Match lifecycle coordination
+    │           │   ├── MatchOrchestratorService.java
+    │           │   └── ParticipantResolverService.java
+    │           ├── event/                   # Kafka I/O (not tied to "kafka" impl)
+    │           │   ├── consumer/
+    │           │   │   └── TournamentEventConsumer.java
+    │           │   ├── producer/
+    │           │   │   └── MatchEventProducer.java
+    │           │   └── dto/
+    │           │       ├── inbound/         # Events received from Node.js
+    │           │       │   └── TournamentCreatedEvent.java
+    │           │       └── outbound/        # Events published by Java engine
+    │           │           └── MatchScheduledEvent.java
+    │           └── api/                     # REST controllers
+    │               └── BracketController.java
+
+    │
+    └── FRONTEND/                 # React 19 + Vite SPA (Port 80 via Nginx)
+        ├── Dockerfile
+        └── src/
+            ├── Components/       # Atomic UI, Layouts, WebGL VFX shaders
+            ├── lib/              # Axios API client, country/location data
+            ├── pages/            # Player / Host / Admin route views
+            └── store/            # Zustand global state (Auth/Sync)
+```
+
+---
+
+## 🚀 Running the Full Stack
 
 ### Prerequisites
-- Node.js v18+
-- MySQL Server
-- Redis Server
-- Firebase Project (Service Account)
+- Docker Desktop
+- `.env` file configured (see `.env.example`)
 
-### Setup
+### Start All Services
+```bash
+docker-compose up -d
+```
 
-1. **Clone the Repository**
-   ```bash
-   git clone https://github.com/Govind-Madhav/Titan-Arena-Project.git
-   cd Titan-Arena-Project
-   ```
+This launches **6 containers**:
 
-2. **Backend Configuration**
-   - Navigate to `CODE/BACKEND`
-   - Create a `.env` file based on `.env.example`
-   - Install dependencies: `npm install`
-   - Push schema: `npm run db:push`
-   - Start dev server: `npm run dev`
+| Container | Port | Description |
+|---|---|---|
+| `esports-frontend` | 80 | React SPA (Nginx) |
+| `esports-backend` | 5000 | Node.js API |
+| `esports-tournament-engine` | 8080 | Java Bracket Engine |
+| `esports-postgres` | 5432 | PostgreSQL 16 |
+| `esports-redis` | 6379 | Redis 7 |
+| `esports-kafka` | 9092 | Apache Kafka |
+| `esports-zookeeper` | — | Kafka coordination |
 
-3. **Frontend Configuration**
-   - Navigate to `CODE/FRONTEND`
-   - Create a `.env` file with `VITE_API_URL`
-   - Install dependencies: `npm install`
-   - Start vite: `npm run dev`
+### Development (without Docker)
+```bash
+# Backend
+cd CODE/BACKEND && npm run dev
+
+# Java Engine (requires DB + Kafka running)
+cd CODE/JAVA-TOURNAMENT-ENGINE && mvn spring-boot:run
+
+# Frontend
+cd CODE/FRONTEND && npm run dev
+```
+
+### Database Migrations
+```bash
+cd CODE/BACKEND
+npm run db:push    # Push Drizzle schema to PostgreSQL
+npm run db:studio  # Drizzle Studio UI
+```
 
 ---
 
-## 📜 Dev Scripts
-
-| Script | Description |
-| :--- | :--- |
-| `npm run dev` | Starts server/frontend in watch mode |
-| `npm run db:push` | Pushes local Drizzle schema to MySQL |
-| `npm run worker` | Starts the Firebase background sync worker |
-| `npm run seed` | Seeds the database with initial tournament data |
-
----
-
-## 🛡️ License
-Proprietary. Copyright © 2025 Titan E-sports. All rights reserved.
+## 🛡️ License & Legal
+**Proprietary Software**. Copyright © 2025 Titan E-sports. All rights reserved. Access to this source code does not grant rights for reproduction or redistribution.
