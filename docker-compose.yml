@@ -1,6 +1,20 @@
-version: '3.8'
+version: '3.9'
 
 services:
+  # Frontend (React + Nginx)
+  frontend:
+    build:
+      context: ./CODE/FRONTEND
+      dockerfile: Dockerfile
+    container_name: esports-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - esports-network
+
   # Backend API
   backend:
     build:
@@ -13,7 +27,14 @@ services:
     environment:
       - PORT=5000
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL}
+      # Database connection for Entrypoint Check
+      - DB_HOST=database
+      - DB_PORT=5432
+      # Database connection for Drizzle/App
+      # We override the .env value to ensure it points to the container
+      - DATABASE_URL=postgresql://postgres:root1@database:5432/esports_tournament
+
+      # Secrets and Config
       - JWT_SECRET=${JWT_SECRET}
       - JWT_ACCESS_EXPIRY=${JWT_ACCESS_EXPIRY}
       - JWT_REFRESH_EXPIRY=${JWT_REFRESH_EXPIRY}
@@ -27,10 +48,15 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - FRONTEND_URL=${FRONTEND_URL}
+      - KAFKA_BROKER=kafka:9092
+      - KAFKA_CLIENT_ID=titan-arena-backend
     volumes:
       - ./CODE/BACKEND/Firebase:/app/Firebase:ro
+      - uploads-data:/app/uploads
     depends_on:
+      - database
       - redis
+      - kafka
     networks:
       - esports-network
     healthcheck:
@@ -39,6 +65,28 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # Database (PostgreSQL)
+  database:
+    image: postgres:16-alpine
+    container_name: esports-postgres
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root1
+      POSTGRES_DB: esports_tournament
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - esports-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      timeout: 20s
+      retries: 10
+      start_period: 20s
 
   # Redis Cache
   redis:
@@ -57,10 +105,80 @@ services:
       timeout: 5s
       retries: 5
 
+  # Zookeeper (required by Kafka)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: esports-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - esports-network
+
+  # Kafka Message Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: esports-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      - zookeeper
+    networks:
+      - esports-network
+    healthcheck:
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Java Tournament Engine (bracket generation + match orchestration)
+  tournament-engine:
+    build:
+      context: ./CODE/JAVA-TOURNAMENT-ENGINE
+      dockerfile: Dockerfile
+    container_name: esports-tournament-engine
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=database
+      - DB_PORT=5432
+      - DB_NAME=esports_tournament
+      - DB_USER=postgres
+      - DB_PASS=root1
+      - KAFKA_BROKER=kafka:9092
+      - SPRING_PROFILES_ACTIVE=production
+    depends_on:
+      - database
+      - kafka
+    networks:
+      - esports-network
+    healthcheck:
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
 networks:
   esports-network:
     driver: bridge
 
 volumes:
+  postgres-data:
+    driver: local
   redis-data:
+    driver: local
+  uploads-data:
     driver: local
