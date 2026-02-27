@@ -4,9 +4,14 @@
  */
 
 const { db } = require('../../db');
-const { matches, tournaments, registrations, users, teams, disputes } = require('../../db/schema');
+const { matches, tournaments, registrations, users, teams, teamMembers, disputes, payouts } = require('../../db/schema');
 const { eq, and, desc, asc, or } = require('drizzle-orm');
 const walletService = require('../wallet/wallet.service');
+const { publishEvent } = require('../../config/kafka.config');
+const { publishTournamentEnded } = require('../tournament/tournament.events');
+const mmrService = require('../../services/mmr.service');
+const achievementService = require('../../services/achievement.service');
+const { broadcastMatchCompleted, broadcastScoreUpdate } = require('../../config/socket.config');
 
 // Get matches for tournament
 exports.getMatches = async (req, res) => {
@@ -48,6 +53,75 @@ exports.getMatch = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to fetch match' });
     }
 };
+
+// Get current user's matches (across all tournaments — solo AND team)
+exports.getMyMatches = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        // Find all teams this user belongs to
+        const userTeamRows = await db
+            .select({ teamId: teamMembers.teamId })
+            .from(teamMembers)
+            .where(eq(teamMembers.userId, userId));
+        const userTeamIds = userTeamRows.map(r => r.teamId);
+
+        // Build participant filter: solo (userId directly) OR team member
+        const participantConditions = [
+            eq(matches.participantAId, userId),
+            eq(matches.participantBId, userId),
+            ...userTeamIds.map(tid => eq(matches.participantAId, tid)),
+            ...userTeamIds.map(tid => eq(matches.participantBId, tid)),
+        ];
+
+        const rows = await db.select({
+            match: matches,
+            tournament: { id: tournaments.id, name: tournaments.name, game: tournaments.game, type: tournaments.type },
+            dispute: { id: disputes.id, reason: disputes.reason },
+        })
+            .from(matches)
+            .leftJoin(tournaments, eq(matches.tournamentId, tournaments.id))
+            .leftJoin(disputes, eq(matches.id, disputes.matchId))
+            .where(or(...participantConditions))
+            .orderBy(desc(matches.scheduledAt));
+
+        // Enrich: add my-win flag and opponent info
+        const enriched = rows.map(r => {
+            const m = { ...r.match };
+            m.tournamentName = r.tournament?.name || null;
+            m.tournamentGame = r.tournament?.game || null;
+            m.tournamentType = r.tournament?.type || 'SOLO';
+
+            const isTeam = m.tournamentType === 'TEAM';
+            if (isTeam) {
+                // myTeamId = whichever of participantA/B is one of the user's teams
+                const myTeamId = userTeamIds.includes(m.participantAId) ? m.participantAId : m.participantBId;
+                m.myTeamId = myTeamId;
+                m.myWin = m.winnerId === myTeamId;
+                m.opponentId = m.participantAId === myTeamId ? m.participantBId : m.participantAId;
+            } else {
+                m.myWin = m.winnerId === userId;
+                m.opponentId = m.participantAId === userId ? m.participantBId : m.participantAId;
+            }
+
+            // HIDE OPPONENT IF NOT LIVE
+            const tStatus = r.tournament?.status;
+            if (tStatus !== 'ONGOING' && tStatus !== 'COMPLETED') {
+                m.opponentId = null;
+                m.opponentName = 'Revealed at Start';
+            }
+
+            if (r.dispute?.id) m.disputeReason = r.dispute.reason;
+            return m;
+        });
+
+        res.json({ success: true, data: enriched });
+    } catch (error) {
+        console.error('Get my matches error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch your matches' });
+    }
+};
+
 
 // Generate bracket
 exports.generateBracket = async (req, res) => {
@@ -177,7 +251,7 @@ exports.generateBracket = async (req, res) => {
 // Submit match result
 exports.submitResult = async (req, res) => {
     try {
-        const { scoreA, scoreB, winnerId } = req.body;
+        const { scoreA, scoreB, winnerId, mvpUserId } = req.body;
 
         // Fetch match with tournament
         const rows = await db.select({
@@ -231,91 +305,224 @@ exports.submitResult = async (req, res) => {
                 .where(eq(matches.id, nextMatch.id));
         }
 
-        res.json({ success: true, message: 'Result submitted' });
+        // 🔔 KAFKA: Publish match.completed event for notification + stats consumers
+        const loserId = match.participantAId === winnerId ? match.participantBId : match.participantAId;
+        await publishEvent('match.completed', {
+            eventType: 'MATCH_COMPLETED',
+            matchId: match.id,
+            tournamentId: match.tournamentId,
+            tournamentName: tournament.name,
+            tournamentType: tournament.type,
+            game: tournament.game,
+            winnerId,
+            loserId,
+            mvpUserId: mvpUserId || null,   // ← forwarded to leaderboard/stats consumers
+            scoreA,
+            scoreB,
+            round: match.round,
+            timestamp: new Date().toISOString()
+        });
+
+        // ⚡ WebSocket: Broadcast real-time match result
+        broadcastScoreUpdate({ matchId: match.id, tournamentId: match.tournamentId, scoreA, scoreB, participantAId: match.participantAId, participantBId: match.participantBId });
+        broadcastMatchCompleted({ matchId: match.id, tournamentId: match.tournamentId, winnerId, round: match.round });
+
+        // 🧠 MMR: Update Elo ratings — route to team or solo path (non-blocking)
+        if (winnerId && loserId && winnerId !== loserId) {
+            const isTeamTournament = tournament.type === 'TEAM';
+
+            if (isTeamTournament) {
+                // Team path: winnerId/loserId are teamIds
+                // processTeamMatchResult handles: team Elo + per-member Elo + MVP bonus
+                mmrService.processTeamMatchResult(
+                    winnerId,               // winTeamId
+                    loserId,                // loseTeamId
+                    match.id,
+                    match.tournamentId,
+                    mvpUserId || null,
+                )
+                    .then(({ teamWinner }) => {
+                        achievementService.processMatchWin(
+                            winnerId, teamWinner, undefined,
+                            { matchId: match.id, tournamentId: match.tournamentId, isTeam: true, mvpUserId }
+                        ).catch(console.error);
+                    })
+                    .catch((err) => console.error('Team MMR update failed:', err.message));
+            } else {
+                // Solo path: winnerId/loserId are userIds
+                mmrService.processMatchResult(winnerId, loserId)
+                    .then(({ winner }) => {
+                        achievementService.processMatchWin(winnerId, winner, undefined, { matchId: match.id, tournamentId: match.tournamentId })
+                            .catch(console.error);
+                    })
+                    .catch((err) => console.error('MMR update failed:', err.message));
+            }
+        }
+
+        res.json({
+            success: true,
+            message: 'Result submitted',
+            ...(mvpUserId && { mvpUserId })  // echo back MVP so frontend can highlight it
+        });
     } catch (error) {
         console.error('Submit result error:', error);
         res.status(500).json({ success: false, message: 'Failed to submit result' });
     }
 };
 
-// Upload proof
+
+// Upload match proof screenshot/video
 exports.uploadProof = async (req, res) => {
     try {
         const { proofUrl } = req.body;
-        // matches schema does NOT currently have proofUrl.
-        // I checked schema.js in step 2050, lines 260+, it is NOT there.
-        // It has `metadata`? No.
-        // If the legacy code had it, the schema.js is incomplete.
-        // I will assume for now we cannot support this until schema is updated, OR use metadata.
-        // But let's check legacy code again... lines 241: data: { proofUrl }
-        // The Prisma schema had it. Drizzle schema missed it.
-        // To avoid crash, I will create a metadata JSON update instead.
+        if (!proofUrl) {
+            return res.status(400).json({ success: false, message: 'proofUrl is required' });
+        }
 
-        // Waiting for schema update is better, but user wants fixes now. 
-        // I will stub this with a comment.
-        // Actually, I should probably check if `matches` has `metadata` field?
-        // Line 274: locked... startTime...
-        // No metadata field in matches table in schema.js.
-        // I'll skip the update for now to prevent SQL error, but log it.
-        console.warn('Match proof upload temporarily disabled due to missing schema field.');
+        const matchRows = await db.select().from(matches).where(eq(matches.id, req.params.id));
+        if (!matchRows.length) return res.status(404).json({ success: false, message: 'Match not found' });
+        const match = matchRows[0];
 
-        // Alternatively, I can't really do anything if the column is missing.
-        res.json({ success: true, message: 'Proof upload stubbed (Schema Update Pending)' });
+        const tournamentRows = await db.select().from(tournaments).where(eq(tournaments.id, match.tournamentId));
+        const tournament = tournamentRows[0];
+        if (tournament.hostId !== req.user.id && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+
+        await db.update(matches)
+            .set({ proofUrl, updatedAt: new Date() })
+            .where(eq(matches.id, req.params.id));
+
+        res.json({ success: true, message: 'Proof uploaded successfully', data: { matchId: match.id, proofUrl } });
     } catch (error) {
         console.error('Upload proof error:', error);
         res.status(500).json({ success: false, message: 'Failed to upload proof' });
     }
 };
 
+
 // Complete tournament and distribute prizes
 exports.completeTournament = async (req, res) => {
     try {
         const tournamentId = req.params.tournamentId;
 
-        // Fetch tournament
         const tournamentResult = await db.select().from(tournaments).where(eq(tournaments.id, tournamentId));
         if (!tournamentResult.length) return res.status(404).json({ success: false, message: 'Tournament not found' });
         const tournament = tournamentResult[0];
 
-        // Fetch matches
+        if (tournament.hostId !== req.user.id && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
+        if (tournament.status === 'COMPLETED') {
+            return res.status(400).json({ success: false, message: 'Tournament already completed' });
+        }
+
+        // Find the final match (highest round, must be COMPLETED)
         const tournamentMatches = await db.select().from(matches)
             .where(and(eq(matches.tournamentId, tournamentId), eq(matches.status, 'COMPLETED')))
             .orderBy(desc(matches.round));
 
-        // Fetch matches registrations/teams?
-        // We need to know team members for distribution.
-
-        if (tournament.hostId !== req.user.id && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
-            return res.status(403).json({ success: false, message: 'Access denied' });
+        if (!tournamentMatches.length) {
+            return res.status(400).json({ success: false, message: 'No completed matches found' });
         }
 
-        // Find final match
         const maxRound = Math.max(...tournamentMatches.map(m => m.round));
         const finalMatch = tournamentMatches.find(m => m.round === maxRound);
 
-        if (!finalMatch) {
-            return res.status(400).json({ success: false, message: 'Final match not completed yet' });
+        if (!finalMatch?.winnerId) {
+            return res.status(400).json({ success: false, message: 'Final match has no winner yet' });
         }
 
-        const winners = [];
-        // 1st place
         const firstPlaceId = finalMatch.winnerId;
-        const secondPlaceId = finalMatch.participantAId === firstPlaceId ? finalMatch.participantBId : finalMatch.participantAId;
+        const secondPlaceId = finalMatch.participantAId === firstPlaceId
+            ? finalMatch.participantBId
+            : finalMatch.participantAId;
 
-        winners.push({ position: 1, id: firstPlaceId });
-        winners.push({ position: 2, id: secondPlaceId });
+        // Semi-final losers = 3rd place candidates
+        const semiFinals = tournamentMatches.filter(m => m.round === maxRound - 1);
+        const thirdPlaceCandidates = semiFinals
+            .map(m => (m.participantAId === m.winnerId ? m.participantBId : m.participantAId))
+            .filter(Boolean);
 
-        // NOTE: This implementation simplifies the legacy payout logic which relied on a separate Payout table
-        // which is NOT in the Drizzle schema I viewed.
-        // The legacy code had `tournament.payouts`.
-        // Schema lines 152+ for tournament do NOT show a relation to payouts or a payouts table.
-        // I must assume Payouts table is also missing from Drizzle schema.
+        const isTeam = tournament.type === 'TEAM';
 
-        res.status(501).json({
-            success: false,
-            message: 'Automatic prize distribution is temporarily unavailable pending Schema synchronization.'
+        /**
+         * Resolve participantId → array of userIds to pay.
+         * For SOLO: [participantId] (already a userId)
+         * For TEAM: all members of that team (split prize evenly)
+         */
+        const resolvePayeeUserIds = async (participantId) => {
+            if (!isTeam) return [participantId];
+            const members = await db
+                .select({ userId: teamMembers.userId })
+                .from(teamMembers)
+                .where(eq(teamMembers.teamId, participantId));
+            return members.map(m => m.userId);
+        };
+
+        // Prize split: 50% / 30% / top-3 20%
+        const prizePool = tournament.prizePool;
+        const podiumPlans = [
+            { position: 1, participantId: firstPlaceId, share: 0.50 },
+            { position: 2, participantId: secondPlaceId, share: 0.30 },
+            ...thirdPlaceCandidates.map(id => ({ position: 3, participantId: id, share: 0.20 / Math.max(thirdPlaceCandidates.length, 1) })),
+        ].filter(p => p.participantId);
+
+        const payoutRows = [];
+        const creditResults = [];
+
+        for (const plan of podiumPlans) {
+            const totalForPosition = Math.floor(prizePool * plan.share);
+            if (totalForPosition <= 0) continue;
+
+            // Resolve to individual user IDs (TEAM → split equally among members)
+            const payeeIds = await resolvePayeeUserIds(plan.participantId);
+            const perPersonAmount = Math.floor(totalForPosition / Math.max(payeeIds.length, 1));
+
+            for (const userId of payeeIds) {
+                try {
+                    await walletService.credit(
+                        userId,
+                        perPersonAmount,
+                        'CREDIT',           // type
+                        'PRIZE',            // source
+                        `${getOrdinal(plan.position)} place prize — ${tournament.name}`, // message
+                        null,               // metadata
+                        tournamentId        // tournamentId
+                    );
+                    payoutRows.push({ tournamentId, userId, position: plan.position, amount: perPersonAmount, status: 'PAID', paidAt: new Date() });
+                    creditResults.push({ position: plan.position, userId, amount: perPersonAmount, status: 'PAID' });
+                } catch (err) {
+                    console.error(`Prize credit failed for ${userId}:`, err.message);
+                    payoutRows.push({ tournamentId, userId, position: plan.position, amount: perPersonAmount, status: 'FAILED' });
+                    creditResults.push({ position: plan.position, userId, amount: perPersonAmount, status: 'FAILED' });
+                }
+            }
+
+            // 🏅 Achievement trigger — award CHAMPION/PODIUM/UNTOUCHABLE to each payee (non-blocking)
+            for (const userId of payeeIds) {
+                achievementService.processTournamentResult(userId, tournamentId, plan.position)
+                    .catch(err => console.error(`Achievement trigger failed for ${userId}:`, err.message));
+            }
+        }
+
+        if (payoutRows.length) {
+            await db.insert(payouts).values(payoutRows);
+        }
+
+        // Mark tournament as COMPLETED, set winner
+        await db.update(tournaments)
+            .set({ status: 'COMPLETED', winnerId: firstPlaceId, updatedAt: new Date() })
+            .where(eq(tournaments.id, tournamentId));
+
+        // 🔔 KAFKA: notify consumers
+        await publishTournamentEnded(tournamentId, firstPlaceId, tournament.prizePool);
+
+        res.json({
+            success: true,
+            message: 'Tournament completed and prizes distributed',
+            data: { tournamentId, winner: firstPlaceId, payouts: creditResults },
         });
-
     } catch (error) {
         console.error('Complete tournament error:', error);
         res.status(500).json({ success: false, message: 'Failed to complete tournament' });
