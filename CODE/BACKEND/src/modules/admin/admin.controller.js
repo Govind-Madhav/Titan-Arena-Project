@@ -1,677 +1,238 @@
 /**
- * Copyright (c) 2025 Titan E-sports. All rights reserved.
- * This code is proprietary and confidential.
+ * Admin Controller
+ * All endpoints require isAdmin: true or role: ADMIN/SUPERADMIN
  */
 
 const { db } = require('../../db');
-const { users, tournaments, registrations, matches, playerProfiles, auditLogs, adminAssignments, hostProfiles, hostApplications } = require('../../db/schema');
-const uidService = require('../../services/uid.service'); // Added
-const { eq, desc, count, and, or, sql, ne } = require('drizzle-orm');
+const {
+    users, wallets, playerProfiles, hostProfiles,
+    tournaments, tournamentParticipants, refreshTokens
+} = require('../../db/schema');
+const { eq, desc, count, sql, like, or, and } = require('drizzle-orm');
 
-// Get all users
-// Get Pending Players (Unverified Emails or Pending Host Status)
-const getPendingPlayers = async (req, res) => {
+// ─────────────────────────────────────────────
+// STATS
+// ─────────────────────────────────────────────
+exports.getStats = async (req, res) => {
     try {
-        // Implementation: Users who have signed up but have not completed email verification,
-        // OR users who have requested HOST status but are 'PENDING'.
-        // This gives Admins a actionable list.
-
-        const result = await db.select({
-            id: users.id,
-            username: users.username,
-            email: users.email,
-            hostStatus: users.hostStatus,
-            emailVerified: users.emailVerified,
-            createdAt: users.createdAt
-        })
-            .from(users)
-            .where(
-                or(
-                    eq(users.hostStatus, 'PENDING'),
-                    eq(users.emailVerified, false)
-                )
-            )
-            .orderBy(desc(users.createdAt))
-            .limit(50); // Limit nicely for dashboard widgets
-
-        res.json({ success: true, data: result });
-    } catch (error) {
-        console.error('Get pending error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch pending actions' });
-    }
-};
-
-// Get Verified Players (Active Users)
-const getVerifiedPlayers = async (req, res) => {
-    try {
-        const adminId = req.user.id;
-        const isAdmin = req.user.role === 'ADMIN';
-        const isSuperAdmin = req.user.role === 'SUPERADMIN';
-
-        // Query Builder Base
-        let query = db.select({
-            id: users.id,
-            username: users.username,
-            email: users.email,
-            role: users.role,
-            hostStatus: users.hostStatus, // Added Host Status
-            platformUid: users.platformUid, // Added details
-            isBanned: users.isBanned,
-            createdAt: users.createdAt,
-            // Join profile fields
-            fullName: playerProfiles.realName,
-            imageUrl: playerProfiles.avatarUrl,
-        })
-            .from(users)
-            .leftJoin(playerProfiles, eq(users.id, playerProfiles.userId));
-
-        // BASELINE FILTER: Never show banned users in "Verified" list (unless explicit Banned view required later)
-        // And Ensure strictly PLAYER role
-        const baseCondition = and(
-            eq(users.role, 'PLAYER'),
-            eq(users.isBanned, false)
-        );
-
-        // Isolation Logic
-        if (isSuperAdmin) {
-            // Super Admin sees ALL valid users below SUPERADMIN level (ADMIN + PLAYER)
-            query.where(and(
-                ne(users.role, 'SUPERADMIN'),
-                eq(users.isBanned, false)
-            ));
-        } else if (isAdmin) {
-            // Admin sees ONLY assigned players
-            query
-                .innerJoin(adminAssignments, eq(users.id, adminAssignments.userId))
-                .where(and(
-                    baseCondition, // Admins manage Players only
-                    eq(adminAssignments.adminId, adminId),
-                    sql`${adminAssignments.revokedAt} IS NULL` // Only active assignments
-                    // Note: 'FOR SHARE' is not standard in Drizzle Builder API for straight selects easily without raw, 
-                    // but Inner Join + revokedAt check is robust for reading.
-                ));
-        } else {
-            return res.status(403).json({ success: false, message: 'Unauthorized' });
-        }
-
-        const result = await query.orderBy(desc(users.createdAt));
-
-        // Fallback for missing profile data
-        const mapped = result.map(u => ({
-            ...u,
-            fullName: u.fullName || u.username,
-            imageUrl: u.imageUrl || 'https://via.placeholder.com/150'
-        }));
-
-        res.json({ success: true, data: mapped });
-    } catch (error) {
-        console.error('Get verified users error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch users' });
-    }
-};
-
-// Get List of Admins (For Super Admin Workload Management)
-const getAdmins = async (req, res) => {
-    try {
-        // Fetch admins
-        const admins = await db.select({
-            id: users.id,
-            username: users.username,
-            email: users.email,
-            role: users.role,
-            isBanned: users.isBanned
-        })
-            .from(users)
-            .where(
-                or(eq(users.role, 'ADMIN'), eq(users.role, 'SUPERADMIN'))
-            );
-
-        // Fetch ACTIVE counts from adminAssignments
-        // Query: SELECT adminId, COUNT(*) FROM adminAssignments WHERE revokedAt IS NULL GROUP BY adminId
-        const activeCounts = await db.select({
-            adminId: adminAssignments.adminId,
-            count: count()
-        })
-            .from(adminAssignments)
-            .where(sql`${adminAssignments.revokedAt} IS NULL`)
-            .groupBy(adminAssignments.adminId);
-
-        // Map counts back to admins
-        const result = admins.map(admin => {
-            const countObj = activeCounts.find(c => c.adminId === admin.id);
-            return {
-                ...admin,
-                managedUsersCount: countObj ? countObj.count : 0
-            };
-        });
-
-        res.json({ success: true, data: result });
-    } catch (error) {
-        console.error('Get admins error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch admins' });
-    }
-};
-
-// --- HOST MANAGEMENT (LEGACY/SIMPLE) ---
-const getPendingHosts = async (req, res) => {
-    try {
-        const result = await db.select({
-            id: users.id,
-            username: users.username,
-            email: users.email,
-            hostStatus: users.hostStatus,
-            createdAt: users.createdAt
-        })
-            .from(users)
-            .where(eq(users.hostStatus, 'PENDING'))
-            .orderBy(desc(users.createdAt));
-
-        res.json({ success: true, data: result });
-    } catch (error) {
-        console.error('Get pending hosts error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch pending hosts' });
-    }
-};
-
-const getVerifiedHosts = async (req, res) => {
-    try {
-        const result = await db.select({
-            id: users.id,
-            username: users.username,
-            email: users.email,
-            hostStatus: users.hostStatus,
-            hostCode: hostProfiles.hostCode, // Join for Host Code
-            verifiedAt: hostProfiles.verifiedAt,
-            createdAt: users.createdAt
-        })
-            .from(users)
-            .innerJoin(hostProfiles, eq(users.id, hostProfiles.userId)) // Only verified hosts have profiles
-            .where(eq(hostProfiles.status, 'ACTIVE'))
-            .orderBy(desc(hostProfiles.verifiedAt));
-
-        res.json({ success: true, data: result });
-    } catch (error) {
-        console.error('Get verified hosts error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch verified hosts' });
-    }
-};
-
-// Approve Player
-// Approve Player (Host Verification)
-const approvePlayer = async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        if (req.user.role !== 'SUPERADMIN' && req.user.role !== 'ADMIN') {
-            return res.status(403).json({ success: false, message: 'Unauthorized' });
-        }
-
-        await db.transaction(async (tx) => {
-            // 1. Verify User exists and is Pending (or verify intent)
-            // Logic: Admins can make ANY 'PLAYER' a 'HOST' even if not requested?
-            // User requested if hostStatus is PENDING.
-            const target = await tx.select().from(users).where(eq(users.id, id)).limit(1);
-            if (!target[0]) throw new Error('User not found');
-
-            // Guard: Idempotency (Check if already a host)
-            const existingHost = await tx.select().from(hostProfiles).where(eq(hostProfiles.userId, id)).limit(1);
-            if (existingHost[0]) {
-                return; // Already a host
-            }
-
-            // 2. Generate Host Code (Locked)
-            const hostCode = await uidService.generateHostCode(tx);
-
-            // 3. Create Host Profile
-            await tx.insert(hostProfiles).values({
-                userId: id,
-                hostCode: hostCode,
-                status: 'ACTIVE', // Auto-activate on approval
-                verifiedAt: new Date(),
-                verifiedBy: req.user.id
-            });
-
-            // 4. Update Legacy Status (for backward compatibility / UI)
-            await tx.update(users)
-                .set({ hostStatus: 'VERIFIED' })
-                .where(eq(users.id, id));
-
-            // Audit
-            await tx.insert(auditLogs).values({
-                userId: req.user.id,
-                action: 'HOST_APPROVAL',
-                targetId: id,
-                details: JSON.stringify({ hostCode }),
-                ipAddress: req.ip
-            });
-        });
-
-        res.json({ success: true, message: 'Player/Host approved successfully' });
-    } catch (error) {
-        console.error('Approve player error:', error);
-        res.status(500).json({ success: false, message: error.message || 'Approval failed' });
-    }
-};
-
-// Delete Player (Reject)
-// Ban Player (Originally Delete - NOW SOFT BAN)
-const deletePlayer = async (req, res) => {
-    try {
-        if (req.user.role !== 'SUPERADMIN' && req.user.role !== 'ADMIN') {
-            return res.status(403).json({ success: false, message: 'Unauthorized' });
-        }
-
-        const targetId = req.params.id;
-
-        // Prevent self-ban
-        if (targetId === req.user.id) {
-            return res.status(400).json({ success: false, message: 'Cannot ban yourself' });
-        }
-
-        await db.transaction(async (tx) => {
-            // Soft Ban
-            await tx.update(users)
-                .set({ isBanned: true })
-                .where(eq(users.id, targetId));
-
-            // Audit
-            await tx.insert(auditLogs).values({
-                userId: req.user.id,
-                action: 'USER_BAN',
-                targetId: targetId,
-                details: JSON.stringify({ reason: 'Admin Action: Delete/Ban Player' }),
-                ipAddress: req.ip
-            });
-        });
-
-        res.json({ success: true, message: 'Player banned successfully' });
-    } catch (e) {
-        console.error(e);
-        res.status(500).json({ success: false, message: 'Action failed' });
-    }
-};
-
-const getAllUsers = async (req, res) => {
-    // Redirect to getVerifiedPlayers logic or keep raw list
-    return getVerifiedPlayers(req, res);
-};
-
-// Get all tournaments
-const getAllTournaments = async (req, res) => {
-    try {
-        const result = await db.select({
-            id: tournaments.id,
-            name: tournaments.name,
-            status: tournaments.status,
-            hostId: tournaments.hostId,
-            game: tournaments.game,
-            type: tournaments.type,
-            startTime: tournaments.startTime,
-            registrationEnd: tournaments.registrationEnd,
-            entryFee: tournaments.entryFee,
-            prizePool: tournaments.prizePool,
-            createdAt: tournaments.createdAt
-        })
-            .from(tournaments)
-            .orderBy(desc(tournaments.createdAt));
-
-        res.json({ success: true, data: result });
-    } catch (error) {
-        console.error('Admin get tournaments error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch tournaments' });
-    }
-};
-
-// Delete tournament
-// Cancel Tournament (Originally Delete - NOW SOFT CANCEL)
-const deleteTournament = async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        // Authorization Guard
-        if (req.user.role !== 'SUPERADMIN' && req.user.role !== 'ADMIN') {
-            return res.status(403).json({ success: false, message: 'Unauthorized' });
-        }
-
-        await db.transaction(async (tx) => {
-            // Check state
-            const current = await tx.select().from(tournaments).where(eq(tournaments.id, id)).limit(1);
-            if (!current[0]) throw new Error('Tournament not found');
-
-            // Prevent cancelling completed
-            if (current[0].status === 'COMPLETED') {
-                throw new Error('Cannot cancel a completed tournament');
-            }
-
-            // Perform Update
-            await tx.update(tournaments)
-                .set({ status: 'CANCELLED' })
-                .where(eq(tournaments.id, id));
-
-            // Log Audit
-            await tx.insert(auditLogs).values({
-                userId: req.user.id,
-                action: 'TOURNAMENT_CANCEL',
-                targetId: id,
-                details: JSON.stringify({ reason: 'Admin deletion request converted to cancellation' }),
-                ipAddress: req.ip
-            });
-        });
-
-        res.json({ success: true, message: 'Tournament cancelled successfully' });
-    } catch (error) {
-        console.error('Delete tournament error:', error);
-        res.status(500).json({ success: false, message: error.message || 'Failed to cancel tournament' });
-    }
-};
-
-// Toggle status
-// Toggle status
-const toggleTournamentStatus = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { isActive } = req.query; // string "true"/"false"
-
-        // Authorization
-        if (req.user.role !== 'SUPERADMIN' && req.user.role !== 'ADMIN') {
-            return res.status(403).json({ success: false, message: 'Unauthorized' });
-        }
-
-        const newStatus = isActive === 'true' ? 'ONGOING' : 'CANCELLED';
-
-        await db.transaction(async (tx) => {
-            // Check current status
-            const current = await tx.select().from(tournaments).where(eq(tournaments.id, id)).limit(1);
-            if (!current[0]) throw new Error('Tournament not found');
-
-            // State Machine Guard
-            if (current[0].status === 'COMPLETED') {
-                throw new Error('Cannot modify a COMPLETED tournament');
-            }
-            if (current[0].status === 'CANCELLED' && newStatus === 'CANCELLED') {
-                // Idempotent is ok, but maybe warn?
-                return;
-            }
-
-            await tx.update(tournaments)
-                .set({ status: newStatus })
-                .where(eq(tournaments.id, id));
-
-            // Audit
-            await tx.insert(auditLogs).values({
-                userId: req.user.id,
-                action: 'TOURNAMENT_STATUS_CHANGE',
-                targetId: id,
-                details: JSON.stringify({ from: current[0].status, to: newStatus }),
-                ipAddress: req.ip
-            });
-        });
-
-        res.json({ success: true, message: 'Status updated' });
-    } catch (error) {
-        console.error('Toggle status error:', error.message);
-        res.status(400).json({ success: false, message: error.message || 'Failed to update status' });
-    }
-};
-
-// Get stats
-const getStats = async (req, res) => {
-    try {
-        // Accurate Stats: Exclude banned, system, admins
-        const userCountPromise = db.select({ count: count() })
-            .from(users)
-            .where(and(
-                eq(users.role, 'PLAYER'),
-                eq(users.isBanned, false)
-            ));
-
-        const tournCountPromise = db.select({ count: count() }).from(tournaments);
-
-        const [userResult, tournResult] = await Promise.all([userCountPromise, tournCountPromise]);
+        const [[totalUsers], [totalTournaments], [activeTournaments], [totalPlayers], [totalHosts], [bannedUsers], [walletTotals]] = await Promise.all([
+            db.select({ count: count() }).from(users),
+            db.select({ count: count() }).from(tournaments),
+            db.select({ count: count() }).from(tournaments).where(eq(tournaments.status, 'ACTIVE')),
+            db.select({ count: count() }).from(users).where(eq(users.role, 'PLAYER')),
+            db.select({ count: count() }).from(users).where(eq(users.hostStatus, 'ACTIVE')),
+            db.select({ count: count() }).from(users).where(eq(users.isBanned, true)),
+            db.select({ totalBalance: sql`SUM(${wallets.balance})`, totalLocked: sql`SUM(${wallets.locked})` }).from(wallets)
+        ]);
 
         res.json({
             success: true,
             data: {
-                users: userResult[0].count,
-                tournaments: tournResult[0].count
+                users: { total: Number(totalUsers.count), players: Number(totalPlayers.count), hosts: Number(totalHosts.count), banned: Number(bannedUsers.count) },
+                tournaments: { total: Number(totalTournaments.count), active: Number(activeTournaments.count) },
+                platform: { totalBalance: Number(walletTotals.totalBalance || 0), totalLocked: Number(walletTotals.totalLocked || 0) }
             }
         });
     } catch (error) {
-        console.error('Get stats error:', error);
+        console.error('Admin stats error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch stats' });
     }
 };
 
-// Get User By ID (Stub/Basic impl)
-const getUserById = async (req, res) => {
+// ─────────────────────────────────────────────
+// USER MANAGEMENT
+// ─────────────────────────────────────────────
+exports.getUsers = async (req, res) => {
     try {
-        const user = await db.select().from(users).where(eq(users.id, req.params.id)).limit(1);
-        if (!user.length) return res.status(404).json({ success: false, message: 'User not found' });
-        res.json({ success: true, data: user[0] });
+        const { page = 1, limit = 20, search, role, banned } = req.query;
+        const offset = (Number(page) - 1) * Number(limit);
+
+        let conditions = [];
+        if (search) conditions.push(or(like(users.email, `%${search}%`), like(users.username, `%${search}%`)));
+        if (role) conditions.push(eq(users.role, role));
+        if (banned === 'true') conditions.push(eq(users.isBanned, true));
+        if (banned === 'false') conditions.push(eq(users.isBanned, false));
+
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+        const [result, [{ total }]] = await Promise.all([
+            db.select({ id: users.id, username: users.username, email: users.email, role: users.role, isAdmin: users.isAdmin, hostStatus: users.hostStatus, isBanned: users.isBanned, emailVerified: users.emailVerified, countryCode: users.countryCode, createdAt: users.createdAt, ign: playerProfiles.ign, avatarUrl: playerProfiles.avatarUrl })
+                .from(users).leftJoin(playerProfiles, eq(users.id, playerProfiles.userId))
+                .where(whereClause).orderBy(desc(users.createdAt)).limit(Number(limit)).offset(offset),
+            db.select({ total: count() }).from(users).where(whereClause)
+        ]);
+
+        res.json({ success: true, data: { users: result, total: Number(total), page: Number(page), limit: Number(limit) } });
     } catch (error) {
-        res.status(500).json({ success: false, message: 'Failed to get user' });
+        console.error('Admin getUsers error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch users' });
     }
 };
 
-// Update User (Stub)
-const updateUser = async (req, res) => {
-    res.json({ success: true, message: 'User updated (stub)' });
+exports.banUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { ban, reason } = req.body;
+
+        if (id === req.user.id) return res.status(400).json({ success: false, message: 'Cannot ban yourself' });
+
+        await db.update(users).set({ isBanned: ban }).where(eq(users.id, id));
+        if (ban) await db.delete(refreshTokens).where(eq(refreshTokens.userId, id));
+
+        res.json({ success: true, message: ban ? `User banned: ${reason || 'No reason given'}` : 'User unbanned' });
+    } catch (error) {
+        console.error('Admin ban error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update ban status' });
+    }
 };
 
-// Reassign Workload (SUPERADMIN Only - Transactional)
-const reassignWorkload = async (req, res) => {
+exports.updateUserRole = async (req, res) => {
     try {
-        // Authorization Guard
-        if (req.user.role !== 'SUPERADMIN') {
-            return res.status(403).json({ success: false, message: 'Unauthorized: Super Admin access required' });
+        const { id } = req.params;
+        const { role, isAdmin } = req.body;
+
+        const validRoles = ['PLAYER', 'HOST', 'ADMIN', 'SUPERADMIN'];
+        if (role && !validRoles.includes(role)) return res.status(400).json({ success: false, message: 'Invalid role' });
+
+        await db.update(users).set({ ...(role && { role }), ...(typeof isAdmin === 'boolean' && { isAdmin }) }).where(eq(users.id, id));
+        res.json({ success: true, message: 'User role updated' });
+    } catch (error) {
+        console.error('Admin role update error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update role' });
+    }
+};
+
+// ─────────────────────────────────────────────
+// TOURNAMENT MANAGEMENT
+// ─────────────────────────────────────────────
+exports.getTournaments = async (req, res) => {
+    try {
+        const { page = 1, limit = 20, status } = req.query;
+        const offset = (Number(page) - 1) * Number(limit);
+        const whereClause = status ? eq(tournaments.status, status) : undefined;
+
+        const [result, [{ total }]] = await Promise.all([
+            db.select({ id: tournaments.id, title: tournaments.title, status: tournaments.status, entryFee: tournaments.entryFee, prizePool: tournaments.prizePool, maxParticipants: tournaments.maxParticipants, currentParticipants: tournaments.currentParticipants, startDate: tournaments.startDate, hostId: tournaments.hostId, createdAt: tournaments.createdAt, hostUsername: users.username })
+                .from(tournaments).leftJoin(users, eq(tournaments.hostId, users.id))
+                .where(whereClause).orderBy(desc(tournaments.createdAt)).limit(Number(limit)).offset(offset),
+            db.select({ total: count() }).from(tournaments).where(whereClause)
+        ]);
+
+        res.json({ success: true, data: { tournaments: result, total: Number(total), page: Number(page), limit: Number(limit) } });
+    } catch (error) {
+        console.error('Admin getTournaments error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch tournaments' });
+    }
+};
+
+exports.cancelTournament = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await db.select().from(tournaments).where(eq(tournaments.id, id)).limit(1);
+        const tournament = result[0];
+
+        if (!tournament) return res.status(404).json({ success: false, message: 'Tournament not found' });
+        if (['CANCELLED', 'COMPLETED'].includes(tournament.status)) {
+            return res.status(400).json({ success: false, message: `Tournament already ${tournament.status}` });
         }
 
-        const { fromAdminId, toAdminId } = req.body;
-        const superAdminId = req.user.id;
+        // Refund participants
+        const participants = await db.select({ userId: tournamentParticipants.userId }).from(tournamentParticipants).where(eq(tournamentParticipants.tournamentId, id));
 
-        if (!fromAdminId || !toAdminId) {
-            return res.status(400).json({ success: false, message: 'Source and Target Admin IDs required' });
+        if (participants.length > 0 && tournament.entryFee > 0) {
+            for (const p of participants) {
+                await db.update(wallets).set({ balance: sql`${wallets.balance} + ${tournament.entryFee}` }).where(eq(wallets.userId, p.userId));
+            }
         }
 
-        // Verify target is an Admin
-        const targetAdmin = await db.select().from(users).where(eq(users.id, toAdminId)).limit(1);
-        if (!targetAdmin[0]) return res.status(404).json({ success: false, message: 'Target admin not found' });
-        if (targetAdmin[0].role !== 'ADMIN' && targetAdmin[0].role !== 'SUPERADMIN') {
-            return res.status(400).json({ success: false, message: 'Target user is not an Admin' });
+        await db.update(tournaments).set({ status: 'CANCELLED' }).where(eq(tournaments.id, id));
+        res.json({ success: true, message: `Tournament cancelled. ${participants.length} participants refunded.`, refunded: participants.length });
+    } catch (error) {
+        console.error('Admin cancel tournament error:', error);
+        res.status(500).json({ success: false, message: 'Failed to cancel tournament' });
+    }
+};
+
+// ─────────────────────────────────────────────
+// HOST APPLICATIONS
+// ─────────────────────────────────────────────
+exports.getHostApplications = async (req, res) => {
+    try {
+        const { status = 'PENDING' } = req.query;
+        const result = await db.select({ id: hostProfiles.id, userId: hostProfiles.userId, status: hostProfiles.status, createdAt: hostProfiles.createdAt, username: users.username, email: users.email, ign: playerProfiles.ign, countryCode: users.countryCode })
+            .from(hostProfiles).leftJoin(users, eq(hostProfiles.userId, users.id)).leftJoin(playerProfiles, eq(hostProfiles.userId, playerProfiles.userId))
+            .where(eq(hostProfiles.status, status)).orderBy(desc(hostProfiles.createdAt));
+
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('Admin host applications error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch host applications' });
+    }
+};
+
+exports.reviewHostApplication = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { action, reason } = req.body;
+
+        if (!['approve', 'reject'].includes(action)) return res.status(400).json({ success: false, message: 'Action must be approve or reject' });
+
+        const [application] = await db.select().from(hostProfiles).where(eq(hostProfiles.id, id)).limit(1);
+        if (!application) return res.status(404).json({ success: false, message: 'Application not found' });
+
+        if (action === 'approve') {
+            await Promise.all([
+                db.update(hostProfiles).set({ status: 'APPROVED' }).where(eq(hostProfiles.id, id)),
+                db.update(users).set({ hostStatus: 'ACTIVE', role: 'HOST' }).where(eq(users.id, application.userId))
+            ]);
+            res.json({ success: true, message: 'Host application approved' });
+        } else {
+            await db.update(hostProfiles).set({ status: 'REJECTED' }).where(eq(hostProfiles.id, id));
+            res.json({ success: true, message: `Host application rejected: ${reason || 'No reason given'}` });
         }
-
-        // TRANSACTION: Revoke Old -> Insert New
-        await db.transaction(async (tx) => {
-            // 1. Identify active assignments to transfer WITH ROW LOCKING (FOR UPDATE)
-            // This prevents race conditions where assignments could be modified concurrently
-            const activeAssignmentsToRevokeRaw = await tx.execute(sql`
-                SELECT * FROM \`adminAssignment\` 
-                WHERE \`adminId\` = ${fromAdminId} 
-                AND \`revokedAt\` IS NULL 
-                FOR UPDATE
-            `);
-
-            // Drizzle execute returns differ by driver, standardize input
-            const activeAssignmentsToRevoke = activeAssignmentsToRevokeRaw[0] || activeAssignmentsToRevokeRaw.rows || activeAssignmentsToRevokeRaw;
-
-            // If strictly array (mysql2 default for select is [rows, fields]), safely handle
-            const rows = Array.isArray(activeAssignmentsToRevoke) ? activeAssignmentsToRevoke : [];
-
-            const countToTransfer = rows.length;
-
-            if (countToTransfer === 0) {
-                // Nothing to do, but not an error.
-                // Log strictly for debug? No need to pollute audit log if action was empty.
-                return;
-            }
-
-            // 2. Revoke current assignments (Soft Delete for History)
-            await tx.update(adminAssignments)
-                .set({ revokedAt: new Date() }) // JS Date -> MySQL Datetime
-                .where(and(
-                    eq(adminAssignments.adminId, fromAdminId),
-                    sql`${adminAssignments.revokedAt} IS NULL`
-                ));
-
-            // 3. Insert new assignments
-            // Prepare rows: same userId, new adminId, assignedBy me
-            const newAssignments = rows.map(assign => ({
-                adminId: toAdminId,
-                userId: assign.userId,
-                assignedBy: superAdminId,
-                assignedAt: new Date(),
-                revokedAt: null
-            }));
-
-            if (newAssignments.length > 0) {
-                await tx.insert(adminAssignments).values(newAssignments);
-            }
-
-            // 4. Audit Log (Within Transaction)
-            await tx.insert(auditLogs).values({
-                userId: superAdminId,
-                action: 'WORKLOAD_REASSIGN',
-                targetId: toAdminId,
-                details: JSON.stringify({
-                    fromAdminId,
-                    toAdminId,
-                    transferredCount: countToTransfer
-                }),
-                ipAddress: req.ip
-            });
-        });
-
-        res.json({
-            success: true,
-            message: `Workload reassigned successfully.`
-        });
-
     } catch (error) {
-        console.error('Reassign workload error:', error);
-        res.status(500).json({ success: false, message: 'Failed to reassign workload' });
+        console.error('Admin host review error:', error);
+        res.status(500).json({ success: false, message: 'Failed to process application' });
     }
 };
 
-// --- HOST APPLICATION MANAGEMENT (PHASE 3) ---
-
-// 1. Get Pending Applications
-const getPendingHostApplications = async (req, res) => {
+// ─────────────────────────────────────────────
+// WALLET MANAGEMENT
+// ─────────────────────────────────────────────
+exports.getWallets = async (req, res) => {
     try {
-        const apps = await db.select({
-            id: hostApplications.id,
-            userId: hostApplications.userId,
-            username: users.username,
-            email: users.email,
-            notes: hostApplications.notes,
-            documentsUrl: hostApplications.documentsUrl,
-            createdAt: hostApplications.createdAt
-        })
-            .from(hostApplications)
-            .innerJoin(users, eq(hostApplications.userId, users.id))
-            .where(eq(hostApplications.status, 'PENDING'))
-            .orderBy(desc(hostApplications.createdAt));
+        const { page = 1, limit = 20, search } = req.query;
+        const offset = (Number(page) - 1) * Number(limit);
+        const whereClause = search ? or(like(users.email, `%${search}%`), like(users.username, `%${search}%`)) : undefined;
 
-        res.json({ success: true, data: apps });
+        const result = await db.select({ userId: wallets.userId, balance: wallets.balance, locked: wallets.locked, username: users.username, email: users.email })
+            .from(wallets).leftJoin(users, eq(wallets.userId, users.id))
+            .where(whereClause).orderBy(desc(wallets.balance)).limit(Number(limit)).offset(offset);
+
+        res.json({ success: true, data: result });
     } catch (error) {
-        console.error('Fetch apps error:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch' });
+        console.error('Admin wallets error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch wallets' });
     }
 };
 
-// 2. Approve Application
-const approveHostApplication = async (req, res) => {
-    const { applicationId } = req.params;
-    const adminId = req.user.id;
-
+exports.adjustWallet = async (req, res) => {
     try {
-        await db.transaction(async (tx) => {
-            // Get Application
-            const app = await tx.select().from(hostApplications).where(eq(hostApplications.id, applicationId)).limit(1);
-            if (!app[0]) throw new Error('Application not found');
-            if (app[0].status !== 'PENDING') throw new Error('Application already processed');
+        const { userId, amount, type, reason } = req.body;
+        if (!userId || !amount || !type || !reason) return res.status(400).json({ success: false, message: 'userId, amount, type, and reason are required' });
 
-            const userId = app[0].userId;
+        const [wallet] = await db.select().from(wallets).where(eq(wallets.userId, userId)).limit(1);
+        if (!wallet) return res.status(404).json({ success: false, message: 'Wallet not found' });
+        if (type === 'debit' && Number(wallet.balance) < Number(amount)) return res.status(400).json({ success: false, message: 'Insufficient balance for debit' });
 
-            // 1. Generate HT Code (Atomic)
-            const hostCode = await uidService.generateHostCode(tx);
+        await db.update(wallets)
+            .set({ balance: type === 'credit' ? sql`${wallets.balance} + ${amount}` : sql`${wallets.balance} - ${amount}`, updatedAt: new Date() })
+            .where(eq(wallets.userId, userId));
 
-            // 2. Create Host Profile
-            const existingProfile = await tx.select().from(hostProfiles).where(eq(hostProfiles.userId, userId));
-            if (existingProfile.length > 0) {
-                await tx.update(hostProfiles).set({
-                    status: 'ACTIVE',
-                    verifiedAt: new Date(),
-                    verifiedBy: adminId,
-                    hostCode: hostCode
-                }).where(eq(hostProfiles.userId, userId));
-            } else {
-                await tx.insert(hostProfiles).values({
-                    userId,
-                    hostCode,
-                    status: 'ACTIVE',
-                    verifiedAt: new Date(),
-                    verifiedBy: adminId
-                });
-            }
-
-            // 3. Update Application Status
-            await tx.update(hostApplications)
-                .set({ status: 'APPROVED', reviewedAt: new Date(), reviewedBy: adminId })
-                .where(eq(hostApplications.id, applicationId));
-
-            // 4. Update Legacy Status (Backward Comp)
-            await tx.update(users)
-                .set({ hostStatus: 'VERIFIED' })
-                .where(eq(users.id, userId));
-        });
-
-        res.json({ success: true, message: 'Application Approved. Host Profile Created.' });
+        console.log(`💳 Admin wallet ${type}: ${amount} for user ${userId}. Reason: ${reason}`);
+        res.json({ success: true, message: `Wallet ${type}ed. Reason: ${reason}` });
     } catch (error) {
-        console.error('Approval Error:', error);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Admin wallet adjust error:', error);
+        res.status(500).json({ success: false, message: 'Failed to adjust wallet' });
     }
-};
-
-// 3. Reject Application
-const rejectHostApplication = async (req, res) => {
-    const { applicationId } = req.params;
-    const adminId = req.user.id;
-    const { reason } = req.body;
-
-    try {
-        await db.update(hostApplications)
-            .set({
-                status: 'REJECTED',
-                notes: reason ? `REJECTION REASON: ${reason}` : undefined,
-                reviewedAt: new Date(),
-                reviewedBy: adminId
-            })
-            .where(eq(hostApplications.id, applicationId));
-
-        res.json({ success: true, message: 'Application Rejected.' });
-    } catch (error) {
-        res.status(500).json({ success: false, message: 'Failed to reject.' });
-    }
-};
-
-module.exports = {
-    getAllUsers,
-    getPendingPlayers,
-    getVerifiedPlayers,
-    getAdmins,
-    approvePlayer,
-    deletePlayer,
-    getUserById,
-    updateUser,
-    updateUserRole: (req, res) => res.status(501).json({}),
-    getAllTournaments,
-    deleteTournament,
-    getStats,
-    toggleTournamentStatus,
-    reassignWorkload,
-    getPendingHostApplications,
-    approveHostApplication,
-    rejectHostApplication,
-    getPendingHosts, // NEW
-    getVerifiedHosts // NEW
 };
