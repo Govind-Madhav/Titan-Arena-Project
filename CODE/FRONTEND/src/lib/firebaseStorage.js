@@ -58,10 +58,10 @@ const uploadFile = async (file, endpoint, onProgress = null) => {
 
         if (response.data.success) {
             // Return full URL (backend returns relative path)
-            const baseURL = import.meta.env.VITE_API_URL || 'http://localhost:5001'
-            return baseURL + response.data.data.avatarUrl ||
-                baseURL + response.data.data.highlightUrl ||
-                baseURL + response.data.data.imageUrl
+            const BASE_URL = window.location.origin
+            return BASE_URL + response.data.data.avatarUrl ||
+                BASE_URL + response.data.data.highlightUrl ||
+                BASE_URL + response.data.data.imageUrl
         } else {
             throw new Error(response.data.message || 'Upload failed')
         }
