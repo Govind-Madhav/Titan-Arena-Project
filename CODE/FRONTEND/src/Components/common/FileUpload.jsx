@@ -152,7 +152,7 @@ export default function FileUpload({
 
             {/* Preview */}
             {preview && (
-                <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/10">
+                <div className="relative rounded-xl overflow-hidden bg-white/5 border border-white/10 group">
                     {type === 'image' ? (
                         <img
                             src={preview}
@@ -167,10 +167,24 @@ export default function FileUpload({
                         />
                     )}
 
+                    {/* Change Overlay */}
+                    <div
+                        onClick={() => !disabled && fileInputRef.current?.click()}
+                        className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer backdrop-blur-sm"
+                    >
+                        <div className="flex flex-col items-center text-white">
+                            <Upload size={24} className="mb-2" />
+                            <span className="font-medium">Change {type === 'image' ? 'Image' : 'Video'}</span>
+                        </div>
+                    </div>
+
                     {file && !uploading && (
                         <button
-                            onClick={handleRemove}
-                            className="absolute top-2 right-2 p-2 bg-black/60 hover:bg-black/80 rounded-lg transition-colors"
+                            onClick={(e) => {
+                                e.stopPropagation(); // Prevent triggering the file input
+                                handleRemove();
+                            }}
+                            className="absolute top-2 right-2 p-2 bg-black/60 hover:bg-black/80 rounded-lg transition-colors z-10"
                         >
                             <X size={20} className="text-white" />
                         </button>
