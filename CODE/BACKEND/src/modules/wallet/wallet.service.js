@@ -6,6 +6,7 @@
 const { db } = require('../../db');
 const { wallets, transactions, tournaments, matches } = require('../../db/schema');
 const { eq, and, sql } = require('drizzle-orm');
+const { publishEvent } = require('../../config/kafka.config');
 
 /**
  * Wallet Service - Handles all money operations
@@ -59,8 +60,17 @@ const credit = async (userId, amount, type, source, message = null, metadata = n
     };
 
     const [transactionResult] = await client.insert(transactions).values(newTransaction).$returningId();
-    // Re-fetch transaction to return full object if needed, or just construct it. 
-    // Usually frontend just needs to know it succeeded.
+
+    // 🔔 KAFKA: Publish wallet.credited event
+    await publishEvent('wallet.credited', {
+        eventType: 'WALLET_CREDITED',
+        userId,
+        amount,
+        source: source || 'MANUAL_CREDIT',
+        tournamentId,
+        newBalance: updatedWallet.balance,
+        timestamp: new Date().toISOString()
+    });
 
     return { wallet: updatedWallet, transaction: { ...newTransaction, id: transactionResult.id } };
 };
@@ -114,6 +124,17 @@ const debit = async (userId, amount, type, source, message = null, metadata = nu
     };
 
     const [transactionResult] = await client.insert(transactions).values(newTransaction).$returningId();
+
+    // 🔔 KAFKA: Publish wallet.debited event
+    await publishEvent('wallet.debited', {
+        eventType: 'WALLET_DEBITED',
+        userId,
+        amount,
+        source: source || 'MANUAL_DEBIT',
+        tournamentId,
+        newBalance: updatedWallet.balance,
+        timestamp: new Date().toISOString()
+    });
 
     return { wallet: updatedWallet, transaction: { ...newTransaction, id: transactionResult.id } };
 };
@@ -187,67 +208,15 @@ const transfer = async (fromUserId, toUserId, amount, type, message = null, meta
 
 
 /**
- * Distribute tournament prizes and host earnings
- * @param {string} tournamentId
+ * @deprecated Dead code — prize distribution is handled directly in match.controller.js
+ * completeTournament() via walletService.credit() for each podium finisher.
+ * This function was never wired to any route and the winner credit section was a TODO stub.
+ * Do not call; schedule for removal in the next cleanup pass.
  */
 const distributeTournamentPrizes = async (tournamentId) => {
-    // 1. Fetch tournament details 
-    const [tournament] = await db.select().from(tournaments).where(eq(tournaments.id, tournamentId));
-
-    if (!tournament) throw new Error('Tournament not found');
-    if (tournament.status === 'COMPLETED') throw new Error('Tournament already distributed');
-
-    // Count players
-    // Optimized: Count directly from registrations
-    // const totalPlayers = tournament.registrations.length; 
-    // Drizzle doesn't auto-fetch relations unless using relational queries API which is experimental/needs config.
-    // Easier to count manually.
-    const [regCount] = await db.select({ count: sql`count(*)` })
-        .from(require('../../db/schema').registrations) // lazy load to avoid circular deps if any
-        .where(
-            and(
-                eq(require('../../db/schema').registrations.tournamentId, tournamentId),
-                eq(require('../../db/schema').registrations.status, 'CONFIRMED')
-            )
-        );
-
-    const totalPlayers = Number(regCount.count);
-    const totalCollected = tournament.entryFee * totalPlayers;
-    const platformFee = Math.floor(totalCollected * 0.10); // 10% platform fee example
-    const prizePool = tournament.prizePool;
-    const hostEarnings = totalCollected - platformFee - prizePool;
-
-    // Use transaction for atomicity
-    return db.transaction(async (tx) => {
-        // 2. Credit Host
-        if (hostEarnings > 0) {
-            await credit(
-                tournament.hostId,
-                hostEarnings,
-                'CREDIT',
-                'HOST_EARNING',
-                `Earnings for ${tournament.name}`,
-                { tournamentId, totalPlayers, platformFee },
-                tournamentId,
-                tx
-            );
-        }
-
-        // 3. Credit Winners 
-        // Logic to find winner would go here. 
-        // Placeholder for winner finding:
-        // const [finalMatch] = await tx.select().from(matches) ...
-
-        // 4. Update Tournament Status
-        await tx.update(tournaments)
-            .set({
-                status: 'COMPLETED',
-                hostProfit: hostEarnings,
-                collected: totalCollected
-            })
-            .where(eq(tournaments.id, tournamentId));
-    });
+    throw new Error('distributeTournamentPrizes is deprecated. Use completeTournament() in match.controller.js instead.');
 };
+
 
 /**
  * Request withdrawal
@@ -317,23 +286,19 @@ const approveWithdrawal = async (transactionId, adminId) => {
  * Get transactions with pagination
  */
 const getTransactions = async (userId, limit = 10, offset = 0, type = null) => {
-    let query = db.select().from(transactions).where(eq(transactions.userId, userId));
-
-    if (type) {
-        query.where(and(eq(transactions.userId, userId), eq(transactions.type, type)));
-    }
-
-    query.orderBy(sql`${transactions.createdAt} DESC`).limit(Number(limit)).offset(Number(offset));
-
-    // Get total count
-    let countQuery = db.select({ count: sql`count(*)` }).from(transactions).where(eq(transactions.userId, userId));
-    if (type) {
-        countQuery.where(and(eq(transactions.userId, userId), eq(transactions.type, type)));
-    }
+    const conditions = [eq(transactions.userId, userId)];
+    if (type) conditions.push(eq(transactions.type, type));
 
     const [results, countResult] = await Promise.all([
-        query,
-        countQuery
+        db.select()
+            .from(transactions)
+            .where(and(...conditions))
+            .orderBy(sql`${transactions.createdAt} DESC`)
+            .limit(Number(limit))
+            .offset(Number(offset)),
+        db.select({ count: sql`count(*)` })
+            .from(transactions)
+            .where(and(...conditions)),
     ]);
 
     return { transactions: results, total: countResult[0].count };
