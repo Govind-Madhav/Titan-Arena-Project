@@ -7,6 +7,7 @@ const { db } = require('../../db');
 const { kycRequests, users, auditLogs } = require('../../db/schema');
 const { eq, and, desc, count, sql } = require('drizzle-orm');
 const { z } = require('zod');
+const { publishEvent } = require('../../config/kafka.config');
 
 // Apply for host verification
 exports.applyForHost = async (req, res) => {
@@ -190,6 +191,15 @@ exports.approveKYC = async (req, res) => {
             });
         });
 
+        // 🔔 KAFKA: Publish kyc.approved event
+        await publishEvent('kyc.approved', {
+            eventType: 'KYC_APPROVED',
+            userId: kyc.userId,
+            kycId: id,
+            approvedBy: req.user.id,
+            timestamp: new Date().toISOString()
+        });
+
         res.json({
             success: true,
             message: 'KYC approved successfully'
@@ -242,6 +252,16 @@ exports.rejectKYC = async (req, res) => {
                 targetId: id,
                 details: JSON.stringify({ userId: kyc.userId, reason })
             });
+        });
+
+        // 🔔 KAFKA: Publish kyc.rejected event
+        await publishEvent('kyc.rejected', {
+            eventType: 'KYC_REJECTED',
+            userId: kyc.userId,
+            kycId: id,
+            reason,
+            rejectedBy: req.user.id,
+            timestamp: new Date().toISOString()
         });
 
         res.json({
