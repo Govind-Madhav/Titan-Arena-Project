@@ -9,7 +9,7 @@ import axios from 'axios'
 
 // Dedicated auth client to avoid circular dependency with api.js
 const authApi = axios.create({
-    baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5001/api',
+    baseURL: '/api',
     withCredentials: true,
     headers: {
         'Content-Type': 'application/json',
