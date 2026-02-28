@@ -15,7 +15,8 @@ import {
     ChevronLeft,
     Share2,
     Medal,
-    Swords
+    Swords,
+    LayoutTemplate
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import useAuthStore from '../../store/authStore'
@@ -42,28 +43,8 @@ export default function TournamentDetailPage() {
             setTournament(res.data.data)
         } catch (error) {
             console.error('Failed to fetch tournament:', error)
-            // Use mock data
-            setTournament({
-                id,
-                name: 'BGMI Pro League Season 1',
-                game: 'BGMI',
-                description: 'The ultimate BGMI showdown! Compete against the best players and teams for glory and prizes. Registration is open for all skill levels.',
-                prizePool: 100000,
-                entryFee: 5000,
-                status: 'UPCOMING',
-                type: 'SQUAD',
-                teamSize: 4,
-                startTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-                registrationEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-                host: { username: 'TitanArena' },
-                payouts: [
-                    { position: 1, amount: 50000 },
-                    { position: 2, amount: 30000 },
-                    { position: 3, amount: 20000 },
-                ],
-                registrations: [],
-                _count: { registrations: 48 },
-            })
+            // Show proper not-found state instead of injecting mock data
+            setTournament(null)
         } finally {
             setLoading(false)
         }
@@ -291,6 +272,23 @@ export default function TournamentDetailPage() {
                                 </div>
                             </GlowBorder>
                         </motion.div>
+
+                        {/* View Bracket Button (shown for active/completed tournaments) */}
+                        {['ONGOING', 'ACTIVE', 'COMPLETED'].includes(tournament.status) && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.25 }}
+                            >
+                                <button
+                                    onClick={() => navigate(`/tournament/${id}/bracket`)}
+                                    className="btn-glass w-full py-3 flex items-center justify-center gap-2 border border-titan-purple/40 hover:border-titan-purple/80 transition-colors"
+                                >
+                                    <LayoutTemplate size={18} className="text-titan-purple" />
+                                    View Live Bracket
+                                </button>
+                            </motion.div>
+                        )}
 
                         {/* Prize Breakdown */}
                         <motion.div

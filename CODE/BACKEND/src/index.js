@@ -178,6 +178,7 @@ app.use('/api/users', require('./modules/user/user.routes')); // User Profile Ro
 app.use('/api/upload', require('./routes/upload.routes')); // File Upload Routes
 app.use('/api/disputes', require('./modules/dispute/dispute.routes')); // Dispute Resolution
 app.use('/api/clans', require('./modules/clans/clan.routes')); // Clan/Org System
+app.use('/api/matches', require('./modules/match/match.routes')); // Match, Bracket, Stream, Results
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

@@ -3,8 +3,8 @@
  * This code is proprietary and confidential.
  */
 
-import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { useState, useEffect, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
     Wallet as WalletIcon,
     Plus,
@@ -12,7 +12,9 @@ import {
     ArrowDownLeft,
     Trophy,
     RefreshCw,
-    Clock
+    Clock,
+    X,
+    Smartphone
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { SpotlightCard, GradientText, TiltedCard } from '../../Components/effects/ReactBits'
@@ -23,6 +25,11 @@ export default function WalletPage() {
     const [transactions, setTransactions] = useState([])
     const [loading, setLoading] = useState(true)
     const [depositAmount, setDepositAmount] = useState('')
+    const [customAmount, setCustomAmount] = useState('')
+    const [withdrawModal, setWithdrawModal] = useState(false)
+    const [withdrawAmount, setWithdrawAmount] = useState('')
+    const [upiId, setUpiId] = useState('')
+    const [paying, setPaying] = useState(false)
 
     useEffect(() => {
         fetchWallet()
@@ -49,19 +56,124 @@ export default function WalletPage() {
         }
     }
 
+    // Load Razorpay checkout script dynamically
+    const loadRazorpayScript = () => new Promise((resolve) => {
+        if (document.getElementById('razorpay-script')) return resolve(true)
+        const script = document.createElement('script')
+        script.id = 'razorpay-script'
+        script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+        script.onload = () => resolve(true)
+        script.onerror = () => resolve(false)
+        document.body.appendChild(script)
+    })
+
     const handleDeposit = async () => {
-        const amount = parseInt(depositAmount) * 100 // Convert to paise
+        const amount = parseInt(customAmount || depositAmount)
+        if (!amount || amount < 10) {
+            toast.error('Minimum deposit is ₹10')
+            return
+        }
+
+        // In dev mode, just use the simulator for speed
+        if (import.meta.env.DEV) {
+            const toastId = toast.loading('Simulating deposit...')
+            try {
+                const res = await api.post('/wallet/test-deposit', { amount: amount * 100 })
+                if (res.data.success) {
+                    toast.success('Test deposit successful!', { id: toastId })
+                    fetchWallet(); fetchTransactions()
+                    setDepositAmount(''); setCustomAmount('')
+                }
+            } catch (error) {
+                toast.error(error.response?.data?.message || 'Deposit failed', { id: toastId })
+            }
+            return
+        }
+
+        // Production: real Razorpay flow
+        setPaying(true)
+        try {
+            const loaded = await loadRazorpayScript()
+            if (!loaded) { toast.error('Failed to load Razorpay. Check your connection.'); return }
+
+            // Step 1: Create order on backend
+            const orderRes = await api.post('/wallet/deposit/init', { amount })
+            const { orderId, key, currency } = orderRes.data.data
+
+            // Step 2: Open Razorpay checkout modal
+            const options = {
+                key,
+                amount: amount * 100,
+                currency,
+                name: 'Titan Arena',
+                description: 'Wallet Top-Up',
+                order_id: orderId,
+                handler: async (response) => {
+                    // Step 3: Verify payment on backend and credit wallet
+                    const toastId = toast.loading('Confirming payment...')
+                    try {
+                        const verifyRes = await api.post('/wallet/deposit/verify', {
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature
+                        })
+                        if (verifyRes.data.success) {
+                            toast.success(verifyRes.data.message, { id: toastId })
+                            fetchWallet(); fetchTransactions()
+                            setDepositAmount(''); setCustomAmount('')
+                        }
+                    } catch {
+                        toast.error('Payment verification failed. Contact support.', { id: toastId })
+                    }
+                },
+                prefill: {},
+                theme: { color: '#7C3AED' }, // Titan purple
+                modal: { ondismiss: () => setPaying(false) }
+            }
+            const rzp = new window.Razorpay(options)
+            rzp.open()
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to initiate payment')
+        } finally {
+            setPaying(false)
+        }
+    }
+
+    const handleWithdraw = async () => {
+        const amount = parseInt(withdrawAmount)
         if (!amount || amount < 100) {
-            toast.error('Minimum deposit is ₹1')
+            toast.error('Minimum withdrawal is ₹100')
+            return
+        }
+        if (!upiId || !upiId.includes('@')) {
+            toast.error('Enter a valid UPI ID (e.g. name@upi)')
+            return
+        }
+
+        if (import.meta.env.DEV) {
+            const toastId = toast.loading('Simulating withdrawal...')
+            try {
+                const res = await api.post('/wallet/test-withdraw', { amount: amount * 100 })
+                if (res.data.success) {
+                    toast.success('Test withdrawal successful!', { id: toastId })
+                    fetchWallet(); fetchTransactions()
+                    setWithdrawModal(false); setWithdrawAmount(''); setUpiId('')
+                }
+            } catch (error) {
+                toast.error(error.response?.data?.message || 'Withdrawal failed', { id: toastId })
+            }
             return
         }
 
         try {
-            // This would integrate with a payment gateway
-            toast.success('Deposit flow would start here')
-            setDepositAmount('')
+            const res = await api.post('/wallet/withdraw', { amount, upiId })
+            if (res.data.success) {
+                toast.success(res.data.message)
+                fetchWallet(); fetchTransactions()
+                setWithdrawModal(false); setWithdrawAmount(''); setUpiId('')
+            }
         } catch (error) {
-            toast.error('Deposit failed')
+            toast.error(error.response?.data?.message || 'Withdrawal failed')
         }
     }
 
@@ -99,6 +211,11 @@ export default function WalletPage() {
                         <GradientText>Wallet</GradientText>
                     </h1>
                     <p className="text-white/40">Manage your funds</p>
+                    {import.meta.env.DEV && (
+                        <div className="mt-2 inline-block px-3 py-1 bg-titan-warning/20 border border-titan-warning/50 rounded-full text-titan-warning text-xs font-bold uppercase tracking-wider">
+                            Test Mode Active
+                        </div>
+                    )}
                 </motion.div>
 
                 {/* Balance Card */}
@@ -127,11 +244,11 @@ export default function WalletPage() {
                             </div>
 
                             <div className="flex gap-3">
-                                <button className="btn-neon flex-1 flex items-center justify-center gap-2">
+                                <button onClick={handleDeposit} disabled={paying} className="btn-neon flex-1 flex items-center justify-center gap-2">
                                     <Plus size={18} />
-                                    Add Money
+                                    {paying ? 'Processing...' : 'Add Money'}
                                 </button>
-                                <button className="btn-glass flex-1 flex items-center justify-center gap-2">
+                                <button onClick={() => setWithdrawModal(true)} className="btn-glass flex-1 flex items-center justify-center gap-2">
                                     <ArrowUpRight size={18} />
                                     Withdraw
                                 </button>
@@ -148,16 +265,30 @@ export default function WalletPage() {
                     className="mb-8"
                 >
                     <h2 className="font-heading text-xl font-semibold mb-4">Quick Add</h2>
-                    <div className="flex gap-3 flex-wrap">
+                    <div className="flex gap-3 flex-wrap mb-3">
                         {[100, 500, 1000, 2000].map(amount => (
                             <button
                                 key={amount}
-                                onClick={() => setDepositAmount(String(amount))}
-                                className="px-6 py-3 glass-card-hover font-heading font-semibold"
+                                onClick={() => { setDepositAmount(String(amount)); setCustomAmount('') }}
+                                className={`px-6 py-3 font-heading font-semibold transition-all ${depositAmount === String(amount) ? 'glass-card border border-titan-purple/60 text-titan-purple' : 'glass-card-hover'
+                                    }`}
                             >
                                 ₹{amount}
                             </button>
                         ))}
+                    </div>
+                    <div className="flex gap-3">
+                        <input
+                            type="number"
+                            placeholder="Or enter custom amount (₹)"
+                            value={customAmount}
+                            onChange={e => { setCustomAmount(e.target.value); setDepositAmount('') }}
+                            className="input-field flex-1"
+                            min="10"
+                        />
+                        <button onClick={handleDeposit} disabled={paying} className="btn-neon px-6">
+                            {paying ? '...' : 'Deposit'}
+                        </button>
                     </div>
                 </motion.div>
 
@@ -217,6 +348,68 @@ export default function WalletPage() {
                     )}
                 </motion.div>
             </div>
+
+            {/* Withdrawal Modal */}
+            <AnimatePresence>
+                {withdrawModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+                        onClick={() => setWithdrawModal(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="glass-card p-8 max-w-md w-full"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="font-display text-2xl font-bold">Withdraw Funds</h2>
+                                <button onClick={() => setWithdrawModal(false)} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm text-white/60 mb-2">Amount (₹)</label>
+                                    <input
+                                        type="number"
+                                        value={withdrawAmount}
+                                        onChange={e => setWithdrawAmount(e.target.value)}
+                                        placeholder="Minimum ₹100"
+                                        className="input-field w-full"
+                                        min="100"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-white/60 mb-2">
+                                        <Smartphone size={14} className="inline mr-1" />
+                                        UPI ID
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={upiId}
+                                        onChange={e => setUpiId(e.target.value)}
+                                        placeholder="yourname@upi"
+                                        className="input-field w-full"
+                                    />
+                                    <p className="text-xs text-white/30 mt-1">e.g. name@okicici, name@ybl, number@paytm</p>
+                                </div>
+                                <div className="glass-card p-3 rounded-lg bg-titan-warning/5 border border-titan-warning/20">
+                                    <p className="text-xs text-titan-warning">⚡ Processing time: 24–48 hours. Minimum withdrawal: ₹100.</p>
+                                </div>
+                                <button onClick={handleWithdraw} className="btn-neon w-full py-3">
+                                    Submit Withdrawal Request
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     )
 }

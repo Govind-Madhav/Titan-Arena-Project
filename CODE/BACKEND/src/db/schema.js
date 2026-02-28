@@ -338,6 +338,7 @@ const matches = pgTable('match', {
     participantAId: varchar('participantAId', { length: 191 }),
     participantBId: varchar('participantBId', { length: 191 }),
     nextMatchId: varchar('nextMatchId', { length: 191 }),
+    nextMatchSlot: varchar('nextMatchSlot', { length: 5 }),           // "A" or "B"
     positionInNextMatch: integer('positionInNextMatch'),
     scoreA: integer('scoreA').default(0),
     scoreB: integer('scoreB').default(0),
@@ -351,12 +352,17 @@ const matches = pgTable('match', {
     streamUrl: text('streamUrl'),          // Twitch/YouTube live stream link
     vodUrl: text('vodUrl'),                // post-match VOD/replay link
     spectatorCode: varchar('spectatorCode', { length: 100 }), // in-game spectator password
+    // ─── Double Elimination fields ────────────────────────────────────────────
+    bracketSection: varchar('bracket_section', { length: 20 }).default('WINNERS'), // WINNERS | LOSERS | GRAND_FINAL | ROUND_ROBIN
+    loserNextMatchId: varchar('loser_next_match_id', { length: 191 }),              // where the loser goes
+    loserNextMatchSlot: varchar('loser_next_match_slot', { length: 5 }),            // "A" or "B"
     createdAt: timestamp('createdAt').notNull().defaultNow(),
     updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     tournamentIdIdx: index('match_tournamentId_idx').on(table.tournamentId),
     winnerIdIdx: index('match_winnerId_idx').on(table.winnerId),
 }));
+
 
 // Player Profiles table
 const playerProfiles = pgTable('playerprofile', {

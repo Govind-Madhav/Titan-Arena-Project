@@ -5,13 +5,13 @@
 
 const { db } = require('../../db');
 const { matches, tournaments, registrations, users, teams, teamMembers, disputes, payouts } = require('../../db/schema');
-const { eq, and, desc, asc, or } = require('drizzle-orm');
+const { eq, and, desc, asc, or, isNotNull } = require('drizzle-orm');
 const walletService = require('../wallet/wallet.service');
 const { publishEvent } = require('../../config/kafka.config');
 const { publishTournamentEnded } = require('../tournament/tournament.events');
 const mmrService = require('../../services/mmr.service');
 const achievementService = require('../../services/achievement.service');
-const { broadcastMatchCompleted, broadcastScoreUpdate } = require('../../config/socket.config');
+const { broadcastMatchCompleted, broadcastScoreUpdate, emitToTournament } = require('../../config/socket.config');
 
 // Get matches for tournament
 exports.getMatches = async (req, res) => {
@@ -83,7 +83,7 @@ exports.getMyMatches = async (req, res) => {
             .leftJoin(tournaments, eq(matches.tournamentId, tournaments.id))
             .leftJoin(disputes, eq(matches.id, disputes.matchId))
             .where(or(...participantConditions))
-            .orderBy(desc(matches.scheduledAt));
+            .orderBy(desc(matches.startTime));
 
         // Enrich: add my-win flag and opponent info
         const enriched = rows.map(r => {
@@ -123,38 +123,17 @@ exports.getMyMatches = async (req, res) => {
 };
 
 
-// Generate bracket
+// Generate bracket — delegates to the Java Tournament Engine
 exports.generateBracket = async (req, res) => {
     try {
         const tournamentId = req.params.tournamentId;
 
-        // Fetch tournament with registrations
-        const tRows = await db.select({
-            tournament: tournaments,
-            registration: registrations,
-            user: { id: users.id, username: users.username },
-            team: { id: teams.id, name: teams.name }
-        })
-            .from(tournaments)
-            .leftJoin(registrations, eq(tournaments.id, registrations.tournamentId))
-            .leftJoin(users, eq(registrations.userId, users.id))
-            .leftJoin(teams, eq(registrations.teamId, teams.id))
-            .where(eq(tournaments.id, tournamentId));
-
+        // Fetch tournament
+        const tRows = await db.select().from(tournaments).where(eq(tournaments.id, tournamentId));
         if (!tRows.length) {
             return res.status(404).json({ success: false, message: 'Tournament not found' });
         }
-
-        const tournament = tRows[0].tournament;
-
-        // Filter confirmed registrations manually
-        const participants = tRows
-            .filter(r => r.registration && r.registration.status === 'CONFIRMED')
-            .map(r => ({
-                ...r.registration,
-                user: r.user,
-                team: r.team
-            }));
+        const tournament = tRows[0];
 
         if (tournament.hostId !== req.user.id && !['ADMIN', 'SUPERADMIN'].includes(req.user.role)) {
             return res.status(403).json({ success: false, message: 'Access denied' });
@@ -164,82 +143,37 @@ exports.generateBracket = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Tournament must be ONGOING to generate bracket' });
         }
 
-        if (participants.length < 2) {
-            return res.status(400).json({ success: false, message: 'Need at least 2 participants' });
+        // Determine bracket format (stored on tournament, defaulting to SINGLE_ELIMINATION)
+        const format = tournament.format || 'SINGLE_ELIMINATION';
+
+        // ─── Delegate to Java Tournament Engine ──────────────────────────────
+        // The Java engine reads confirmed participants directly from the same DB,
+        // generates the full bracket (including Losers Bracket for DE), and writes
+        // all match rows with correct bracketSection / loserNextMatchId columns.
+        const JAVA_ENGINE_URL = process.env.JAVA_ENGINE_URL || 'http://localhost:8080';
+
+        const engineRes = await fetch(
+            `${JAVA_ENGINE_URL}/api/brackets/${tournamentId}/generate?format=${encodeURIComponent(format)}`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+        );
+
+        if (!engineRes.ok) {
+            const errBody = await engineRes.json().catch(() => ({}));
+            const errMsg = errBody.message || `Java engine returned HTTP ${engineRes.status}`;
+            return res.status(502).json({ success: false, message: `Bracket generation failed: ${errMsg}` });
         }
 
-        // Shuffle participants
-        const shuffled = [...participants].sort(() => Math.random() - 0.5);
+        const engineData = await engineRes.json();
 
-        // Calculate rounds needed (single elimination)
-        const totalRounds = Math.ceil(Math.log2(shuffled.length));
-        const bracketSize = Math.pow(2, totalRounds);
-
-        // Pad with BYEs if needed
-        while (shuffled.length < bracketSize) {
-            shuffled.push(null); // BYE
-        }
-
-        // Create match objects
-        const matchInserts = [];
-        let matchNumber = 1;
-
-        for (let i = 0; i < shuffled.length; i += 2) {
-            const p1 = shuffled[i];
-            const p2 = shuffled[i + 1];
-
-            const matchData = {
-                tournamentId,
-                round: 1,
-                matchNumber,
-                status: 'SCHEDULED',
-                // Using generic participant fields as per DB schema
-                // Logic: participantAId / BId
-                participantAId: tournament.type === 'SOLO' ? p1?.userId : p1?.teamId,
-                participantBId: tournament.type === 'SOLO' ? p2?.userId : p2?.teamId
-            };
-
-            // Auto-win if BYE
-            if (!p2) {
-                matchData.winnerId = matchData.participantAId;
-                matchData.status = 'COMPLETED';
-                matchData.isBye = true;
-            }
-
-            matchInserts.push(matchData);
-            matchNumber++;
-        }
-
-        // Subsequent rounds
-        for (let round = 2; round <= totalRounds; round++) {
-            const matchesInRound = Math.pow(2, totalRounds - round);
-            for (let m = 1; m <= matchesInRound; m++) {
-                matchInserts.push({
-                    tournamentId,
-                    round,
-                    matchNumber: m,
-                    status: 'SCHEDULED'
-                });
-            }
-        }
-
-        await db.transaction(async (tx) => {
-            // Delete existing matches
-            await tx.delete(matches).where(eq(matches.tournamentId, tournamentId));
-
-            // Bulk insert matches
-            await tx.insert(matches).values(matchInserts);
-        });
-
-        // Fetch back created matches
+        // Fetch back all created matches from Node's DB so we can return them
         const allMatches = await db.select()
             .from(matches)
             .where(eq(matches.tournamentId, tournamentId))
             .orderBy(asc(matches.round), asc(matches.matchNumber));
 
-        res.json({
+        return res.json({
             success: true,
-            message: `Bracket generated: ${totalRounds} rounds`,
+            message: `${format.replace(/_/g, ' ')} bracket generated (${engineData.data?.matchesCreated ?? allMatches.length} matches)`,
             data: allMatches
         });
     } catch (error) {
@@ -247,6 +181,7 @@ exports.generateBracket = async (req, res) => {
         res.status(500).json({ success: false, message: 'Failed to generate bracket' });
     }
 };
+
 
 // Submit match result
 exports.submitResult = async (req, res) => {
@@ -534,3 +469,114 @@ function getOrdinal(n) {
     const v = n % 100;
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
+
+// ─── Stream Management ─────────────────────────────────────────────────────────
+
+/**
+ * PATCH /matches/:id/stream
+ * Host or admin sets the streamUrl, vodUrl, spectatorCode for a match.
+ */
+exports.updateStream = async (req, res) => {
+    try {
+        const { streamUrl, vodUrl, spectatorCode } = req.body;
+        const matchRows = await db.select().from(matches).where(eq(matches.id, req.params.id));
+        if (!matchRows.length) return res.status(404).json({ success: false, message: 'Match not found' });
+
+        const match = matchRows[0];
+
+        // Verify requestor is the host/admin of this tournament
+        const tournamentRows = await db.select().from(tournaments).where(eq(tournaments.id, match.tournamentId));
+        const tournament = tournamentRows[0];
+        const isHost = tournament?.hostId === req.user.id;
+        const isAdminUser = req.user.isAdmin || ['ADMIN', 'SUPERADMIN'].includes(req.user.role);
+
+        if (!isHost && !isAdminUser) {
+            return res.status(403).json({ success: false, message: 'Only the tournament host or admins can set stream info' });
+        }
+
+        const updateData = { updatedAt: new Date() };
+        if (streamUrl !== undefined) updateData.streamUrl = streamUrl || null;
+        if (vodUrl !== undefined) updateData.vodUrl = vodUrl || null;
+        if (spectatorCode !== undefined) updateData.spectatorCode = spectatorCode || null;
+
+        const [updated] = await db.update(matches).set(updateData).where(eq(matches.id, req.params.id)).returning();
+
+        // Broadcast stream update over socket (use emitToTournament; broadcastScoreUpdate is for scores only)
+        emitToTournament(match.tournamentId, 'stream:update', { matchId: match.id, streamUrl: updated.streamUrl });
+
+        res.json({ success: true, message: 'Stream info updated', data: updated });
+    } catch (error) {
+        console.error('Update stream error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update stream info' });
+    }
+};
+
+/**
+ * GET /matches/streams/live
+ * Public endpoint — returns all ONGOING/IN_PROGRESS matches that have a streamUrl.
+ * Used for the "Live Now" spectator hub page.
+ */
+exports.getLiveStreams = async (req, res) => {
+    try {
+        const rows = await db.select({
+            matchId: matches.id,
+            tournamentId: matches.tournamentId,
+            round: matches.round,
+            matchNumber: matches.matchNumber,
+            status: matches.status,
+            streamUrl: matches.streamUrl,
+            spectatorCode: matches.spectatorCode,
+            bracketSection: matches.bracketSection,
+            startTime: matches.startTime,
+            tournamentName: tournaments.name,
+            game: tournaments.game,
+            gameBanner: tournaments.bannerUrl,
+        })
+            .from(matches)
+            .leftJoin(tournaments, eq(matches.tournamentId, tournaments.id))
+            .where(
+                and(
+                    isNotNull(matches.streamUrl),
+                    or(
+                        eq(matches.status, 'ONGOING'),
+                        eq(matches.status, 'IN_PROGRESS'),
+                        eq(matches.status, 'LIVE'),
+                        eq(matches.status, 'SCHEDULED'),
+                        eq(matches.status, 'PENDING'),
+                        eq(matches.status, 'UPCOMING')
+                    )
+                )
+            )
+            .orderBy(desc(matches.startTime))
+            .limit(50);
+
+        res.json({ success: true, data: rows });
+    } catch (error) {
+        console.error('Get live streams error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch live streams' });
+    }
+};
+
+/**
+ * GET /matches/:id/stream
+ * Public endpoint — returns stream/vod info for a single match.
+ */
+exports.getMatchStream = async (req, res) => {
+    try {
+        const rows = await db.select({
+            matchId: matches.id,
+            status: matches.status,
+            streamUrl: matches.streamUrl,
+            vodUrl: matches.vodUrl,
+            spectatorCode: matches.spectatorCode,
+            tournamentId: matches.tournamentId,
+        }).from(matches).where(eq(matches.id, req.params.id));
+
+        if (!rows.length) return res.status(404).json({ success: false, message: 'Match not found' });
+        res.json({ success: true, data: rows[0] });
+    } catch (error) {
+        console.error('Get match stream error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch stream info' });
+    }
+};
+

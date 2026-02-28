@@ -1,0 +1,54 @@
+feat(java-engine): create CODE/JAVA-TOURNAMENT-ENGINE/
+
+File: CODE/JAVA-TOURNAMENT-ENGINE/
+Action: Create
+
+Rationale:
+Added or modified Java tournament engine components for backend services logic.
+
+Modifications details:
+CODE/JAVA-TOURNAMENT-ENGINE/Dockerfile             |  31 +++
+ CODE/JAVA-TOURNAMENT-ENGINE/pom.xml                | 102 ++++++++++
+ .../TournamentEngineApplication.java               |  14 ++
+ .../tournamentengine/api/BracketController.java    |  85 ++++++++
+ .../tournamentengine/bracket/BracketService.java   |  60 ++++++
+ .../bracket/strategy/BracketStrategy.java          |  39 ++++
+ .../strategy/DoubleEliminationStrategy.java        | 213 +++++++++++++++++++++
+ .../bracket/strategy/RoundRobinStrategy.java       | 115 +++++++++++
+ .../strategy/SingleEliminationStrategy.java        | 122 ++++++++++++
+ .../tournamentengine/config/KafkaConfig.java       |  70 +++++++
+ .../titanarena/tournamentengine/domain/Match.java  |  88 +++++++++
+ .../tournamentengine/domain/MatchRepository.java   |  19 ++
+ .../tournamentengine/domain/Tournament.java        |  64 +++++++
+ .../domain/TournamentRepository.java               |   8 +
+ .../event/consumer/TournamentEventConsumer.java    |  91 +++++++++
+ .../event/dto/inbound/TournamentCreatedEvent.java  |  26 +++
+ .../event/dto/outbound/MatchScheduledEvent.java    |  26 +++
+ .../event/producer/MatchEventProducer.java         |  42 ++++
+ .../orchestration/MatchOrchestratorService.java    | 138 +++++++++++++
+ .../orchestration/ParticipantResolverService.java  |  44 +++++
+ .../src/main/resources/application.yml             |  62 ++++++
+ .../target/classes/application.yml                 |  62 ++++++
+ .../TournamentEngineApplication.class              | Bin 0 -> 861 bytes
+ .../tournamentengine/api/BracketController.class   | Bin 0 -> 7054 bytes
+ .../tournamentengine/bracket/BracketService.class  | Bin 0 -> 3526 bytes
+ .../bracket/strategy/BracketStrategy.class         | Bin 0 -> 1272 bytes
+ .../strategy/DoubleEliminationStrategy.class       | Bin 0 -> 7536 bytes
+ .../bracket/strategy/RoundRobinStrategy.class      | Bin 0 -> 5170 bytes
+ .../strategy/SingleEliminationStrategy.class       | Bin 0 -> 6160 bytes
+ .../tournamentengine/config/KafkaConfig.class      | Bin 0 -> 4240 bytes
+ .../domain/Match$MatchBuilder.class                | Bin 0 -> 5839 bytes
+ .../titanarena/tournamentengine/domain/Match.class | Bin 0 -> 13338 bytes
+ .../tournamentengine/domain/MatchRepository.class  | Bin 0 -> 1257 bytes
+ .../tournamentengine/domain/Tournament.class       | Bin 0 -> 9840 bytes
+ .../domain/TournamentRepository.class              | Bin 0 -> 474 bytes
+ .../event/consumer/TournamentEventConsumer.class   | Bin 0 -> 3750 bytes
+ .../event/dto/inbound/TournamentCreatedEvent.class | Bin 0 -> 7744 bytes
+ ...ScheduledEvent$MatchScheduledEventBuilder.class | Bin 0 -> 4375 bytes
+ .../event/dto/outbound/MatchScheduledEvent.class   | Bin 0 -> 9159 bytes
+ .../event/producer/MatchEventProducer.class        | Bin 0 -> 4074 bytes
+ .../orchestration/MatchOrchestratorService.class   | Bin 0 -> 8902 bytes
+ .../orchestration/ParticipantResolverService.class | Bin 0 -> 2323 bytes
+ .../compile/default-compile/createdFiles.lst       |  18 ++
+ .../compile/default-compile/inputFiles.lst         |  16 ++
+ 44 files changed, 1555 insertions(+)

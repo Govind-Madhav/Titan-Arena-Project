@@ -15,6 +15,8 @@ import SettingsPage from './pages/settings/SettingsPage'
 // Player Components
 import TournamentsPage from './pages/player/TournamentsPage'
 import TournamentDetailPage from './pages/player/TournamentDetailPage'
+import BracketPage from './pages/player/BracketPage'
+import StreamPage from './pages/player/StreamPage'
 import PlayerDashboard from './pages/player/DashboardPage'
 import TeamsPage from './pages/player/TeamsPage'
 import MatchesPage from './pages/player/MatchesPage'
@@ -22,12 +24,17 @@ import WalletPage from './pages/player/WalletPage'
 import ProfilePage from './pages/player/ProfilePage'
 import LeaderboardPage from './pages/player/LeaderboardPage'
 import FeedPage from './pages/player/FeedPage' // New
+import ClanPage from './pages/player/ClanPage'
+import ClanDetailPage from './pages/player/ClanDetailPage'
+import AchievementsPage from './pages/player/AchievementsPage'
+import DisputesPage from './pages/player/DisputesPage'
 
 import ProtectedRoute from './Components/auth/ProtectedRoute'
 import SessionWarning from './Components/auth/SessionWarning'
 
 // Admin Components
 import AdminDashboard from './pages/admin/AdminPage'
+import AdminDisputesPage from './pages/admin/AdminDisputesPage'
 import ManageUsers from './pages/admin/ManageUsers'
 import ManageHosts from './pages/admin/ManageHosts'
 import ManageTournaments from './pages/admin/ManageTournaments'
@@ -40,6 +47,7 @@ import HostManageUser from './pages/host/HostManageUser'
 import HostUserPayments from './pages/host/HostUserPayments'
 import HostDeclareWinners from './pages/host/HostDeclareWinners'
 import HostApplicationPage from './pages/host/HostApplicationPage' // New
+import HostManageStream from './pages/host/HostManageStream'
 
 function App() {
   return (
@@ -85,6 +93,8 @@ function App() {
         <Route element={<Layout />}>
           <Route path="/tournaments" element={<TournamentsPage />} />
           <Route path="/tournament/:id" element={<TournamentDetailPage />} />
+          <Route path="/tournament/:id/bracket" element={<BracketPage />} />
+          <Route path="/streams" element={<StreamPage />} />
           <Route
             path="/dashboard"
             element={
@@ -142,6 +152,38 @@ function App() {
             }
           />
           <Route
+            path="/clans"
+            element={
+              <ProtectedRoute>
+                <ClanPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/clans/:id"
+            element={
+              <ProtectedRoute>
+                <ClanDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/achievements"
+            element={
+              <ProtectedRoute>
+                <AchievementsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/disputes"
+            element={
+              <ProtectedRoute>
+                <DisputesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/feed"
             element={<FeedPage />}
           />
@@ -153,6 +195,14 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={['ADMIN', 'SUPERADMIN']}>
               <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/disputes"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN', 'SUPERADMIN']}>
+              <AdminDisputesPage />
             </ProtectedRoute>
           }
         />
@@ -197,6 +247,15 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/host/tournaments/:tournamentId/streams"
+          element={
+            <ProtectedRoute allowedRoles={['HOST']}>
+              <HostManageStream />
+            </ProtectedRoute>
+          }
+        />
+
         <Route
           path="/host"
           element={

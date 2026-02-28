@@ -73,16 +73,6 @@ export default function TournamentsPage() {
         t.game.toLowerCase().includes(search.toLowerCase())
     )
 
-    // Mock data for display
-    const mockTournaments = [
-        { id: '1', name: 'BGMI Pro League S1', game: 'BGMI', prizePool: 100000, entryFee: 5000, status: 'UPCOMING', startTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), type: 'SQUAD', _count: { registrations: 48 } },
-        { id: '2', name: 'Valorant Champions Cup', game: 'Valorant', prizePool: 50000, entryFee: 2500, status: 'UPCOMING', startTime: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(), type: 'TEAM', _count: { registrations: 32 } },
-        { id: '3', name: 'Free Fire Weekly', game: 'Free Fire', prizePool: 25000, entryFee: 1000, status: 'ONGOING', startTime: new Date().toISOString(), type: 'SOLO', _count: { registrations: 64 } },
-        { id: '4', name: 'CS2 Showdown', game: 'CS2', prizePool: 75000, entryFee: 3000, status: 'UPCOMING', startTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), type: 'TEAM', _count: { registrations: 20 } },
-        { id: '5', name: 'COD Mobile Elite', game: 'COD Mobile', prizePool: 40000, entryFee: 2000, status: 'COMPLETED', startTime: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), type: 'SQUAD', _count: { registrations: 56 } },
-        { id: '6', name: 'BGMI Rookie Cup', game: 'BGMI', prizePool: 20000, entryFee: 500, status: 'UPCOMING', startTime: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(), type: 'DUO', _count: { registrations: 80 } },
-    ]
-
     const displayTournaments = filteredTournaments
 
     return (

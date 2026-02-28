@@ -266,59 +266,14 @@ function GamesSection() {
 // Featured Tournaments
 function FeaturedTournaments() {
     const [tournaments, setTournaments] = useState([])
+    const [loading, setLoading] = useState(true)
 
     useEffect(() => {
         api.get('/tournaments?limit=3')
             .then(res => setTournaments(res.data.data || []))
             .catch(console.error)
+            .finally(() => setLoading(false))
     }, [])
-
-    const mockTournaments = [
-        {
-            id: '1',
-            name: 'BGMI Pro League S1',
-            game: 'BGMI',
-            prizePool: 100000,
-            entryFee: 5000,
-            status: 'UPCOMING',
-            startTime: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-            // Scenario: Reg Open. Ends in 2 days.
-            registrationStart: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-            registrationEnd: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000).toISOString(), // 2 days 4h
-            type: 'SQUAD',
-            _count: { registrations: 48 },
-        },
-        {
-            id: '2',
-            name: 'Valorant Champions Cup',
-            game: 'Valorant',
-            prizePool: 50000,
-            entryFee: 2500,
-            status: 'UPCOMING',
-            startTime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-            // Scenario: Reg Start in future (1 day)
-            registrationStart: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000).toISOString(),
-            registrationEnd: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
-            type: 'TEAM',
-            _count: { registrations: 32 },
-        },
-        {
-            id: '3',
-            name: 'Free Fire Weekly',
-            game: 'Free Fire',
-            prizePool: 25000,
-            entryFee: 1000,
-            status: 'UPCOMING', // Changed to UPCOMING so we see countdown
-            startTime: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(), // Starts in 12h
-            // Scenario: Reg Open. Ends in 6h (< 24h)
-            registrationStart: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-            registrationEnd: new Date(Date.now() + 6 * 60 * 60 * 1000 + 30 * 60 * 1000).toISOString(), // 6h 30m
-            type: 'SOLO',
-            _count: { registrations: 64 },
-        },
-    ]
-
-    const displayTournaments = tournaments.length > 0 ? tournaments : mockTournaments
 
     return (
         <section className="py-20 px-4 relative z-10">
@@ -341,21 +296,35 @@ function FeaturedTournaments() {
                     </Link>
                 </motion.div>
 
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {displayTournaments.map((tournament, i) => (
-                        <motion.div
-                            key={tournament.id}
-                            initial={{ opacity: 0, y: 20 }}
-                            whileInView={{ opacity: 1, y: 0 }}
-                            viewport={{ once: true }}
-                            transition={{ delay: i * 0.1 }}
-                        >
-                            <TiltedCard maxTilt={5}>
-                                <TournamentCard tournament={tournament} />
-                            </TiltedCard>
-                        </motion.div>
-                    ))}
-                </div>
+                {loading ? (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className="glass-card h-80 animate-pulse" />
+                        ))}
+                    </div>
+                ) : tournaments.length === 0 ? (
+                    <div className="text-center py-16 glass-card rounded-2xl">
+                        <Trophy size={48} className="text-white/20 mx-auto mb-4" />
+                        <h3 className="font-heading text-xl font-semibold mb-2">No Tournaments Currently Open</h3>
+                        <p className="text-white/40">Check back later for new epic showdowns.</p>
+                    </div>
+                ) : (
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {tournaments.map((tournament, i) => (
+                            <motion.div
+                                key={tournament.id}
+                                initial={{ opacity: 0, y: 20 }}
+                                whileInView={{ opacity: 1, y: 0 }}
+                                viewport={{ once: true }}
+                                transition={{ delay: i * 0.1 }}
+                            >
+                                <TiltedCard maxTilt={5}>
+                                    <TournamentCard tournament={tournament} />
+                                </TiltedCard>
+                            </motion.div>
+                        ))}
+                    </div>
+                )}
             </div>
         </section>
     )

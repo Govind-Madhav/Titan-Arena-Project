@@ -18,7 +18,11 @@ import {
     LogOut,
     LayoutDashboard,
     Crown,
-    Globe // Added
+    Globe, // Added
+    Shield, // Clan/Orgs
+    Award, // Achievements
+    Tv2,  // Live Streams
+    ChevronDown // Added for dropdown
 } from 'lucide-react'
 import useAuthStore from '../../store/authStore'
 
@@ -118,10 +122,13 @@ export default function Navbar() {
 
     const navLinks = [
         { name: 'Tournaments', path: '/tournaments', icon: Trophy },
+        { name: 'Live', path: '/streams', icon: Tv2 },
         { name: 'Community', path: '/feed', icon: Globe },
         { name: 'Leaderboard', path: '/leaderboard', icon: Trophy }, // Re-using Trophy or maybe implement BarChart/Award icon if imported, utilizing Trophy for now to be safe or import Crown? actually Trophy is already imported.
         { name: 'Teams', path: '/teams', icon: Users },
+        { name: 'Clans', path: '/clans', icon: Shield },
         { name: 'Matches', path: '/matches', icon: Swords },
+        { name: 'Achievements', path: '/achievements', icon: Award },
     ]
 
     const isActive = (path) => location.pathname === path
@@ -147,7 +154,7 @@ export default function Navbar() {
 
                     {/* Desktop Navigation */}
                     <div className="hidden lg:flex items-center gap-1">
-                        {navLinks.map((link) => (
+                        {navLinks.slice(0, 5).map((link) => (
                             <Link
                                 key={link.path}
                                 to={link.path}
@@ -168,6 +175,26 @@ export default function Navbar() {
                                 )}
                             </Link>
                         ))}
+
+                        {/* More Dropdown */}
+                        <div className="relative group/more h-10 flex items-center">
+                            <button className="px-4 h-full rounded-lg font-heading font-semibold text-sm tracking-wide text-white/60 hover:text-white hover:bg-white/5 flex items-center gap-1 transition-all duration-200 outline-none">
+                                More
+                                <ChevronDown size={14} className="group-hover/more:rotate-180 transition-transform duration-300" />
+                            </button>
+                            <div className="absolute top-12 right-0 w-48 bg-[#111] border border-white/10 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.8)] opacity-0 invisible group-hover/more:opacity-100 group-hover/more:visible transition-all duration-200 py-2 z-50 overflow-hidden transform origin-top-right group-hover/more:scale-100 scale-95">
+                                {navLinks.slice(5).map((link) => (
+                                    <Link
+                                        key={link.path}
+                                        to={link.path}
+                                        className={`px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/10 transition-colors ${isActive(link.path) ? 'text-titan-purple bg-titan-purple/10' : 'text-white/70 hover:text-white'}`}
+                                    >
+                                        <link.icon size={16} className={isActive(link.path) ? 'text-titan-purple' : 'text-white/50'} />
+                                        <span className="font-heading font-medium tracking-wide">{link.name}</span>
+                                    </Link>
+                                ))}
+                            </div>
+                        </div>
                     </div>
 
                     {/* Right Side */}

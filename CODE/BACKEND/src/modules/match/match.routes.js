@@ -9,6 +9,11 @@ const matchController = require('./match.controller');
 const { authRequired, authOptional } = require('../../middleware/auth.middleware');
 const { requireNotBanned, requireAdmin } = require('../../middleware/role.middleware');
 
+// ─── Stream routes (must come before /:id to avoid route collision) ────────────
+router.get('/streams/live', matchController.getLiveStreams);
+router.get('/:id/stream', matchController.getMatchStream);
+router.patch('/:id/stream', authRequired, requireNotBanned, matchController.updateStream);
+
 // Get matches for tournament
 router.get('/tournament/:tournamentId', authOptional, matchController.getMatches);
 
@@ -32,3 +37,4 @@ router.patch('/:id/proof', authRequired, requireNotBanned, matchController.uploa
 router.post('/tournament/:tournamentId/complete', authRequired, requireNotBanned, matchController.completeTournament);
 
 module.exports = router;
+

@@ -6,10 +6,11 @@ spring:
     name: titan-arena-tournament-engine
 
   # PostgreSQL — same DB as Node.js backend (read tournament data)
+  # Set DB_PASS in environment; no default for security.
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:esports_tournament}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:titan_esports}
     username: ${DB_USER:postgres}
-    password: ${DB_PASS:root1}
+    password: ${DB_PASS}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10

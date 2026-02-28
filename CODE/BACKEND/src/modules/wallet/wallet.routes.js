@@ -29,4 +29,8 @@ router.post('/deposit/verify', walletController.verifyDeposit);
 router.post('/withdraw', walletController.requestWithdraw);
 router.get('/withdrawals', walletController.getMyWithdrawals);
 
+// Simulated Transactions (Test Mode)
+router.post('/test-deposit', walletController.simulateDeposit);
+router.post('/test-withdraw', walletController.simulateWithdrawal);
+
 module.exports = router;

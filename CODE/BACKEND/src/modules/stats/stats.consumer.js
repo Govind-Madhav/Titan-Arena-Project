@@ -6,38 +6,75 @@
  */
 
 const { createConsumer } = require('../../config/kafka.config');
+const { db } = require('../../db');
+const { mmrRatings } = require('../../db/schema');
+const { sql, eq } = require('drizzle-orm');
 
 const TOPICS = ['match.completed', 'tournament.ended'];
 const GROUP_ID = 'stats-service';
 
-/**
- * Handle a match.completed event.
- * Currently logs the event; extend to write to a dedicated stats/leaderboard table.
- * Phase 3 (CQRS) will update Redis sorted sets here.
- */
 const handleMatchCompleted = async (payload) => {
     const { matchId, tournamentId, winnerId, loserId, scoreA, scoreB } = payload;
 
-    // TODO (Phase 3): Update Redis leaderboard sorted set
-    // await redis.zIncrBy('leaderboard:global', WIN_POINTS, winnerId);
-    // await redis.zIncrBy('leaderboard:global', LOSS_POINTS, loserId);
-
     console.log(`📊 Stats Consumer: Match ${matchId} completed — Winner: ${winnerId}, Loser: ${loserId}`);
-    // Stats are currently computed on-demand via stats.service.js (calculateUserStats).
-    // This consumer is the hook point for Phase 3 CQRS leaderboard updates.
+
+    try {
+        await db.transaction(async (tx) => {
+            // Update Winner Stats (+15 MMR)
+            if (winnerId) {
+                await tx.insert(mmrRatings)
+                    .values({ userId: winnerId, rating: 1015, gamesPlayed: 1, wins: 1, currentStreak: 1 })
+                    .onConflictDoUpdate({
+                        target: mmrRatings.userId,
+                        set: {
+                            rating: sql`${mmrRatings.rating} + 15`,
+                            gamesPlayed: sql`${mmrRatings.gamesPlayed} + 1`,
+                            wins: sql`${mmrRatings.wins} + 1`,
+                            currentStreak: sql`CASE WHEN ${mmrRatings.currentStreak} < 0 THEN 1 ELSE ${mmrRatings.currentStreak} + 1 END`
+                        }
+                    });
+            }
+
+            // Update Loser Stats (-10 MMR)
+            if (loserId) {
+                await tx.insert(mmrRatings)
+                    .values({ userId: loserId, rating: 990, gamesPlayed: 1, losses: 1, currentStreak: -1 })
+                    .onConflictDoUpdate({
+                        target: mmrRatings.userId,
+                        set: {
+                            rating: sql`GREATEST(${mmrRatings.rating} - 10, 0)`,
+                            gamesPlayed: sql`${mmrRatings.gamesPlayed} + 1`,
+                            losses: sql`${mmrRatings.losses} + 1`,
+                            currentStreak: sql`CASE WHEN ${mmrRatings.currentStreak} > 0 THEN -1 ELSE ${mmrRatings.currentStreak} - 1 END`
+                        }
+                    });
+            }
+        });
+        console.log(`✅ Stats Consumer: MMR updated for Match ${matchId}`);
+    } catch (error) {
+        console.error(`❌ Stats Consumer: Failed to update MMR for Match ${matchId}`, error);
+    }
 };
 
-/**
- * Handle a tournament.ended event.
- * Awards bonus points to the tournament winner.
- */
 const handleTournamentEnded = async (payload) => {
     const { tournamentId, winnerId, prizePool } = payload;
 
-    // TODO (Phase 3): Award tournament win bonus in Redis leaderboard
-    // await redis.zIncrBy('leaderboard:global', TOURNAMENT_WIN_BONUS, winnerId);
-
     console.log(`📊 Stats Consumer: Tournament ${tournamentId} ended — Winner: ${winnerId}`);
+
+    if (winnerId) {
+        try {
+            // Bonus 50 MMR for winning a tournament
+            await db.insert(mmrRatings)
+                .values({ userId: winnerId, rating: 1050 })
+                .onConflictDoUpdate({
+                    target: mmrRatings.userId,
+                    set: { rating: sql`${mmrRatings.rating} + 50` }
+                });
+            console.log(`✅ Stats Consumer: Tournament Bonus MMR applied for ${winnerId}`);
+        } catch (error) {
+            console.error(`❌ Stats Consumer: Failed to apply Tournament Bonus`, error);
+        }
+    }
 };
 
 /**

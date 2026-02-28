@@ -285,6 +285,14 @@ const AdminDashboard = () => {
                                         borderColor="border-yellow-500/20"
                                     />
                                     <ActionCard
+                                        to="/admin/disputes"
+                                        title="Dispute Center"
+                                        desc="Manage reported match conflicts."
+                                        icon={AlertCircle}
+                                        color="bg-red-500/10 hover:bg-red-500/20"
+                                        borderColor="border-red-500/20"
+                                    />
+                                    <ActionCard
                                         to="/manageTourn"
                                         title="Tournament Oversight"
                                         desc="Monitor and control active events."

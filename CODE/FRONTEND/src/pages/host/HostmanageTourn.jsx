@@ -27,13 +27,14 @@ const ManageTournamentsPage = () => {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    game: '', // PRO FIX: Sync with backend 'game'
-    startTime: '', // PRO FIX: Sync with backend 'startTime'
-    entryFee: '', // PRO FIX: Sync with backend 'entryFee'
-    prizePool: '', // Added prizePool
-    maxParticipants: '', // Added maxParticipants
-    rules: '', // Added rules
-    type: 'SOLO', // Added type
+    game: '',
+    startTime: '',
+    entryFee: '',
+    prizePool: '',
+    maxParticipants: '',
+    rules: '',
+    type: 'SOLO',
+    format: 'SINGLE_ELIMINATION',
   });
   const [editing, setEditing] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -124,6 +125,7 @@ const ManageTournamentsPage = () => {
       maxParticipants: Number(tournament.maxParticipants || 100),
       rules: tournament.rules || '',
       type: tournament.type || 'SOLO',
+      format: tournament.format || 'SINGLE_ELIMINATION',
     });
     setEditing(true);
     setEditId(id);
@@ -153,6 +155,7 @@ const ManageTournamentsPage = () => {
       maxParticipants: '',
       rules: '',
       type: 'SOLO',
+      format: 'SINGLE_ELIMINATION',
     });
     setEditing(false);
     setEditId(null);
@@ -214,7 +217,7 @@ const ManageTournamentsPage = () => {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-white/60 mb-1">Format</label>
+                      <label className="block text-sm font-medium text-white/60 mb-1">Team Format</label>
                       <select
                         name="type"
                         value={formData.type}
@@ -227,6 +230,24 @@ const ManageTournamentsPage = () => {
                         <option value="SQUAD" className="bg-gray-900">Squad</option>
                       </select>
                     </div>
+                  </div>
+
+                  {/* Bracket Format */}
+                  <div>
+                    <label className="block text-sm font-medium text-white/60 mb-1">Bracket Format</label>
+                    <select
+                      name="format"
+                      value={formData.format}
+                      onChange={handleChange}
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-titan-purple focus:outline-none appearance-none cursor-pointer"
+                    >
+                      <option value="SINGLE_ELIMINATION" className="bg-gray-900">🏆 Single Elimination</option>
+                      <option value="DOUBLE_ELIMINATION" className="bg-gray-900">⚡ Double Elimination (Give every team 2 chances!)</option>
+                      <option value="ROUND_ROBIN" className="bg-gray-900">🔄 Round Robin (Everyone plays everyone)</option>
+                    </select>
+                    {formData.format === 'DOUBLE_ELIMINATION' && (
+                      <p className="text-xs text-titan-warning mt-1">⚡ Players get a second chance in the Losers Bracket before being eliminated.</p>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">

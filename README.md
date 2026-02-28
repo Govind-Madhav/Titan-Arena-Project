@@ -28,7 +28,7 @@ graph TD
     subgraph "Node.js Backend (Express.js)"
         API["REST API — Port 5000"]
         Auth["Firebase JWT Auth Guard"]
-        Modules["Domain Modules\n(Wallet / KYC / Tournament / Match / Dispute)"]
+        Modules["Domain Modules\n(Wallet / KYC / Tournament / Match / Admin ...)"]
         Consumers["Kafka Consumers\n(Notification / Stats)"]
     end
 
@@ -91,7 +91,7 @@ graph TD
 
 ```text
 Esports Tournament Website/
-├── docker-compose.yml            # Full stack orchestration (6 services)
+├── docker-compose.yml            # Full stack orchestration (7 services)
 ├── .env                          # Root env (JWT secrets, SMTP, Firebase, etc.)
 │
 └── CODE/
@@ -114,6 +114,7 @@ Esports Tournament Website/
     │       ├── modules/
     │       │   ├── auth/
     │       │   ├── tournament/
+    │       │   │   ├── checkin.controller.js ← NEW: Check-in logic
     │       │   │   ├── tournament.controller.js
     │       │   │   ├── tournament.events.js  ← NEW: Kafka publishers
     │       │   │   ├── tournament.routes.js
@@ -132,16 +133,25 @@ Esports Tournament Website/
     │       │   │   └── dispute.controller.js ← publishes dispute.resolved
     │       │   ├── kyc/
     │       │   │   └── kyc.controller.js    ← publishes kyc events
-    │       │   ├── team/
     │       │   ├── admin/
+    │       │   │   ├── admin.controller.js
+    │       │   │   └── audit.service.js      
+    │       │   ├── clans/
+    │       │   ├── game/
+    │       │   ├── host/
+    │       │   ├── social/
+    │       │   ├── team/
     │       │   └── payment/
     │       └── services/
-    │           ├── userSync.service.js  ← publishes user.registered
+    │           ├── achievement.service.js
     │           ├── audit.service.js
+    │           ├── email.service.js
     │           ├── hostStats.service.js
+    │           ├── mmr.service.js
     │           ├── otp.service.js
     │           ├── stats.service.js
-    │           └── uid.service.js
+    │           ├── uid.service.js
+    │           └── userSync.service.js  ← publishes user.registered
     │
     ├── JAVA-TOURNAMENT-ENGINE/   # Spring Boot 3.2 Microservice (Port 8080)
     │   ├── Dockerfile            # Multi-stage Maven → JRE 21 Alpine
@@ -204,7 +214,7 @@ Esports Tournament Website/
 docker-compose up -d
 ```
 
-This launches **6 containers**:
+This launches **7 containers**:
 
 | Container | Port | Description |
 |---|---|---|
