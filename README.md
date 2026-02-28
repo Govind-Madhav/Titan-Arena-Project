@@ -1,4 +1,4 @@
-# 🌌 Titan Arena — Enterprise-Grade Esports Infrastructure
+# 🌌 Titan Arena 
 
 Titan Arena is a premium, high-fidelity esports tournament management platform engineered for low-latency tournament orchestration, secure financial transactions, and high-engagement user experiences.
 
