@@ -18,17 +18,24 @@ const authApi = axios.create({
 
 // Add interceptor to attach tokens (but avoid circular dependency)
 authApi.interceptors.request.use(async (config) => {
+    // Prefer backend session JWT when present.
+    const stateAccessToken = useAuthStore?.getState?.().accessToken
+    if (stateAccessToken) {
+        config.headers.Authorization = `Bearer ${stateAccessToken}`
+        return config
+    }
+
     // Try to get Firebase token if available
     try {
         const { auth } = await import('../lib/firebase')
-        const firebaseUser = auth.currentUser
+        const firebaseUser = auth?.currentUser
 
         if (firebaseUser) {
             const token = await firebaseUser.getIdToken()
             config.headers.Authorization = `Bearer ${token}`
         }
-    } catch (e) {
-        // Firebase not available, continue without token
+    } catch (error) {
+        console.debug('Auth interceptor fallback (no Firebase token):', error?.message)
     }
 
     return config
@@ -37,9 +44,9 @@ authApi.interceptors.request.use(async (config) => {
 const TOKEN_REFRESH_INTERVAL = 14 * 60 * 1000 // Refresh 1 minute before expiry (14 min)
 
 // BroadcastChannel for multi-tab sync
-const authChannel = typeof BroadcastChannel !== 'undefined'
-    ? new BroadcastChannel('auth-channel')
-    : null
+const authChannel = typeof BroadcastChannel === 'undefined'
+    ? null
+    : new BroadcastChannel('auth-channel')
 
 const useAuthStore = create(
     persist(
@@ -59,6 +66,14 @@ const useAuthStore = create(
                 const state = get()
 
                 try {
+                    // On a fresh anonymous visit, skip refresh bootstrap to avoid expected 400 noise.
+                    const { auth } = await import('../lib/firebase')
+                    const hasFirebaseUser = Boolean(auth?.currentUser)
+                    const hasSessionHint = Boolean(state.accessToken || state.user || state.isAuthenticated)
+
+                    if (!hasFirebaseUser && !hasSessionHint) {
+                        set({ isAuthenticated: false })
+                    } else {
                     // 1. Try to establish a fresh token first (cookie -> access token)
                     const refreshed = await get().refreshAuth()
 
@@ -69,6 +84,7 @@ const useAuthStore = create(
                     } else {
                         // Refresh failed, clear auth
                         get().clearAuth()
+                    }
                     }
                 } catch (error) {
                     console.error('Initialization failed:', error)
@@ -140,7 +156,7 @@ const useAuthStore = create(
                     accessToken: null,
                     tokenExpiresAt: null,
                     isAuthenticated: false,
-                    isInitialized: false,
+                    isInitialized: true,
                     refreshTimer: null
                 })
             },
@@ -163,7 +179,16 @@ const useAuthStore = create(
                     // Handle different response structures
                     // Sync/Login returns: { user, accessToken, expiresAt }
                     // Me returns: { ...user }
-                    const user = responseData.accessToken ? responseData.user : responseData
+                    const previousUser = get().user || {}
+                    const incomingUser = responseData.accessToken ? responseData.user : responseData
+                    const user = {
+                        ...previousUser,
+                        ...incomingUser,
+                        role: incomingUser?.role || previousUser?.role || 'PLAYER',
+                        isAdmin: typeof incomingUser?.isAdmin === 'boolean'
+                            ? incomingUser.isAdmin
+                            : Boolean(previousUser?.isAdmin)
+                    }
 
                     if (responseData.accessToken) {
                         set({
@@ -208,7 +233,9 @@ const useAuthStore = create(
             logout: async () => {
                 const { auth } = await import('../lib/firebase')
                 try {
-                    await auth.signOut()
+                    if (auth) {
+                        await auth.signOut()
+                    }
                     await authApi.post('/auth/logout')
                 } catch (error) {
                     console.error('Logout error:', error)
@@ -292,7 +319,7 @@ const useAuthStore = create(
 
                     // Update backend with new avatar URL
                     const { default: api } = await import('../lib/api')
-                    const res = await api.patch('/users/me/profile', { avatarUrl })
+                    await api.patch('/users/me/profile', { avatarUrl })
 
                     // Update local state
                     set(state => ({
@@ -408,6 +435,8 @@ const useAuthStore = create(
             name: 'titan-auth',
             partialize: (state) => ({
                 user: state.user,
+                accessToken: state.accessToken,
+                tokenExpiresAt: state.tokenExpiresAt,
                 isAuthenticated: state.isAuthenticated,
             }),
         }
