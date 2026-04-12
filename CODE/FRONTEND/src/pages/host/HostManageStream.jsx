@@ -34,6 +34,7 @@ function MatchRow({ match, index }) {
         streamUrl: match.streamUrl || '',
         vodUrl: match.vodUrl || '',
         spectatorCode: match.spectatorCode || '',
+        isLive: ['LIVE', 'IN_PROGRESS', 'ONGOING'].includes(match.status),
     })
     const [saving, setSaving] = useState(false)
     const [saved, setSaved] = useState(false)
@@ -54,7 +55,8 @@ function MatchRow({ match, index }) {
 
     const isDirty = form.streamUrl !== (match.streamUrl || '') ||
         form.vodUrl !== (match.vodUrl || '') ||
-        form.spectatorCode !== (match.spectatorCode || '')
+        form.spectatorCode !== (match.spectatorCode || '') ||
+        form.isLive !== ['LIVE', 'IN_PROGRESS', 'ONGOING'].includes(match.status)
 
     return (
         <motion.div
@@ -127,6 +129,18 @@ function MatchRow({ match, index }) {
                 </div>
             </div>
 
+            <div className="mt-3">
+                <label className="inline-flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+                    <input
+                        type="checkbox"
+                        checked={form.isLive}
+                        onChange={(e) => setForm(f => ({ ...f, isLive: e.target.checked }))}
+                        className="rounded border-white/20 bg-black/30 text-titan-purple focus:ring-titan-purple"
+                    />
+                    Mark stream as live now
+                </label>
+            </div>
+
             {/* Save */}
             <div className="flex justify-end mt-3">
                 <button
@@ -158,6 +172,12 @@ export default function HostManageStream() {
     const navigate = useNavigate()
     const [matches, setMatches] = useState([])
     const [tournament, setTournament] = useState(null)
+    const [tournamentStreamForm, setTournamentStreamForm] = useState({
+        streamUrl: '',
+        streamIsLive: false,
+        streamScope: 'TOURNAMENT',
+    })
+    const [savingTournamentStream, setSavingTournamentStream] = useState(false)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
@@ -172,11 +192,38 @@ export default function HostManageStream() {
                 api.get(`/tournaments/${tournamentId}`),
             ])
             setMatches(matchRes.data.data || [])
-            setTournament(tournRes.data.data || tournRes.data)
+            const tournamentData = tournRes.data.data || tournRes.data
+            setTournament(tournamentData)
+            setTournamentStreamForm({
+                streamUrl: tournamentData?.streamUrl || '',
+                streamIsLive: Boolean(tournamentData?.streamIsLive),
+                streamScope: tournamentData?.streamScope || 'TOURNAMENT',
+            })
         } catch (err) {
             toast.error('Failed to load tournament matches')
         } finally {
             setLoading(false)
+        }
+    }
+
+    const saveTournamentStream = async () => {
+        setSavingTournamentStream(true)
+        try {
+            const response = await api.patch(`/tournaments/${tournamentId}/stream`, tournamentStreamForm)
+            const updated = response.data?.data
+            if (updated) {
+                setTournament(updated)
+                setTournamentStreamForm({
+                    streamUrl: updated.streamUrl || '',
+                    streamIsLive: Boolean(updated.streamIsLive),
+                    streamScope: updated.streamScope || 'TOURNAMENT',
+                })
+            }
+            toast.success('Tournament stream updated')
+        } catch (err) {
+            toast.error(err.response?.data?.message || 'Failed to save tournament stream')
+        } finally {
+            setSavingTournamentStream(false)
         }
     }
 
@@ -212,6 +259,56 @@ export default function HostManageStream() {
                     Stream URLs support <strong className="text-blue-300">Twitch</strong> and <strong className="text-blue-300">YouTube</strong> — they will be embedded directly on the Live page.
                     Spectator codes are hidden from viewers until they reveal them.
                 </p>
+            </div>
+
+            <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-5 mb-6">
+                <h2 className="font-heading text-sm font-bold text-white/50 uppercase tracking-widest mb-3">
+                    Tournament-wide stream
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="md:col-span-2">
+                        <label className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
+                            <Tv2 size={10} />Global stream URL
+                        </label>
+                        <input
+                            value={tournamentStreamForm.streamUrl}
+                            onChange={(e) => setTournamentStreamForm((prev) => ({ ...prev, streamUrl: e.target.value }))}
+                            placeholder="https://twitch.tv/... or youtube.com/..."
+                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-titan-purple focus:outline-none placeholder-white/20"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[10px] text-white/40 uppercase tracking-widest mb-1 flex items-center gap-1">
+                            <LinkIcon size={10} />Scope
+                        </label>
+                        <select
+                            value={tournamentStreamForm.streamScope}
+                            onChange={(e) => setTournamentStreamForm((prev) => ({ ...prev, streamScope: e.target.value }))}
+                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-titan-purple focus:outline-none"
+                        >
+                            <option value="TOURNAMENT">TOURNAMENT</option>
+                            <option value="MATCH">MATCH</option>
+                        </select>
+                    </div>
+                </div>
+                <div className="flex items-center justify-between mt-3">
+                    <label className="inline-flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={tournamentStreamForm.streamIsLive}
+                            onChange={(e) => setTournamentStreamForm((prev) => ({ ...prev, streamIsLive: e.target.checked }))}
+                            className="rounded border-white/20 bg-black/30 text-titan-purple focus:ring-titan-purple"
+                        />
+                        Mark tournament stream as live
+                    </label>
+                    <button
+                        onClick={saveTournamentStream}
+                        disabled={savingTournamentStream}
+                        className="btn-neon px-4 py-2 text-xs"
+                    >
+                        {savingTournamentStream ? 'Saving…' : 'Save Tournament Stream'}
+                    </button>
+                </div>
             </div>
 
             {loading ? (
