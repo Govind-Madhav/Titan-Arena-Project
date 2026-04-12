@@ -8,7 +8,9 @@ const router = express.Router();
 const tournamentController = require('./tournament.controller');
 const checkinController = require('./checkin.controller');
 const { authenticate, authorize } = require('../../middleware/auth.middleware');
+const { requireNotBanned, requireVerifiedHost } = require('../../middleware/role.middleware');
 const { globalLimiter } = require('../../middleware/security.middleware');
+const { uploadCommunityImage } = require('../../middleware/upload.middleware');
 
 // Public routes
 router.get('/', tournamentController.getAllTournaments);
@@ -19,26 +21,28 @@ router.get('/host/dashboard', authenticate, authorize('HOST', 'ADMIN', 'SUPERADM
 router.get('/:id', tournamentController.getTournamentById);
 
 // Host routes
-router.post('/', authenticate, authorize('HOST', 'ADMIN', 'SUPERADMIN'), tournamentController.createTournament);
-router.put('/:id', authenticate, authorize('HOST', 'ADMIN'), tournamentController.updateTournament);
-router.delete('/:id', authenticate, authorize('HOST', 'ADMIN'), tournamentController.deleteTournament);
+router.post('/', authenticate, requireNotBanned, requireVerifiedHost, tournamentController.createTournament);
+router.post('/:id/upload-banner', authenticate, requireNotBanned, requireVerifiedHost, uploadCommunityImage, tournamentController.uploadBanner);
+router.patch('/:id/stream', authenticate, requireNotBanned, requireVerifiedHost, tournamentController.updateTournamentStream);
+router.put('/:id', authenticate, requireNotBanned, requireVerifiedHost, tournamentController.updateTournament);
+router.delete('/:id', authenticate, requireNotBanned, requireVerifiedHost, tournamentController.deleteTournament);
 router.get('/:id/participants', authenticate, tournamentController.getParticipants);
-router.put('/:id/participants/:participantId/status', authenticate, authorize('HOST', 'ADMIN'), tournamentController.updateParticipantStatus);
+router.put('/:id/participants/:participantId/status', authenticate, requireNotBanned, requireVerifiedHost, tournamentController.updateParticipantStatus);
 
 // Tournament Cancellation (with auto-refund)
-router.post('/:id/cancel', authenticate, authorize('HOST', 'ADMIN', 'SUPERADMIN'), globalLimiter, tournamentController.cancelTournament);
+router.post('/:id/cancel', authenticate, requireNotBanned, requireVerifiedHost, globalLimiter, tournamentController.cancelTournament);
 
 // Check-in System
 router.post('/:id/checkin', authenticate, authorize('PLAYER'), checkinController.checkIn);
 router.delete('/:id/checkin', authenticate, authorize('PLAYER'), checkinController.withdrawCheckin);
-router.get('/:id/checkins', authenticate, authorize('HOST', 'ADMIN', 'SUPERADMIN'), checkinController.getCheckins);
+router.get('/:id/checkins', authenticate, requireNotBanned, requireVerifiedHost, checkinController.getCheckins);
 
 // Player routes
 router.post('/:id/join', authenticate, authorize('PLAYER'), tournamentController.joinTournament);
 router.delete('/:id/leave', authenticate, authorize('PLAYER'), tournamentController.leaveTournament);
 
 // Host - Declare winners (Legacy/Manual)
-router.post('/:id/winners', authenticate, authorize('HOST', 'ADMIN'), tournamentController.declareWinners);
+router.post('/:id/winners', authenticate, requireNotBanned, requireVerifiedHost, tournamentController.declareWinners);
 router.get('/:id/winners', tournamentController.getWinners);
 
 // Get tournaments by host (Legacy route)
