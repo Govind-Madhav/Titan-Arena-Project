@@ -34,137 +34,42 @@ import java.util.*;
  *
  * @see BracketStrategy
  */
-@Component("DOUBLE_ELIMINATION")
+@Component
 @RequiredArgsConstructor
 @Slf4j
 public class DoubleEliminationStrategy implements BracketStrategy {
+
+    private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String STATUS_PENDING = "PENDING";
 
     private final MatchRepository matchRepository;
 
     @Override
     @Transactional
     public List<Match> generate(String tournamentId, List<String> participants) {
-        if (matchRepository.existsByTournamentId(tournamentId)) {
-            log.warn("⚠️  Bracket already exists for tournament {} — skipping", tournamentId);
-            return matchRepository.findByTournamentIdOrderByRoundAscMatchNumberAsc(tournamentId);
+        Optional<List<Match>> existing = getExistingBracket(tournamentId);
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
         int n = participants.size();
         int bracketSize = nextPowerOfTwo(n);
         int wbRounds = log2(bracketSize); // e.g. 8 players → 3 WB rounds
+        int lbTotalRounds = 2 * (wbRounds - 1);
 
-        // Pad to bracket size with BYEs
-        List<String> seeded = new ArrayList<>(participants);
-        while (seeded.size() < bracketSize)
-            seeded.add(null);
+        List<String> seeded = createSeededParticipants(participants, bracketSize);
 
         log.info("🏆 [DoubleElim] tournament={} | participants={} | bracketSize={} | wbRounds={}",
                 tournamentId, n, bracketSize, wbRounds);
 
-        List<Match> allMatches = new ArrayList<>();
-
-        // ─── Pre-generate all UUIDs ──────────────────────────────────────────
-        // WB: round 1..wbRounds
-        // LB: lbTotalRounds = 2*(wbRounds-1) rounds
-        // Grand Final: 1 match (round = 0)
-
-        int lbTotalRounds = 2 * (wbRounds - 1);
-
-        // wbIds[round][matchIndex] → UUID
-        Map<Integer, Map<Integer, String>> wbIds = new HashMap<>();
-        for (int r = 1; r <= wbRounds; r++) {
-            int count = bracketSize / (int) Math.pow(2, r);
-            wbIds.put(r, new HashMap<>());
-            for (int i = 0; i < count; i++)
-                wbIds.get(r).put(i, UUID.randomUUID().toString());
-        }
-
-        // lbIds[lbRound][matchIndex] → UUID (lbRound 1..lbTotalRounds)
-        Map<Integer, Map<Integer, String>> lbIds = new HashMap<>();
-        for (int lr = 1; lr <= lbTotalRounds; lr++) {
-            // LB match count per round:
-            // Odd LB rounds receive WB losers (same count as WB that produced them)
-            // Even LB rounds halve again
-            int count = lbMatchCount(lr, wbRounds);
-            lbIds.put(lr, new HashMap<>());
-            for (int i = 0; i < count; i++)
-                lbIds.get(lr).put(i, UUID.randomUUID().toString());
-        }
-
+        Map<Integer, Map<Integer, String>> wbIds = buildWinnersBracketIds(bracketSize, wbRounds);
+        Map<Integer, Map<Integer, String>> lbIds = buildLosersBracketIds(wbRounds, lbTotalRounds);
         String grandFinalId = UUID.randomUUID().toString();
 
-        // ─── Winners Bracket ─────────────────────────────────────────────────
-        for (int r = 1; r <= wbRounds; r++) {
-            int count = bracketSize / (int) Math.pow(2, r);
-            boolean isLastWbRound = (r == wbRounds);
-
-            for (int i = 0; i < count; i++) {
-                // Participants (only round 1 is seeded; later rounds are TBD)
-                String pA = (r == 1) ? seeded.get(i * 2) : null;
-                String pB = (r == 1) ? seeded.get(i * 2 + 1) : null;
-                boolean isBye = isByeMatch(pA, pB);
-                String winner = isBye ? (pA != null ? pA : pB) : null;
-
-                // Where does the winner go next?
-                String winnerNextId = isLastWbRound ? grandFinalId : wbIds.get(r + 1).get(i / 2);
-                String winnerNextSlot = (i % 2 == 0) ? "A" : "B";
-
-                // WB loser drops to LB round 1 (odd LB rounds receive WB dropdowns)
-                // LB round 1 corresponds to WB round 1 losers
-                String loserNextId = lbIds.get(1).get(i);
-                String loserNextSlot = "A"; // default; node.js handles actual slot assignment
-
-                allMatches.add(Match.builder()
-                        .id(wbIds.get(r).get(i))
-                        .tournamentId(tournamentId)
-                        .round(r)
-                        .matchNumber(i + 1)
-                        .participantAId(pA).participantBId(pB)
-                        .status(isBye ? "COMPLETED" : "PENDING")
-                        .winnerId(winner)
-                        .nextMatchId(winnerNextId)
-                        .nextMatchSlot(winnerNextSlot)
-                        .loserNextMatchId(loserNextId)
-                        .loserNextMatchSlot(loserNextSlot)
-                        .bracketSection("WINNERS")
-                        .scheduledAt(Instant.now().plusSeconds(3600L * (i + 1)))
-                        .build());
-            }
-        }
-
-        // ─── Losers Bracket ──────────────────────────────────────────────────
-        for (int lr = 1; lr <= lbTotalRounds; lr++) {
-            int count = lbMatchCount(lr, wbRounds);
-            boolean isLastLbRound = (lr == lbTotalRounds);
-
-            for (int i = 0; i < count; i++) {
-                String nextId = isLastLbRound ? grandFinalId : lbIds.get(lr + 1).get(i / 2);
-                String nextSlot = (i % 2 == 0) ? "A" : "B";
-
-                allMatches.add(Match.builder()
-                        .id(lbIds.get(lr).get(i))
-                        .tournamentId(tournamentId)
-                        .round(-(lr)) // negative = LB
-                        .matchNumber(i + 1)
-                        .status("PENDING")
-                        .nextMatchId(nextId)
-                        .nextMatchSlot(nextSlot)
-                        .bracketSection("LOSERS")
-                        .scheduledAt(Instant.now().plusSeconds(3600L * 24L * lr))
-                        .build());
-            }
-        }
-
-        // ─── Grand Final ─────────────────────────────────────────────────────
-        allMatches.add(Match.builder()
-                .id(grandFinalId)
-                .tournamentId(tournamentId)
-                .round(0) // 0 = Grand Final
-                .matchNumber(1)
-                .status("PENDING")
-                .bracketSection("GRAND_FINAL")
-                .scheduledAt(Instant.now().plusSeconds(3600L * 24L * (lbTotalRounds + 2)))
-                .build());
+        List<Match> allMatches = new ArrayList<>();
+        allMatches.addAll(buildWinnersBracketMatches(tournamentId, seeded, bracketSize, wbRounds, wbIds, lbIds, grandFinalId));
+        allMatches.addAll(buildLosersBracketMatches(tournamentId, wbRounds, lbTotalRounds, lbIds, grandFinalId));
+        allMatches.add(buildGrandFinalMatch(tournamentId, grandFinalId, lbTotalRounds));
 
         List<Match> saved = matchRepository.saveAll(allMatches);
         log.info("✅ [DoubleElim] {} matches created (WB+LB+GF) for tournament {}", saved.size(), tournamentId);
@@ -172,6 +77,166 @@ public class DoubleEliminationStrategy implements BracketStrategy {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    private Optional<List<Match>> getExistingBracket(String tournamentId) {
+        if (matchRepository.existsByTournamentId(tournamentId)) {
+            log.warn("⚠️  Bracket already exists for tournament {} — skipping", tournamentId);
+            return Optional.of(matchRepository.findByTournamentIdOrderByRoundAscMatchNumberAsc(tournamentId));
+        }
+        return Optional.empty();
+    }
+
+    private List<String> createSeededParticipants(List<String> participants, int bracketSize) {
+        List<String> seeded = new ArrayList<>(participants);
+        while (seeded.size() < bracketSize) {
+            seeded.add(null);
+        }
+        return seeded;
+    }
+
+    private Map<Integer, Map<Integer, String>> buildWinnersBracketIds(int bracketSize, int wbRounds) {
+        Map<Integer, Map<Integer, String>> wbIds = new HashMap<>();
+        for (int round = 1; round <= wbRounds; round++) {
+            int count = bracketSize / (int) Math.pow(2, round);
+            Map<Integer, String> roundIds = new HashMap<>();
+            for (int i = 0; i < count; i++) {
+                roundIds.put(i, UUID.randomUUID().toString());
+            }
+            wbIds.put(round, roundIds);
+        }
+        return wbIds;
+    }
+
+    private Map<Integer, Map<Integer, String>> buildLosersBracketIds(int wbRounds, int lbTotalRounds) {
+        Map<Integer, Map<Integer, String>> lbIds = new HashMap<>();
+        for (int lbRound = 1; lbRound <= lbTotalRounds; lbRound++) {
+            int count = lbMatchCount(lbRound, wbRounds);
+            Map<Integer, String> roundIds = new HashMap<>();
+            for (int i = 0; i < count; i++) {
+                roundIds.put(i, UUID.randomUUID().toString());
+            }
+            lbIds.put(lbRound, roundIds);
+        }
+        return lbIds;
+    }
+
+    private List<Match> buildWinnersBracketMatches(
+            String tournamentId,
+            List<String> seeded,
+            int bracketSize,
+            int wbRounds,
+            Map<Integer, Map<Integer, String>> wbIds,
+            Map<Integer, Map<Integer, String>> lbIds,
+            String grandFinalId) {
+        List<Match> matches = new ArrayList<>();
+        for (int round = 1; round <= wbRounds; round++) {
+            int count = bracketSize / (int) Math.pow(2, round);
+            for (int i = 0; i < count; i++) {
+                matches.add(buildWinnersMatch(
+                        tournamentId,
+                        seeded,
+                        wbIds,
+                        lbIds,
+                        grandFinalId,
+                        round,
+                        i));
+            }
+        }
+        return matches;
+    }
+
+    private Match buildWinnersMatch(
+            String tournamentId,
+            List<String> seeded,
+            Map<Integer, Map<Integer, String>> wbIds,
+            Map<Integer, Map<Integer, String>> lbIds,
+            String grandFinalId,
+            int round,
+            int index) {
+        String participantA = (round == 1) ? seeded.get(index * 2) : null;
+        String participantB = (round == 1) ? seeded.get(index * 2 + 1) : null;
+        boolean isBye = isByeMatch(participantA, participantB);
+        String winner = isBye ? resolveByeWinner(participantA, participantB) : null;
+
+        boolean isLastWbRound = !wbIds.containsKey(round + 1);
+        String winnerNextId = isLastWbRound ? grandFinalId : wbIds.get(round + 1).get(index / 2);
+        String winnerNextSlot = (index % 2 == 0) ? "A" : "B";
+
+        String loserNextId = lbIds.get(1).get(index);
+        String loserNextSlot = "A";
+
+        return Match.builder()
+                .id(wbIds.get(round).get(index))
+                .tournamentId(tournamentId)
+                .round(round)
+                .matchNumber(index + 1)
+                .participantAId(participantA).participantBId(participantB)
+                .status(isBye ? STATUS_COMPLETED : STATUS_PENDING)
+                .winnerId(winner)
+                .nextMatchId(winnerNextId)
+                .nextMatchSlot(winnerNextSlot)
+                .loserNextMatchId(loserNextId)
+                .loserNextMatchSlot(loserNextSlot)
+                .bracketSection("WINNERS")
+                .startTime(Instant.now().plusSeconds(3600L * (index + 1)))
+                .build();
+    }
+
+    private List<Match> buildLosersBracketMatches(
+            String tournamentId,
+            int wbRounds,
+            int lbTotalRounds,
+            Map<Integer, Map<Integer, String>> lbIds,
+            String grandFinalId) {
+        List<Match> matches = new ArrayList<>();
+        for (int lbRound = 1; lbRound <= lbTotalRounds; lbRound++) {
+            int count = lbMatchCount(lbRound, wbRounds);
+            boolean isLastLbRound = (lbRound == lbTotalRounds);
+            for (int i = 0; i < count; i++) {
+                matches.add(buildLosersMatch(tournamentId, lbIds, grandFinalId, lbRound, i, isLastLbRound));
+            }
+        }
+        return matches;
+    }
+
+    private Match buildLosersMatch(
+            String tournamentId,
+            Map<Integer, Map<Integer, String>> lbIds,
+            String grandFinalId,
+            int lbRound,
+            int index,
+            boolean isLastLbRound) {
+        String nextId = isLastLbRound ? grandFinalId : lbIds.get(lbRound + 1).get(index / 2);
+        String nextSlot = (index % 2 == 0) ? "A" : "B";
+
+        return Match.builder()
+                .id(lbIds.get(lbRound).get(index))
+                .tournamentId(tournamentId)
+                .round(-(lbRound))
+                .matchNumber(index + 1)
+                .status(STATUS_PENDING)
+                .nextMatchId(nextId)
+                .nextMatchSlot(nextSlot)
+                .bracketSection("LOSERS")
+                .startTime(Instant.now().plusSeconds(3600L * 24L * lbRound))
+                .build();
+    }
+
+    private Match buildGrandFinalMatch(String tournamentId, String grandFinalId, int lbTotalRounds) {
+        return Match.builder()
+                .id(grandFinalId)
+                .tournamentId(tournamentId)
+                .round(0)
+                .matchNumber(1)
+                .status(STATUS_PENDING)
+                .bracketSection("GRAND_FINAL")
+                .startTime(Instant.now().plusSeconds(3600L * 24L * (lbTotalRounds + 2)))
+                .build();
+    }
+
+    private String resolveByeWinner(String participantA, String participantB) {
+        return participantA != null ? participantA : participantB;
+    }
 
     /**
      * Number of LB matches in a given LB round.
@@ -187,11 +252,8 @@ public class DoubleEliminationStrategy implements BracketStrategy {
      */
     private int lbMatchCount(int lbRound, int wbRounds) {
         int depth = (lbRound + 1) / 2; // which WB round's losers feed in
-        int wbLosersAtDepth = (int) Math.pow(2, wbRounds - depth - 1);
-        if (lbRound % 2 == 1)
-            return Math.max(1, wbLosersAtDepth); // odd: receives dropdowns
-        else
-            return Math.max(1, wbLosersAtDepth); // even: halving round
+        int wbLosersAtDepth = (int) Math.pow(2, (double) wbRounds - depth - 1);
+        return Math.max(1, wbLosersAtDepth);
     }
 
     private boolean isByeMatch(String a, String b) {
