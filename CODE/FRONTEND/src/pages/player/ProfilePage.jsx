@@ -4,12 +4,26 @@
  */
 
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { User, Shield, Calendar, Trophy, Mail, CheckCircle, XCircle, Edit, MapPin, Activity, TrendingUp, Swords, Clock, AlertCircle, LayoutDashboard, Crown, ArrowRight, Fingerprint, Copy } from 'lucide-react'
+import { User, Shield, Calendar, Trophy, CheckCircle, XCircle, Edit, Activity, TrendingUp, Swords, Clock, LayoutDashboard, Crown, ArrowRight, Copy } from 'lucide-react'
 import useAuthStore from '../../store/authStore'
-import { Particles } from '../../Components/effects/ReactBits'
 import FileUpload from '../../Components/common/FileUpload'
+
+const getWinLossRatio = (wins, losses) => {
+    if (losses > 0) {
+        return (wins / losses).toFixed(2)
+    }
+    if (wins > 0) {
+        return 'Perfect'
+    }
+    return '0.00'
+}
+
+const getMatchResultBadgeClass = (result) => {
+    if (result === 'WIN') return 'bg-green-500/20 text-green-400'
+    if (result === 'LOSS') return 'bg-red-500/20 text-red-400'
+    return 'bg-gray-500/20 text-gray-400'
+}
 
 export default function ProfilePage() {
     const { user, getDashboard, getProfile, isInitialized, isAuthenticated, uploadAvatar } = useAuthStore()
@@ -41,11 +55,8 @@ export default function ProfilePage() {
         fetchData()
     }, [isInitialized, isAuthenticated, getDashboard, getProfile])
 
-    // Calculate K/D Ratio (Mock calculation since we don't have kills/deaths in schema yet)
-    // We'll use Win/Loss ratio as a proxy for "Performance Ratio" for now
-    const performanceRatio = dashboardData.losses > 0
-        ? (dashboardData.matchesWon / dashboardData.losses).toFixed(2)
-        : dashboardData.matchesWon > 0 ? "Perfect" : "0.00"
+    // Use a transparent win/loss ratio metric until dedicated K/D stats are available.
+    const winLossRatio = getWinLossRatio(dashboardData.matchesWon, dashboardData.losses)
 
 
     const [isEditing, setIsEditing] = useState(false)
@@ -80,10 +91,50 @@ export default function ProfilePage() {
         }
     }
 
-    // Role Helpers - Robust checks to handle SUPER_ADMIN vs SUPERADMIN
-    const isSuperAdmin = user?.role === 'SUPERADMIN' || user?.role === 'SUPER_ADMIN';
+    // Role Helpers
+    const isSuperAdmin = user?.role === 'SUPERADMIN';
     const isAdmin = user?.role === 'ADMIN' || user?.isAdmin || isSuperAdmin;
-    const isHost = user?.role === 'HOST' || user?.hostStatus === 'VERIFIED' || isAdmin;
+    const isHost = user?.role === 'HOST' || user?.hostStatus === 'VERIFIED';
+
+    let recentMatchesContent = dashboardData.recentMatches.map((match) => (
+        <div key={match.id} className="p-4 hover:bg-white/5 transition-colors grid grid-cols-12 gap-4 items-center">
+            <div className="col-span-3 md:col-span-2 flex flex-col items-center justify-center">
+                <span className={`text-xs font-bold px-2 py-1 rounded w-16 text-center ${getMatchResultBadgeClass(match.result)}`}>
+                    {match.result}
+                </span>
+            </div>
+            <div className="col-span-9 md:col-span-6">
+                <p className="font-bold text-white text-sm md:text-base">{match.teamAName} vs {match.teamBName}</p>
+                <div className="flex items-center gap-2 text-xs text-white/40 mt-1">
+                    <Trophy size={12} /> {match.tournamentName} • Round {match.round}
+                </div>
+            </div>
+            <div className="col-span-12 md:col-span-4 flex items-center justify-between md:justify-end gap-6 mt-2 md:mt-0 px-4 md:px-0 bg-white/5 md:bg-transparent py-2 md:py-0 rounded-lg">
+                <div className="text-center">
+                    <span className="block text-xs text-white/30 uppercase tracking-wider">Score</span>
+                    <span className="font-mono font-bold text-white text-lg">{match.scoreA} - {match.scoreB}</span>
+                </div>
+                <div className="text-right">
+                    <span className="block text-xs text-white/30 uppercase tracking-wider">Date</span>
+                    <span className="text-white/60 text-sm">{new Date(match.startTime).toLocaleDateString()}</span>
+                </div>
+            </div>
+        </div>
+    ))
+
+    if (loading) {
+        recentMatchesContent = <div className="p-8 text-center text-white/30 italic">Loading history...</div>
+    } else if (dashboardData.recentMatches.length === 0) {
+        recentMatchesContent = (
+            <div className="p-12 text-center">
+                <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 text-white/20">
+                    <Swords size={32} />
+                </div>
+                <p className="text-white/40">No matches played yet.</p>
+                <Link to="/tournaments" className="text-titan-purple text-sm hover:underline mt-2 inline-block">Join a tournament</Link>
+            </div>
+        )
+    }
 
     return (
         <div className="min-h-screen relative bg-titan-bg pb-20">
@@ -130,7 +181,7 @@ export default function ProfilePage() {
                         {isEditing ? (
                             <div className="space-y-4 max-w-lg">
                                 <div>
-                                    <label className="text-xs text-white/40 block mb-1">Profile Picture</label>
+                                    <p className="text-xs text-white/40 block mb-1">Profile Picture</p>
                                     <FileUpload
                                         onUpload={handleAvatarUpload}
                                         accept="image/*"
@@ -140,8 +191,9 @@ export default function ProfilePage() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-xs text-white/40 block mb-1">Bio</label>
+                                    <label htmlFor="profile-bio" className="text-xs text-white/40 block mb-1">Bio</label>
                                     <textarea
+                                        id="profile-bio"
                                         className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:border-titan-purple outline-none h-20 resize-none"
                                         placeholder="Tell us about yourself..."
                                         value={editForm.bio}
@@ -249,7 +301,7 @@ export default function ProfilePage() {
                                 <div className="font-display font-bold text-2xl text-white group-hover:scale-105 transition-transform origin-left">
                                     {dashboardData.totalMatches}
                                 </div>
-                                <div className="text-xs text-white/40 mt-1">Simulated K/D: {performanceRatio}</div>
+                                <div className="text-xs text-white/40 mt-1">W/L Ratio: {winLossRatio}</div>
                             </div>
 
                             <div className="p-5 rounded-2xl bg-titan-bg-card border border-white/5 hover:border-titan-purple/30 transition-all group">
@@ -275,43 +327,7 @@ export default function ProfilePage() {
                             </div>
 
                             <div className="divide-y divide-white/5">
-                                {loading ? (
-                                    <div className="p-8 text-center text-white/30 italic">Loading history...</div>
-                                ) : dashboardData.recentMatches.length === 0 ? (
-                                    <div className="p-12 text-center">
-                                        <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 text-white/20">
-                                            <Swords size={32} />
-                                        </div>
-                                        <p className="text-white/40">No matches played yet.</p>
-                                        <Link to="/tournaments" className="text-titan-purple text-sm hover:underline mt-2 inline-block">Join a tournament</Link>
-                                    </div>
-                                ) : (
-                                    dashboardData.recentMatches.map((match) => (
-                                        <div key={match.id} className="p-4 hover:bg-white/5 transition-colors grid grid-cols-12 gap-4 items-center">
-                                            <div className="col-span-3 md:col-span-2 flex flex-col items-center justify-center">
-                                                <span className={`text-xs font-bold px-2 py-1 rounded w-16 text-center ${match.result === 'WIN' ? 'bg-green-500/20 text-green-400' : match.result === 'LOSS' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>
-                                                    {match.result}
-                                                </span>
-                                            </div>
-                                            <div className="col-span-9 md:col-span-6">
-                                                <p className="font-bold text-white text-sm md:text-base">{match.teamAName} vs {match.teamBName}</p>
-                                                <div className="flex items-center gap-2 text-xs text-white/40 mt-1">
-                                                    <Trophy size={12} /> {match.tournamentName} • Round {match.round}
-                                                </div>
-                                            </div>
-                                            <div className="col-span-12 md:col-span-4 flex items-center justify-between md:justify-end gap-6 mt-2 md:mt-0 px-4 md:px-0 bg-white/5 md:bg-transparent py-2 md:py-0 rounded-lg">
-                                                <div className="text-center">
-                                                    <span className="block text-xs text-white/30 uppercase tracking-wider">Score</span>
-                                                    <span className="font-mono font-bold text-white text-lg">{match.scoreA} - {match.scoreB}</span>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className="block text-xs text-white/30 uppercase tracking-wider">Date</span>
-                                                    <span className="text-white/60 text-sm">{new Date(match.startTime).toLocaleDateString()}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
+                                {recentMatchesContent}
                             </div>
                         </div>
                     </div>
@@ -340,8 +356,8 @@ export default function ProfilePage() {
 
                                 <div className="grid grid-cols-2 gap-4 mt-4">
                                     <div className="bg-black/20 p-3 rounded-xl border border-white/5">
-                                        <div className="text-xs text-white/40 mb-1">K/D Ratio</div>
-                                        <div className="text-lg font-bold text-white">{performanceRatio}</div>
+                                        <div className="text-xs text-white/40 mb-1">W/L Ratio</div>
+                                        <div className="text-lg font-bold text-white">{winLossRatio}</div>
                                     </div>
                                     <div className="bg-black/20 p-3 rounded-xl border border-white/5">
                                         <div className="text-xs text-white/40 mb-1">Total XP</div>
