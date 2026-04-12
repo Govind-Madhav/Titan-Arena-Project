@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { FaTrophy, FaUserEdit, FaSun, FaMoon } from 'react-icons/fa';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { toast, Toaster } from 'react-hot-toast';
 import api from '../../lib/api';
 
@@ -28,8 +28,6 @@ const UserProfilePage = () => {
     mobile: '',
     profilePic: null, // store file, not URL
   });
-  const navigate = useNavigate();
-
   useEffect(() => {
     const storedUser = {
       id: sessionStorage.getItem('playerId'),
@@ -44,9 +42,8 @@ const UserProfilePage = () => {
       setFormData({ ...storedUser, profilePic: null }); // Reset file
     } else {
       toast.error('Session expired! Please log in again.');
-      // navigate('/login');
     }
-  }, [navigate]);
+  }, []);
 
   const handleChange = (e) => {
     const { name, value, files } = e.target;
@@ -64,35 +61,33 @@ const UserProfilePage = () => {
   };
 
   const handleSave = async () => {
-    const userId = user.id;
-    const { fullName, email, password, mobile, profilePic } = formData;
+    const { fullName, email, mobile } = formData;
 
     try {
-      const formDataToSend = new FormData();
-      formDataToSend.append('fullName', fullName);
-      formDataToSend.append('email', email);
-      formDataToSend.append('password', password);
-      formDataToSend.append('mobile', mobile);
-      if (profilePic) {
-        formDataToSend.append('file', profilePic);
-      }
+      const payload = {
+        legalName: fullName,
+        email,
+        phone: mobile,
+      };
 
-      const response = await api.put(`/player/update-profile/${userId}`, formDataToSend);
+      const response = await api.patch('/users/me/profile', payload);
 
-      if (response.data.status === 'success') {
-        const updatedPlayer = response.data.data;
+      if (response.data.success) {
+        const updatedPlayer = response.data.data || {};
         // Update sessionStorage individually
-        sessionStorage.setItem('playerName', updatedPlayer.fullName);
-        sessionStorage.setItem('playerEmail', updatedPlayer.email);
-        sessionStorage.setItem('playerMobile', updatedPlayer.mobile);
-        sessionStorage.setItem('playerImageUrl', updatedPlayer.imageUrl);
+        sessionStorage.setItem('playerName', updatedPlayer.legalName || fullName);
+        sessionStorage.setItem('playerEmail', updatedPlayer.email || email);
+        sessionStorage.setItem('playerMobile', updatedPlayer.phone || mobile);
+        if (updatedPlayer.avatarUrl) {
+          sessionStorage.setItem('playerImageUrl', updatedPlayer.avatarUrl);
+        }
 
         setUser({
           ...user,
-          fullName: updatedPlayer.fullName,
-          email: updatedPlayer.email,
-          mobile: updatedPlayer.mobile,
-          profilePic: updatedPlayer.imageUrl,
+          fullName: updatedPlayer.legalName || fullName,
+          email: updatedPlayer.email || email,
+          mobile: updatedPlayer.phone || mobile,
+          profilePic: updatedPlayer.avatarUrl || user.profilePic,
         });
         toast.success('Profile updated successfully!');
       } else {
@@ -164,8 +159,9 @@ const UserProfilePage = () => {
             {editing ? (
               <>
                 <div>
-                  <label className="block mb-2">Full Name:</label>
+                  <label htmlFor="profile-full-name" className="block mb-2">Full Name:</label>
                   <input
+                    id="profile-full-name"
                     type="text"
                     name="fullName"
                     value={formData.fullName}
@@ -174,8 +170,9 @@ const UserProfilePage = () => {
                   />
                 </div>
                 <div>
-                  <label className="block mb-2">Email:</label>
+                  <label htmlFor="profile-email" className="block mb-2">Email:</label>
                   <input
+                    id="profile-email"
                     type="email"
                     name="email"
                     value={formData.email}
@@ -184,8 +181,9 @@ const UserProfilePage = () => {
                   />
                 </div>
                 <div>
-                  <label className="block mb-2">Password:</label>
+                  <label htmlFor="profile-password" className="block mb-2">Password:</label>
                   <input
+                    id="profile-password"
                     type="password"
                     name="password"
                     value={formData.password}
@@ -194,8 +192,9 @@ const UserProfilePage = () => {
                   />
                 </div>
                 <div>
-                  <label className="block mb-2">Mobile:</label>
+                  <label htmlFor="profile-mobile" className="block mb-2">Mobile:</label>
                   <input
+                    id="profile-mobile"
                     type="text"
                     name="mobile"
                     value={formData.mobile}
