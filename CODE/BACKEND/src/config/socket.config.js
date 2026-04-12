@@ -10,6 +10,20 @@ const { Server } = require('socket.io');
 
 let io = null;
 
+const resolveAllowedOrigins = () => {
+    const configuredOrigins = process.env.ALLOWED_ORIGINS?.split(',').map((origin) => origin.trim()).filter(Boolean);
+
+    if (configuredOrigins?.length) {
+        return configuredOrigins;
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('ALLOWED_ORIGINS must be set in production for Socket.io CORS');
+    }
+
+    return ['http://localhost:5173', 'http://localhost:3000'];
+};
+
 /**
  * Initialise Socket.io on the HTTP server.
  * Call this once from index.js after `httpServer.listen()`.
@@ -17,9 +31,11 @@ let io = null;
  * @param {http.Server} httpServer
  */
 function initSocket(httpServer) {
+    const allowedOrigins = resolveAllowedOrigins();
+
     io = new Server(httpServer, {
         cors: {
-            origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:5173', 'http://localhost:3000'],
+            origin: allowedOrigins,
             methods: ['GET', 'POST'],
             credentials: true,
         },
