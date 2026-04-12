@@ -24,11 +24,11 @@ public class ParticipantResolverService {
     public List<String> getApprovedParticipants(String tournamentId) {
         try {
             String sql = """
-                    SELECT user_id
-                    FROM registrations
-                    WHERE tournament_id = ?
+                                        SELECT "userId"
+                                        FROM registration
+                                        WHERE "tournamentId" = ?
                       AND status = 'APPROVED'
-                    ORDER BY registered_at ASC
+                                        ORDER BY "createdAt" ASC
                     """;
 
             List<String> participants = jdbcTemplate.queryForList(sql, String.class, tournamentId);
