@@ -57,6 +57,7 @@ router.get('/', async (req, res) => {
         const rows = await db.select().from(clans).orderBy(desc(clans.totalWins)).limit(50);
         res.json({ success: true, data: rows });
     } catch (err) {
+        console.error('Fetch clans error:', err);
         res.status(500).json({ success: false, message: 'Failed to fetch clans' });
     }
 });
@@ -97,6 +98,7 @@ router.get('/:id', async (req, res) => {
 
         res.json({ success: true, data: { ...clanRows[0], members } });
     } catch (err) {
+        console.error('Fetch clan detail error:', err);
         res.status(500).json({ success: false, message: 'Failed to fetch clan' });
     }
 });
@@ -126,23 +128,6 @@ router.post('/:id/join', authenticate, async (req, res) => {
         if (err.code === '23505') return res.status(409).json({ success: false, message: 'Already a member' });
         console.error('Join clan error:', err);
         res.status(500).json({ success: false, message: 'Failed to join clan' });
-    }
-});
-
-// ─── Get My Clan ──────────────────────────────────────────────────────────────
-router.get('/my', authenticate, async (req, res) => {
-    try {
-        const memberRows = await db.select().from(clanMembers).where(eq(clanMembers.userId, req.user.id));
-        if (!memberRows.length) return res.json({ success: true, data: null });
-
-        const clanId = memberRows[0].clanId;
-        const clanRows = await db.select().from(clans).where(eq(clans.id, clanId));
-        if (!clanRows.length) return res.json({ success: true, data: null });
-
-        res.json({ success: true, data: { ...memberRows[0], ...clanRows[0], clanId } });
-    } catch (err) {
-        console.error('Get my clan error:', err);
-        res.status(500).json({ success: false, message: 'Failed to fetch your clan' });
     }
 });
 
