@@ -35,7 +35,7 @@ const { firebaseAuth } = require('../../middleware/auth.middleware');
 
 // ⚡ HYBRID IDENTITY ENDPOINTS
 router.post('/sync', firebaseAuth, authController.sync);
-router.get('/me', firebaseAuth, authController.getMe);
+router.get('/me', authRequired, authController.getMe);
 router.get('/dashboard', authRequired, authController.getDashboard);
 router.post('/logout-all', firebaseAuth, authController.logoutAllDevices);
 
@@ -44,6 +44,10 @@ router.put('/profile', authRequired, authController.updateProfile);
 router.post('/change-username', authLimiter, authRequired, authController.changeUsername);
 router.post('/change-email/init', authLimiter, authRequired, authController.initChangeEmail);
 router.post('/change-email/verify', authLimiter, authRequired, authController.verifyChangeEmail);
+router.get('/mfa/status', authRequired, authController.getMfaStatus);
+router.post('/mfa/setup/init', authLimiter, authRequired, authController.initMfaSetup);
+router.post('/mfa/setup/verify', authLimiter, authRequired, authController.verifyMfaSetup);
+router.post('/mfa/disable', authLimiter, authRequired, authController.disableMfa);
 router.post('/deactivate', authLimiter, authRequired, authController.deactivateAccount);
 router.post('/delete', authLimiter, authRequired, authController.deleteAccount);
 
