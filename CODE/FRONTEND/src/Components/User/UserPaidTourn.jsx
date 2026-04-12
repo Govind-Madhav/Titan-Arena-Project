@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { FaTrophy, FaSignOutAlt, FaSun, FaMoon, FaTwitter, FaInstagram, FaFacebookF, FaYoutube } from 'react-icons/fa';
+import { FaTrophy, FaSun, FaMoon, FaTwitter, FaInstagram, FaFacebookF, FaYoutube } from 'react-icons/fa';
 import { Link } from 'react-router-dom';
 import jsPDF from 'jspdf'; // 📄 For PDF
 import QRCode from 'qrcode'; // 📲 For QR code
@@ -19,20 +19,30 @@ const PaidTournamentsPage = () => {
   const [loading, setLoading] = useState(true); // To handle loading state
   const [error, setError] = useState(null); // For handling errors
 
-  const playerId = sessionStorage.getItem('playerId'); // Assuming playerId is stored in sessionStorage
-
   // Fetch paid tournaments from the API
   useEffect(() => {
     const fetchPaidTournaments = async () => {
       try {
         setLoading(true);
-        const response = await api.get(`/player/paid-tournaments/${playerId}`);
-        if (response.data.status === 'success') {
-          setPaidTournaments(response.data.data); // Assuming the data is under 'data' key
+        const response = await api.get('/payment/my-payments');
+        if (response.data.success) {
+          const normalized = (response.data.data || [])
+            .filter((item) => item.tournamentId)
+            .map((item) => ({
+              id: item.tournamentId,
+              name: item.tournamentName || 'Tournament',
+              hostId: 'N/A',
+              startDate: item.createdAt,
+              endDate: item.createdAt,
+              joiningFee: Number(item.amount || 0),
+              paymentStatus: item.status,
+            }));
+          setPaidTournaments(normalized);
         } else {
           toast.error('Failed to fetch paid tournaments.');
         }
       } catch (error) {
+        console.error('Error fetching paid tournaments:', error);
         setError('Error fetching paid tournaments.');
         toast.error('Error fetching paid tournaments.');
       } finally {
@@ -41,7 +51,7 @@ const PaidTournamentsPage = () => {
     };
 
     fetchPaidTournaments();
-  }, [playerId]);
+  }, []);
 
   // Function to calculate countdown to the tournament start date
   const calculateCountdown = (startDate) => {
@@ -133,6 +143,92 @@ const PaidTournamentsPage = () => {
     doc.save(`${tournament.name}_Ticket.pdf`);
   };
 
+  const renderTournamentsContent = () => {
+    if (loading) {
+      return (
+        <div className="col-span-full text-center py-8">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-400 mx-auto"></div>
+          <p className="mt-4 text-yellow-400">Loading tournaments...</p>
+        </div>
+      );
+    }
+
+    if (paidTournaments.length === 0) {
+      return (
+        <div className="col-span-full text-center py-8">
+          <div className="text-6xl mb-4">🏆</div>
+          <p className="text-gray-400 text-lg">No paid tournaments available.</p>
+          <p className="text-gray-500 text-sm mt-2">Join some tournaments to see them here!</p>
+        </div>
+      );
+    }
+
+    return paidTournaments.map((tournament, i) => (
+      <motion.div
+        key={`tournament-${tournament.id}`}
+        initial={{ opacity: 0, y: 50 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, delay: i * 0.1 }}
+        whileHover={{ scale: 1.02 }}
+        className="group relative bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-2xl p-6 hover:border-green-400/50 transition-all duration-300 card-container card-stable"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500 to-emerald-500 text-white">
+            Paid
+          </div>
+          <FaTrophy className="text-green-400 text-lg" />
+        </div>
+
+        <img src={tournament.image || 'public/tourn1.avif'} alt={tournament.name} className="w-full h-48 object-cover rounded-lg mb-4" />
+        <h3 className="text-xl font-bold text-white mb-2 group-hover:text-green-400 transition-colors duration-300">
+          {tournament.name}
+        </h3>
+        <p className="text-gray-400 mb-4">{tournament.description}</p>
+
+        <div className="space-y-2 mb-6">
+          <div className="flex items-center text-gray-300">
+            <FaUsers className="mr-2 text-green-400" />
+            Host: {tournament.hostId}
+          </div>
+          <div className="flex items-center text-gray-300">
+            <FaCalendarAlt className="mr-2 text-green-400" />
+            Start: {tournament.startDate.substring(0, 10)}
+          </div>
+          <div className="flex items-center text-gray-300">
+            <FaCalendarAlt className="mr-2 text-green-400" />
+            End: {tournament.endDate.substring(0, 10)}
+          </div>
+          <div className="flex items-center text-gray-300">
+            <FaClock className="mr-2 text-green-400" />
+            Countdown: {countdowns[tournament.id]}
+          </div>
+        </div>
+
+        <div className="text-green-400 font-semibold mb-4 text-center">
+          ✔️ Payment Completed
+        </div>
+
+        <div className="flex justify-center gap-4">
+          <button
+            onClick={() => downloadTicket(tournament)}
+            className="bg-green-500 hover:bg-green-600 text-white font-semibold px-4 py-2 rounded-full transition transform hover:scale-105"
+          >
+            Download Ticket
+          </button>
+
+          <a
+            href={'https://chat.whatsapp.com/LDTh8hMr7ik9zxjG3WfOm2'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold px-4 py-2 rounded-full transition transform hover:scale-105"
+          >
+            Join WhatsApp
+          </a>
+        </div>
+      </motion.div>
+    ));
+  };
+
 
   return (
     <div className="bg-gray-950 text-white font-poppins min-h-screen">
@@ -217,82 +313,7 @@ const PaidTournamentsPage = () => {
           {error && <p className="text-center text-red-500">{error}</p>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-            {loading ? (
-              <div className="col-span-full text-center py-8">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-yellow-400 mx-auto"></div>
-                <p className="mt-4 text-yellow-400">Loading tournaments...</p>
-              </div>
-            ) : paidTournaments.length > 0 ? paidTournaments.map((tournament, i) => (
-              <motion.div
-                key={`tournament-${tournament.id}`}
-                initial={{ opacity: 0, y: 50 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: i * 0.1 }}
-                whileHover={{ scale: 1.02 }}
-                className="group relative bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-2xl p-6 hover:border-green-400/50 transition-all duration-300 card-container card-stable"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-green-500 to-emerald-500 text-white">
-                    Paid
-                  </div>
-                  <FaTrophy className="text-green-400 text-lg" />
-                </div>
-
-                <img src={tournament.image || 'public/tourn1.avif'} alt={tournament.name} className="w-full h-48 object-cover rounded-lg mb-4" />
-                <h3 className="text-xl font-bold text-white mb-2 group-hover:text-green-400 transition-colors duration-300">
-                  {tournament.name}
-                </h3>
-                <p className="text-gray-400 mb-4">{tournament.description}</p>
-
-                <div className="space-y-2 mb-6">
-                  <div className="flex items-center text-gray-300">
-                    <FaUsers className="mr-2 text-green-400" />
-                    Host: {tournament.hostId}
-                  </div>
-                  <div className="flex items-center text-gray-300">
-                    <FaCalendarAlt className="mr-2 text-green-400" />
-                    Start: {tournament.startDate.substring(0, 10)}
-                  </div>
-                  <div className="flex items-center text-gray-300">
-                    <FaCalendarAlt className="mr-2 text-green-400" />
-                    End: {tournament.endDate.substring(0, 10)}
-                  </div>
-                  <div className="flex items-center text-gray-300">
-                    <FaClock className="mr-2 text-green-400" />
-                    Countdown: {countdowns[tournament.id]}
-                  </div>
-                </div>
-
-                <div className="text-green-400 font-semibold mb-4 text-center">
-                  ✔️ Payment Completed
-                </div>
-
-                {/* 🎟️ Ticket and WhatsApp Join */}
-                <div className="flex justify-center gap-4">
-                  <button
-                    onClick={() => downloadTicket(tournament)}
-                    className="bg-green-500 hover:bg-green-600 text-white font-semibold px-4 py-2 rounded-full transition transform hover:scale-105"
-                  >
-                    Download Ticket
-                  </button>
-
-                  <a
-                    href={'https://chat.whatsapp.com/LDTh8hMr7ik9zxjG3WfOm2'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-blue-500 hover:bg-blue-600 text-white font-semibold px-4 py-2 rounded-full transition transform hover:scale-105"
-                  >
-                    Join WhatsApp
-                  </a>
-                </div>
-              </motion.div>
-            )) : (
-              <div className="col-span-full text-center py-8">
-                <div className="text-6xl mb-4">🏆</div>
-                <p className="text-gray-400 text-lg">No paid tournaments available.</p>
-                <p className="text-gray-500 text-sm mt-2">Join some tournaments to see them here!</p>
-              </div>
-            )}
+            {renderTournamentsContent()}
           </div>
         </div>
       </section>
@@ -318,14 +339,16 @@ const PaidTournamentsPage = () => {
               </p>
               <div className="flex space-x-4">
                 {[
-                  { icon: FaTwitter, color: "hover:text-blue-400" },
-                  { icon: FaInstagram, color: "hover:text-pink-400" },
-                  { icon: FaFacebookF, color: "hover:text-blue-500" },
-                  { icon: FaYoutube, color: "hover:text-red-500" }
-                ].map((social, i) => (
+                  { icon: FaTwitter, color: "hover:text-blue-400", url: "https://twitter.com" },
+                  { icon: FaInstagram, color: "hover:text-pink-400", url: "https://instagram.com" },
+                  { icon: FaFacebookF, color: "hover:text-blue-500", url: "https://facebook.com" },
+                  { icon: FaYoutube, color: "hover:text-red-500", url: "https://youtube.com" }
+                ].map((social) => (
                   <a
-                    key={i}
-                    href="#"
+                    key={social.url}
+                    href={social.url}
+                    target="_blank"
+                    rel="noreferrer"
                     className={`text-2xl text-gray-400 transition-all duration-300 transform hover:scale-110 ${social.color}`}
                   >
                     <social.icon />
@@ -338,14 +361,14 @@ const PaidTournamentsPage = () => {
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Quick Links</h4>
               <ul className="space-y-3">
-                {[
-                  "Tournaments",
-                  "Leaderboard",
-                  "Players",
+                ].map((link) => (
+                  <li key={link}>
+                    <button
+                      type="button"
                   "Host Events",
                   "Prizes",
                   "Community"
-                ].map((link, i) => (
+                    </button>
                   <li key={i}>
                     <a
                       href="#"
@@ -358,14 +381,14 @@ const PaidTournamentsPage = () => {
               </ul>
             </div>
 
-            {/* Support */}
-            <div>
-              <h4 className="text-lg font-bold text-white mb-6">Support</h4>
-              <ul className="space-y-3">
+                      ].map((link) => (
+                        <li key={link}>
+                          <button
+                            type="button"
                 {[
                   "Help Center",
                   "Contact Us",
-                  "FAQ",
+                          </button>
                   "Terms of Service",
                   "Privacy Policy",
                   "Refund Policy"
