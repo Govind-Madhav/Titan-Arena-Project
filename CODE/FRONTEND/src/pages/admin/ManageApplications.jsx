@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../lib/api';
 import toast from 'react-hot-toast';
-import { Check, X, FileText, Calendar, User, Clock } from 'lucide-react';
+import { Check, X, FileText, Clock } from 'lucide-react';
 
 const ManageApplications = () => {
     const [applications, setApplications] = useState([]);
@@ -17,6 +17,7 @@ const ManageApplications = () => {
             const response = await api.get('/admin/applications');
             setApplications(response.data.data);
         } catch (error) {
+            console.error('Fetch applications failed:', error);
             toast.error('Failed to fetch applications');
         } finally {
             setLoading(false);
@@ -28,18 +29,19 @@ const ManageApplications = () => {
     }, []);
 
     const handleApprove = async (id) => {
-        if (!window.confirm('Approve this host application? This will generate a HOST CODE.')) return;
+        if (!globalThis.confirm('Approve this host application? This will generate a HOST CODE.')) return;
         try {
             await api.post(`/admin/applications/${id}/approve`);
             toast.success('Application Approved');
             fetchApplications(); // Refresh list
         } catch (error) {
+            console.error('Approve application failed:', error);
             toast.error(error.response?.data?.message || 'Approval Failed');
         }
     };
 
     const handleReject = async (id) => {
-        const reason = window.prompt('Enter rejection reason:');
+        const reason = globalThis.prompt('Enter rejection reason:');
         if (reason === null) return; // Cancelled
 
         try {
@@ -47,6 +49,7 @@ const ManageApplications = () => {
             toast.success('Application Rejected');
             fetchApplications();
         } catch (error) {
+            console.error('Reject application failed:', error);
             toast.error('Rejection Failed');
         }
     };
@@ -69,7 +72,7 @@ const ManageApplications = () => {
                             <div className="space-y-4 flex-1">
                                 <div className="flex items-center gap-4">
                                     <div className="w-12 h-12 rounded-full bg-titan-gold/20 flex items-center justify-center text-titan-gold font-bold text-xl">
-                                        {app.username[0].toUpperCase()}
+                                        {(app.username?.[0] || 'U').toUpperCase()}
                                     </div>
                                     <div>
                                         <h3 className="text-xl font-bold text-white">{app.username}</h3>
@@ -83,7 +86,7 @@ const ManageApplications = () => {
                                 <div className="bg-black/40 rounded-lg p-4 border border-white/5">
                                     <div className="flex items-start gap-2 mb-2">
                                         <FileText className="w-4 h-4 text-titan-cyan mt-1" />
-                                        <span className="text-sm text-white/80 italic">"{app.notes}"</span>
+                                        <span className="text-sm text-white/80 italic">"{app.notes || 'No notes provided'}"</span>
                                     </div>
                                     {app.documentsUrl && (
                                         <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/5">
