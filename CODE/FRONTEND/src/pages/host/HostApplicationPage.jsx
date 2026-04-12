@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
 import toast from 'react-hot-toast'; // Kept toast
 import { Shield, FileText, Link, Send } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
+import { useAuth } from '../../Context/AuthContext';
 
 const HostApplicationPage = () => {
     const navigate = useNavigate();
