@@ -30,25 +30,25 @@ import java.util.*;
  *
  * @see BracketStrategy
  */
-@Component("ROUND_ROBIN")
+@Component
 @RequiredArgsConstructor
 @Slf4j
 public class RoundRobinStrategy implements BracketStrategy {
+
+    private static final String STATUS_COMPLETED = "COMPLETED";
+    private static final String STATUS_PENDING = "PENDING";
 
     private final MatchRepository matchRepository;
 
     @Override
     @Transactional
     public List<Match> generate(String tournamentId, List<String> participants) {
-        if (matchRepository.existsByTournamentId(tournamentId)) {
-            log.warn("⚠️  Bracket already exists for tournament {} — skipping", tournamentId);
-            return matchRepository.findByTournamentIdOrderByRoundAscMatchNumberAsc(tournamentId);
+        Optional<List<Match>> existing = getExistingBracket(tournamentId);
+        if (existing.isPresent()) {
+            return existing.get();
         }
 
-        List<String> roster = new ArrayList<>(participants);
-        boolean hasOddCount = roster.size() % 2 != 0;
-        if (hasOddCount)
-            roster.add(null); // add phantom BYE player for odd counts
+        List<String> roster = createRoster(participants);
 
         int n = roster.size();
         int totalRounds = n - 1;
@@ -64,29 +64,7 @@ public class RoundRobinStrategy implements BracketStrategy {
         List<String> circle = new ArrayList<>(roster);
 
         for (int round = 1; round <= totalRounds; round++) {
-            int matchesInRound = n / 2;
-            int scheduledOffsetHours = 24 * round; // 1 day between rounds
-
-            for (int i = 0; i < matchesInRound; i++) {
-                String pA = circle.get(i);
-                String pB = circle.get(n - 1 - i);
-
-                // Skip BYE matches (one participant is the phantom null)
-                boolean isBye = (pA == null || pB == null);
-
-                allMatches.add(Match.builder()
-                        .id(UUID.randomUUID().toString())
-                        .tournamentId(tournamentId)
-                        .round(round)
-                        .matchNumber(i + 1)
-                        .participantAId(pA)
-                        .participantBId(pB)
-                        .status(isBye ? "COMPLETED" : "PENDING")
-                        .winnerId(isBye ? (pA != null ? pA : pB) : null)
-                        .bracketSection("ROUND_ROBIN")
-                        .scheduledAt(Instant.now().plusSeconds(3600L * scheduledOffsetHours + 1800L * i))
-                        .build());
-            }
+            allMatches.addAll(buildRoundMatches(tournamentId, circle, n, round));
 
             // Rotate: fix position 0, rotate positions 1..n-1 clockwise by 1
             rotateClockwise(circle);
@@ -99,6 +77,53 @@ public class RoundRobinStrategy implements BracketStrategy {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    private Optional<List<Match>> getExistingBracket(String tournamentId) {
+        if (matchRepository.existsByTournamentId(tournamentId)) {
+            log.warn("⚠️  Bracket already exists for tournament {} — skipping", tournamentId);
+            return Optional.of(matchRepository.findByTournamentIdOrderByRoundAscMatchNumberAsc(tournamentId));
+        }
+        return Optional.empty();
+    }
+
+    private List<String> createRoster(List<String> participants) {
+        List<String> roster = new ArrayList<>(participants);
+        if (roster.size() % 2 != 0) {
+            roster.add(null);
+        }
+        return roster;
+    }
+
+    private List<Match> buildRoundMatches(String tournamentId, List<String> circle, int rosterSize, int round) {
+        int matchesInRound = rosterSize / 2;
+        int scheduledOffsetHours = 24 * round;
+        List<Match> matches = new ArrayList<>();
+
+        for (int i = 0; i < matchesInRound; i++) {
+            String pA = circle.get(i);
+            String pB = circle.get(rosterSize - 1 - i);
+            boolean isBye = (pA == null || pB == null);
+            String byeWinner = isBye ? resolveByeWinner(pA, pB) : null;
+
+            matches.add(Match.builder()
+                    .id(UUID.randomUUID().toString())
+                    .tournamentId(tournamentId)
+                    .round(round)
+                    .matchNumber(i + 1)
+                    .participantAId(pA)
+                    .participantBId(pB)
+                    .status(isBye ? STATUS_COMPLETED : STATUS_PENDING)
+                    .winnerId(byeWinner)
+                    .bracketSection("ROUND_ROBIN")
+                    .startTime(Instant.now().plusSeconds(3600L * scheduledOffsetHours + 1800L * i))
+                    .build());
+        }
+        return matches;
+    }
+
+    private String resolveByeWinner(String pA, String pB) {
+        return pA != null ? pA : pB;
+    }
 
     /**
      * Rotates elements at indices 1..n-1 clockwise by one position.
