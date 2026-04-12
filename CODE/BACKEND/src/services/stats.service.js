@@ -5,7 +5,7 @@
 
 const { db } = require('../db');
 const { matches, registrations, tournaments, teams, teamMembers, notifications } = require('../db/schema');
-const { eq, and, or, sql, count, desc } = require('drizzle-orm');
+const { eq, and, or, sql, count, desc, inArray } = require('drizzle-orm');
 
 const calculateUserStats = async (userId) => {
     try {
@@ -68,8 +68,19 @@ const calculateUserStats = async (userId) => {
         // 4. Calculate Win Rate
         const winRate = totalMatches > 0 ? Math.round((matchesWon / totalMatches) * 100) : 0;
 
-        // 5. Mock Tournament Wins for now
-        const tournamentsWon = 0;
+        // 5. Count tournaments won by this user (solo or team winner)
+        const winnerConditions = [eq(tournaments.winnerId, userId)];
+        if (teamIds.length > 0) {
+            winnerConditions.push(inArray(tournaments.winnerId, teamIds));
+        }
+
+        const tournamentsWonRes = await db.select({ count: count() })
+            .from(tournaments)
+            .where(and(
+                eq(tournaments.status, 'COMPLETED'),
+                or(...winnerConditions)
+            ));
+        const tournamentsWon = tournamentsWonRes[0]?.count || 0;
 
         // 6. Calculate Points
         const points = (matchesWon * 100) + (tournamentsWon * 500);
@@ -133,7 +144,10 @@ const getRecentMatches = async (userId, limit = 5) => {
     return recentMatches.map(match => {
         const isTeamA = teamIds.includes(match.teamAId);
         const myTeamId = isTeamA ? match.teamAId : match.teamBId;
-        const result = match.winnerId === myTeamId ? 'WIN' : (match.winnerId ? 'LOSS' : 'DRAW');
+        let result = 'DRAW';
+        if (match.winnerId) {
+            result = match.winnerId === myTeamId ? 'WIN' : 'LOSS';
+        }
         return { ...match, result };
     });
 }
