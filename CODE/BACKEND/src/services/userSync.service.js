@@ -1,12 +1,12 @@
 /**
  * Copyright (c) 2025 Titan E-sports. All rights reserved.
- * User Sync Service (Firebase <-> MySQL Bridge)
+ * User Sync Service (Firebase <-> PostgreSQL Bridge)
  */
 
 const { db } = require('../db');
 const { users, wallets, playerProfiles } = require('../db/schema');
 const { eq, and } = require('drizzle-orm');
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 const uidService = require('./uid.service');
 const { getRegionForCountry, validateSubRegion } = require('../config/regions.config');
 const { publishEvent } = require('../config/kafka.config');
@@ -54,7 +54,13 @@ const syncUser = async (firebaseUser, metadata = {}) => {
                 }
 
                 // Normalize IGN (trim, preserve casing for display)
-                const finalIgn = metadata.ign ? metadata.ign.trim() : (metadata.username ? metadata.username.trim() : `player_${uid.slice(-6)}`);
+                let finalIgn = `player_${uid.slice(-6)}`;
+                if (metadata.username) {
+                    finalIgn = metadata.username.trim();
+                }
+                if (metadata.ign) {
+                    finalIgn = metadata.ign.trim();
+                }
 
                 // Check registration completeness
                 const isRegistrationComplete = Boolean(
@@ -65,7 +71,7 @@ const syncUser = async (firebaseUser, metadata = {}) => {
                 );
 
                 // Generate UID with region
-                const { uid: platformUid, sequence } = await uidService.generatePlatformUid(region, tx);
+                const { uid: platformUid, sequence } = await Promise.resolve(uidService.generatePlatformUid(region, tx));
 
                 console.log(`✨ Generated UID ${platformUid} for region ${region} (sequence: ${sequence})`);
 
