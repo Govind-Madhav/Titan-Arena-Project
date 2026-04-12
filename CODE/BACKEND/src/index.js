@@ -1,8 +1,8 @@
-const http = require('http');
+const http = require('node:http');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
+const path = require('node:path');
 
 // Initialize Firebase and Redis
 const { initializeFirebase, checkFirebaseHealth, closeFirebase } = require('./config/firebase.config');
@@ -26,6 +26,17 @@ const adminRoutes = require('./modules/admin/admin.routes');
 
 const app = express();
 
+const assertRequiredProductionEnv = () => {
+  if (process.env.NODE_ENV !== 'production') return;
+
+  const required = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'JWT_SECRET', 'DATABASE_URL'];
+  const missing = required.filter((name) => !process.env[name]);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required production environment variables: ${missing.join(', ')}`);
+  }
+};
+
 // Middleware
 const security = require('./middleware/security.middleware');
 
@@ -43,6 +54,8 @@ app.use(cors({
 
     // Explicitly allow Localhost and Production Frontend
     const allowedDefaults = [
+      'http://localhost',
+      'http://127.0.0.1',
       'http://localhost:5173',
       'http://localhost:5174',
       'http://localhost:3000',
@@ -57,7 +70,7 @@ app.use(cors({
     }
 
     // Optional: Allow specific custom domains if needed
-    if (process.env.CORS_ORIGINS && process.env.CORS_ORIGINS.includes(origin)) {
+    if (process.env.CORS_ORIGINS?.includes(origin)) {
       return callback(null, true);
     }
 
@@ -172,13 +185,14 @@ app.use('/api/payment', require('./modules/payment/payment.routes'));
 app.use('/api/host', require('./modules/host/host.routes')); // Host Module
 app.use('/api/social', require('./modules/social/social.routes')); // New Social Module
 app.use('/api/stats', require('./modules/stats/stats.routes')); // Stats & Leaderboard
-app.use('/api/stats', require('./modules/stats/stats.advanced.routes')); // MMR, Predictions, Overlay
+app.use('/api/stats/advanced', require('./modules/stats/stats.advanced.routes')); // MMR, Predictions, Overlay
 app.use('/api/notifications', require('./modules/notification/notification.routes')); // Notifications
 app.use('/api/users', require('./modules/user/user.routes')); // User Profile Routes
 app.use('/api/upload', require('./routes/upload.routes')); // File Upload Routes
 app.use('/api/disputes', require('./modules/dispute/dispute.routes')); // Dispute Resolution
 app.use('/api/clans', require('./modules/clans/clan.routes')); // Clan/Org System
 app.use('/api/matches', require('./modules/match/match.routes')); // Match, Bracket, Stream, Results
+app.use('/api/kyc', require('./modules/kyc/kyc.routes')); // KYC Verification
 
 // Serve uploaded files statically
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -186,10 +200,10 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Error handling middleware
 app.use((err, req, res, next) => {
   // ✅ FIX: Production-safe error logging (no stack traces in prod)
-  if (process.env.NODE_ENV !== 'production') {
-    console.error('Error stack:', err.stack);
-  } else {
+  if (process.env.NODE_ENV === 'production') {
     console.error('Error:', err.message);
+  } else {
+    console.error('Error stack:', err.stack);
   }
 
   res.status(err.status || 500).json({
@@ -212,6 +226,7 @@ if (require.main === module) {
     const PORT = process.env.PORT || 5000;
     try {
       console.log('🚀 Starting E-sports Tournament API...');
+      assertRequiredProductionEnv();
 
       // Explicit initialization for local server
       await initializeServices();
