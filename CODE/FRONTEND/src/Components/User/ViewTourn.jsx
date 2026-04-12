@@ -4,9 +4,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../../lib/api';
-import { FaTrophy, FaSignOutAlt, FaSun, FaMoon, FaCheckCircle, FaTwitter, FaInstagram, FaFacebookF, FaYoutube } from 'react-icons/fa';
+import { FaTrophy, FaSun, FaMoon, FaCheckCircle, FaTwitter, FaInstagram, FaFacebookF, FaYoutube } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
 
@@ -20,21 +20,20 @@ const PaymentPage = () => {
   const [validThru, setValidThru] = useState('');
   const [upiId, setUpiId] = useState('');
   const [isValidUpi, setIsValidUpi] = useState(false);
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const paymentSuccess = false;
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const navigate = useNavigate();
-  const playerId = sessionStorage.getItem('playerId');
 
   useEffect(() => {
     const fetchTournaments = async () => {
       try {
-        const response = await api.get('/player/active-tournaments');
-        if (response.data.status === 'success') {
-          setTournaments(response.data.data);
+        const response = await api.get('/tournaments');
+        if (response.data.success) {
+          setTournaments(response.data.data || []);
         } else {
           toast.error('Failed to fetch tournaments.');
         }
       } catch (error) {
+        console.error('Error fetching tournaments:', error);
         toast.error('Error fetching tournaments.');
       }
     };
@@ -44,11 +43,11 @@ const PaymentPage = () => {
   // Step 1: First Join the tournament
   const handleJoinTournament = async (tournament) => {
     try {
-      const response = await api.post(`/player/join/${playerId}/${tournament.id}`);
-      if (response.data.status === 'success') {
+      const response = await api.post(`/tournaments/${tournament.id}/join`);
+      if (response.data.success) {
         toast.success('Successfully requested to join tournament!');
         setSelectedTournament(tournament);
-        setShowPaymentModal(true); // Only open payment after join successful
+        setShowPaymentModal(false);
       } else {
         toast.error(response.data.message || 'Failed to join tournament.');
       }
@@ -59,48 +58,18 @@ const PaymentPage = () => {
 
   // Step 2: After join is successful, Payment
   const handlePayment = async () => {
-    if (!selectedTournament) {
-      toast.error('No tournament selected!');
-      return;
-    }
-
-    const paymentData = {
-      playerId,
-      tournamentId: selectedTournament.id,
-      amount: selectedTournament.joiningFee,
-      paymentMethod,
-      status: true,
-      cardNumber,
-      cardExpiryDate: validThru,
-      cardCVC: cvv,
-      upiId
-    };
-
-    try {
-      const response = await api.post(`/player/make-payment/${playerId}/${selectedTournament.id}`, paymentData);
-      if (response.data.status === 'success') {
-        setPaymentSuccess(true);
-        setTimeout(() => {
-          setPaymentSuccess(false);
-          navigate('/userHomePage');
-        }, 2000);
-      } else {
-        toast.error('Payment failed!');
-      }
-    } catch (error) {
-      toast.error('Payment failed!');
-    }
+    toast('Tournament entry fee is handled on join in the current API flow.');
   };
 
   const handleCardNumberChange = (e) => {
-    const value = e.target.value.replace(/[^0-9]/g, '');
+    const value = e.target.value.replaceAll(/\D/g, '');
     if (value.length <= 16) {
       setCardNumber(value);
     }
   };
 
   const handleCvvChange = (e) => {
-    const value = e.target.value.replace(/[^0-9]/g, '');
+    const value = e.target.value.replaceAll(/\D/g, '');
     if (value.length <= 3) {
       setCvv(value);
     }
@@ -256,8 +225,9 @@ const PaymentPage = () => {
             <h3 className="text-2xl font-bold mb-4 text-center">Payment for {selectedTournament.name}</h3>
 
             <div>
-              <label className="block text-sm font-semibold mb-2">Payment Method</label>
+              <label htmlFor="payment-method" className="block text-sm font-semibold mb-2">Payment Method</label>
               <select
+                id="payment-method"
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value)}
                 className="border p-2 rounded w-full mb-4 text-black"
@@ -346,14 +316,16 @@ const PaymentPage = () => {
               </p>
               <div className="flex space-x-4">
                 {[
-                  { icon: FaTwitter, color: "hover:text-blue-400" },
-                  { icon: FaInstagram, color: "hover:text-pink-400" },
-                  { icon: FaFacebookF, color: "hover:text-blue-500" },
-                  { icon: FaYoutube, color: "hover:text-red-500" }
-                ].map((social, i) => (
+                  { icon: FaTwitter, color: "hover:text-blue-400", url: "https://twitter.com" },
+                  { icon: FaInstagram, color: "hover:text-pink-400", url: "https://instagram.com" },
+                  { icon: FaFacebookF, color: "hover:text-blue-500", url: "https://facebook.com" },
+                  { icon: FaYoutube, color: "hover:text-red-500", url: "https://youtube.com" }
+                ].map((social) => (
                   <a
-                    key={i}
-                    href="#"
+                    key={social.url}
+                    href={social.url}
+                    target="_blank"
+                    rel="noreferrer"
                     className={`text-2xl text-gray-400 transition-all duration-300 transform hover:scale-110 ${social.color}`}
                   >
                     <social.icon />
@@ -366,14 +338,14 @@ const PaymentPage = () => {
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Quick Links</h4>
               <ul className="space-y-3">
-                {[
-                  "Tournaments",
-                  "Leaderboard",
-                  "Players",
+                ].map((link) => (
+                  <li key={link}>
+                    <button
+                      type="button"
                   "Host Events",
                   "Prizes",
                   "Community"
-                ].map((link, i) => (
+                    </button>
                   <li key={i}>
                     <a
                       href="#"
@@ -386,14 +358,14 @@ const PaymentPage = () => {
               </ul>
             </div>
 
-            {/* Support */}
-            <div>
-              <h4 className="text-lg font-bold text-white mb-6">Support</h4>
-              <ul className="space-y-3">
+                      ].map((link) => (
+                        <li key={link}>
+                          <button
+                            type="button"
                 {[
                   "Help Center",
                   "Contact Us",
-                  "FAQ",
+                          </button>
                   "Terms of Service",
                   "Privacy Policy",
                   "Refund Policy"
