@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import api from '../../lib/api'
 import { GradientText } from '../../Components/effects/ReactBits'
+import { useSocket } from '../../hooks/useSocket'
 
 // ─── Platform detection ────────────────────────────────────────────────────────
 function detectPlatform(url) {
@@ -203,6 +204,7 @@ export default function StreamPage() {
     const [loading, setLoading] = useState(true)
     const [selected, setSelected] = useState(null)
     const [refreshing, setRefreshing] = useState(false)
+    const { socket, connected } = useSocket()
 
     const fetchStreams = useCallback(async (silent = false) => {
         if (!silent) setLoading(true)
@@ -211,22 +213,78 @@ export default function StreamPage() {
             const res = await api.get('/matches/streams/live')
             const data = res.data.data || []
             setStreams(data)
-            // Auto-select first stream
-            if (!selected && data.length > 0) setSelected(data[0])
+            // Auto-select first stream only when no stream is currently selected.
+            setSelected((prev) => prev || data[0] || null)
         } catch {
             //
         } finally {
             setLoading(false)
             setRefreshing(false)
         }
-    }, [selected])
+    }, [])
 
     useEffect(() => {
         fetchStreams()
-        // Poll every 30s for new streams coming online
-        const interval = setInterval(() => fetchStreams(true), 30000)
-        return () => clearInterval(interval)
-    }, [])
+    }, [fetchStreams])
+
+    useEffect(() => {
+        if (!socket) return;
+
+        const onStreamUpdate = (payload) => {
+            if (!payload?.streamUrl) {
+                fetchStreams(true);
+                return;
+            }
+
+            setStreams((prev) => {
+                const idx = prev.findIndex((item) => item.matchId === payload.matchId);
+                if (idx === -1) {
+                    fetchStreams(true);
+                    return prev;
+                }
+
+                const next = [...prev];
+                next[idx] = {
+                    ...next[idx],
+                    streamUrl: payload.streamUrl,
+                    platform: payload.platform || next[idx].platform,
+                    streamId: payload.streamId || next[idx].streamId,
+                    streamScope: payload.streamScope || next[idx].streamScope,
+                };
+                return next;
+            });
+
+            setSelected((prev) => {
+                if (!prev || prev.matchId !== payload.matchId) return prev;
+                return {
+                    ...prev,
+                    streamUrl: payload.streamUrl,
+                    platform: payload.platform || prev.platform,
+                    streamId: payload.streamId || prev.streamId,
+                    streamScope: payload.streamScope || prev.streamScope,
+                };
+            });
+        };
+
+        socket.on('stream:update', onStreamUpdate);
+        return () => socket.off('stream:update', onStreamUpdate);
+    }, [socket, fetchStreams]);
+
+    useEffect(() => {
+        if (!socket || !connected) return;
+
+        const tournamentIds = [...new Set(streams.map((stream) => stream.tournamentId).filter(Boolean))];
+        tournamentIds.forEach((tournamentId) => {
+            socket.emit('subscribe:tournament', tournamentId);
+        });
+    }, [socket, connected, streams]);
+
+    useEffect(() => {
+        // Polling is fallback only when socket is unavailable/disconnected.
+        if (connected) return;
+        const interval = setInterval(() => fetchStreams(true), 30000);
+        return () => clearInterval(interval);
+    }, [connected, fetchStreams])
 
     return (
         <div className="min-h-screen bg-titan-bg px-4 pt-8 pb-16">
@@ -240,6 +298,9 @@ export default function StreamPage() {
                     <p className="text-white/40 text-sm flex items-center gap-2">
                         <Radio size={13} className="text-red-400 animate-pulse" />
                         {streams.length} match{streams.length !== 1 ? 'es' : ''} streaming live
+                    </p>
+                    <p className="text-white/25 text-xs mt-1">
+                        Update mode: {connected ? 'Realtime socket' : 'Polling fallback'}
                     </p>
                 </div>
                 <button
