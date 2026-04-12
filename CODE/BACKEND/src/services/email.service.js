@@ -21,7 +21,7 @@ const getTransporter = () => {
     }
     transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT) || 587,
+        port: Number.parseInt(process.env.SMTP_PORT, 10) || 587,
         secure: process.env.SMTP_SECURE === 'true',
         auth: {
             user: process.env.SMTP_USER,
@@ -200,6 +200,55 @@ exports.sendAchievementUnlocked = async ({ to, username, achievementName, descri
             <h2 style="color:#a78bfa; margin: 8px 0;">🏅 ${achievementName}</h2>
             <p style="color:#c0c0d8; font-style: italic;">"${description}"</p>
             <a href="${process.env.APP_URL || 'https://titanarena.gg'}/profile" class="cta">View Profile</a>
+        `),
+    });
+};
+
+/**
+ * Notify a user about a KYC decision.
+ */
+exports.sendKycDecision = async ({ to, username, decision, reason }) => {
+    let headline = 'KYC Review Updated';
+    let subject = 'KYC Update';
+    let accentColor = '#fbbf24';
+    let bodyCopy = 'Your KYC review has been updated.';
+
+    if (decision === 'APPROVED') {
+        headline = 'KYC Approved ✅';
+        subject = '✅ KYC Approved';
+        accentColor = '#34d399';
+        bodyCopy = 'Your KYC has been approved. Host access is now available according to your trust level.';
+    } else if (decision === 'REJECTED') {
+        headline = 'KYC Rejected ❌';
+        subject = '❌ KYC Rejected';
+        accentColor = '#f87171';
+        bodyCopy = 'Your KYC was rejected.';
+        if (reason) {
+            bodyCopy += ` Reason: ${reason}`;
+        }
+    } else if (decision === 'FLAGGED') {
+        headline = 'KYC Flagged ⚠️';
+        subject = '⚠️ KYC Flagged for Manual Review';
+        bodyCopy = 'Your account has been flagged for manual review.';
+        if (reason) {
+            bodyCopy += ` Reason: ${reason}`;
+        }
+    }
+
+    const reasonBlock = reason
+        ? `<p><strong>Reason:</strong> ${reason}</p>`
+        : '';
+
+    await send({
+        to,
+        subject,
+        html: baseTemplate(`
+            <p>Hi <span class="highlight">${username}</span>,</p>
+            <h2 style="margin: 8px 0 16px; color: ${accentColor};">${headline}</h2>
+            <p>Your KYC review has been processed by the Titan Arena admin team.</p>
+            ${reasonBlock}
+            <p>${bodyCopy}</p>
+            <a href="${process.env.APP_URL || 'https://titanarena.gg'}/settings" class="cta">Open Settings</a>
         `),
     });
 };
