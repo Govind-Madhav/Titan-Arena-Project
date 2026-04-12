@@ -8,6 +8,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
+import java.util.UUID;
+
 /**
  * Publishes outbound Kafka events from the Java engine.
  */
@@ -25,7 +28,14 @@ public class MatchEventProducer {
     public void publishMatchScheduled(MatchScheduledEvent event) {
         try {
             String payload = objectMapper.writeValueAsString(event);
-            kafkaTemplate.send(matchScheduledTopic, event.getMatchId(), payload)
+            String topic = (matchScheduledTopic == null || matchScheduledTopic.isBlank())
+                    ? "match.scheduled"
+                    : matchScheduledTopic;
+            String messageKey = event.getMatchId() == null ? UUID.randomUUID().toString() : event.getMatchId();
+                String nonNullTopic = Objects.requireNonNull(topic);
+                String nonNullMessageKey = Objects.requireNonNull(messageKey);
+
+                kafkaTemplate.send(nonNullTopic, nonNullMessageKey, payload)
                     .whenComplete((result, ex) -> {
                         if (ex != null) {
                             log.error("❌ Failed to publish match.scheduled for match {}: {}",
