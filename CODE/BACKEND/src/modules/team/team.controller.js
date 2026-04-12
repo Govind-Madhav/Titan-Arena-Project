@@ -5,8 +5,36 @@
 
 const { db } = require('../../db');
 const { teams, teamMembers, users } = require('../../db/schema');
-const { eq, and, count } = require('drizzle-orm');
-const crypto = require('crypto');
+const { eq, and, count, or } = require('drizzle-orm');
+const crypto = require('node:crypto');
+
+const getTeamAccess = async (teamId, userId) => {
+    const [team] = await db.select({
+        id: teams.id,
+        captainId: teams.captainId,
+    })
+        .from(teams)
+        .where(eq(teams.id, teamId))
+        .limit(1);
+
+    if (!team) {
+        return { team: null, hasAccess: false };
+    }
+
+    if (team.captainId === userId) {
+        return { team, hasAccess: true };
+    }
+
+    const [membership] = await db.select({ id: teamMembers.id })
+        .from(teamMembers)
+        .where(and(
+            eq(teamMembers.teamId, teamId),
+            eq(teamMembers.userId, userId)
+        ))
+        .limit(1);
+
+    return { team, hasAccess: Boolean(membership) };
+};
 
 // Create a new team
 exports.createTeam = async (req, res) => {
@@ -127,12 +155,15 @@ exports.getMyTeams = async (req, res) => {
 exports.getTeam = async (req, res) => {
     try {
         const { id } = req.params;
+        const userId = req.user.id;
 
-        const result = await db.select().from(teams).where(eq(teams.id, id)).limit(1);
-        if (!result.length) {
+        const { team, hasAccess } = await getTeamAccess(id, userId);
+        if (!team) {
             return res.status(404).json({ success: false, message: 'Team not found' });
         }
-        const team = result[0];
+        if (!hasAccess) {
+            return res.status(403).json({ success: false, message: 'Access denied' });
+        }
 
         // Get members
         const members = await db.select({
@@ -183,6 +214,7 @@ exports.updateTeam = async (req, res) => {
         res.json({ success: true, message: 'Team updated successfully' });
 
     } catch (error) {
+        console.error('Update team error:', error);
         res.status(500).json({ success: false, message: 'Update failed' });
     }
 };
@@ -209,13 +241,71 @@ exports.deleteTeam = async (req, res) => {
         res.json({ success: true, message: 'Team deleted' });
 
     } catch (error) {
+        console.error('Delete team error:', error);
         res.status(500).json({ success: false, message: 'Delete failed' });
     }
 };
 
 // Add Member
 exports.addMember = async (req, res) => {
-    res.status(501).json({ message: 'Invite system via notifications pending' });
+    try {
+        const { id: teamId } = req.params;
+        const requesterId = req.user.id;
+        const { userId, username, email, role = 'MEMBER' } = req.body;
+
+        const [team] = await db.select().from(teams).where(eq(teams.id, teamId)).limit(1);
+        if (!team) return res.status(404).json({ success: false, message: 'Team not found' });
+        if (team.captainId !== requesterId) {
+            return res.status(403).json({ success: false, message: 'Only captain can add members' });
+        }
+
+        let targetUserId = userId;
+        if (!targetUserId && (username || email)) {
+            const [user] = await db.select({ id: users.id })
+                .from(users)
+                .where(or(
+                    username ? eq(users.username, username) : eq(users.id, '__none__'),
+                    email ? eq(users.email, email) : eq(users.id, '__none__')
+                ))
+                .limit(1);
+            targetUserId = user?.id;
+        }
+
+        if (!targetUserId) {
+            return res.status(400).json({ success: false, message: 'userId or username/email is required' });
+        }
+
+        const [teamSize] = await db.select({ count: count() })
+            .from(teamMembers)
+            .where(eq(teamMembers.teamId, teamId));
+
+        if (Number(teamSize.count) >= team.maxMembers) {
+            return res.status(400).json({ success: false, message: 'Team is full' });
+        }
+
+        const [alreadyInTeam] = await db.select({ id: teamMembers.id })
+            .from(teamMembers)
+            .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, targetUserId)))
+            .limit(1);
+
+        if (alreadyInTeam) {
+            return res.status(409).json({ success: false, message: 'User is already in this team' });
+        }
+
+        await db.insert(teamMembers).values({
+            teamId,
+            userId: targetUserId,
+            role: role === 'CO_CAPTAIN' ? 'CO_CAPTAIN' : 'MEMBER'
+        });
+
+        res.status(201).json({ success: true, message: 'Member added successfully' });
+    } catch (error) {
+        if (error.code === '23505') {
+            return res.status(409).json({ success: false, message: 'User is already in this team' });
+        }
+        console.error('Add member error:', error);
+        res.status(500).json({ success: false, message: 'Failed to add member' });
+    }
 };
 
 // Remove Member
@@ -245,10 +335,37 @@ exports.removeMember = async (req, res) => {
         res.json({ success: true, message: 'Member removed' });
 
     } catch (error) {
+        console.error('Remove member error:', error);
         res.status(500).json({ success: false, message: 'Action failed' });
     }
 };
 
 exports.updateMemberRole = async (req, res) => {
-    res.status(501).json({ message: 'Role management pending' });
+    try {
+        const { id: teamId, userId: targetUserId } = req.params;
+        const requesterId = req.user.id;
+        const { role } = req.body;
+
+        if (!['MEMBER', 'CO_CAPTAIN'].includes(role)) {
+            return res.status(400).json({ success: false, message: 'Role must be MEMBER or CO_CAPTAIN' });
+        }
+
+        const [team] = await db.select().from(teams).where(eq(teams.id, teamId)).limit(1);
+        if (!team) return res.status(404).json({ success: false, message: 'Team not found' });
+        if (team.captainId !== requesterId) {
+            return res.status(403).json({ success: false, message: 'Only captain can change roles' });
+        }
+        if (targetUserId === team.captainId) {
+            return res.status(400).json({ success: false, message: 'Captain role cannot be changed here' });
+        }
+
+        await db.update(teamMembers)
+            .set({ role })
+            .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, targetUserId)));
+
+        res.json({ success: true, message: `Member role updated to ${role}` });
+    } catch (error) {
+        console.error('Update member role error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update member role' });
+    }
 };
