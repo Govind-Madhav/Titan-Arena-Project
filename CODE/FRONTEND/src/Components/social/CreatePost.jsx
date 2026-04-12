@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import PropTypes from 'prop-types';
 import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import { Send, Image, X, Trophy, Megaphone } from 'lucide-react';
@@ -12,10 +13,39 @@ import useAuthStore from '../../store/authStore';
 const CreatePost = ({ onPostCreated }) => {
     const { user } = useAuthStore();
     const [content, setContent] = useState('');
-    const [mediaUrl, setMediaUrl] = useState('');
+    const [mediaFile, setMediaFile] = useState(null);
+    const [mediaPreview, setMediaPreview] = useState('');
     const [type, setType] = useState('GENERAL');
     const [loading, setLoading] = useState(false);
     const [showMediaInput, setShowMediaInput] = useState(false);
+
+    const clearSelectedMedia = () => {
+        setMediaFile(null);
+        setMediaPreview('');
+    };
+
+    const handleMediaChange = (event) => {
+        const file = event.target.files?.[0];
+        if (!file) {
+            clearSelectedMedia();
+            return;
+        }
+
+        if (!file.type.startsWith('image/')) {
+            toast.error('Please select an image file.');
+            clearSelectedMedia();
+            return;
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+            toast.error('Image size must be 5MB or less.');
+            clearSelectedMedia();
+            return;
+        }
+
+        setMediaFile(file);
+        setMediaPreview(URL.createObjectURL(file));
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -28,14 +58,27 @@ const CreatePost = ({ onPostCreated }) => {
 
         setLoading(true);
         try {
+            let uploadedMediaUrl;
+
+            if (mediaFile) {
+                const formData = new FormData();
+                formData.append('image', mediaFile);
+
+                const uploadResponse = await api.post('/social/upload-image', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+
+                uploadedMediaUrl = uploadResponse.data?.data?.mediaUrl;
+            }
+
             await api.post('/social/posts', {
                 content,
-                mediaUrl: mediaUrl || undefined,
+                mediaUrl: uploadedMediaUrl || undefined,
                 type
             });
             toast.success('Post Shared!');
             setContent('');
-            setMediaUrl('');
+            clearSelectedMedia();
             setType('GENERAL');
             setShowMediaInput(false);
             if (onPostCreated) onPostCreated();
@@ -92,22 +135,35 @@ const CreatePost = ({ onPostCreated }) => {
                 </div>
 
                 {showMediaInput && (
-                    <div className="flex items-center gap-2 bg-black/20 p-2 rounded-lg border border-white/5">
-                        <Image size={16} className="text-titan-purple ml-2" />
-                        <input
-                            type="url"
-                            value={mediaUrl}
-                            onChange={(e) => setMediaUrl(e.target.value)}
-                            placeholder="Paste image URL here..."
-                            className="bg-transparent border-none text-sm text-white focus:outline-none flex-1"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => { setMediaUrl(''); setShowMediaInput(false); }}
-                            className="p-1 hover:bg-white/10 rounded-full"
-                        >
-                            <X size={14} className="text-white/40" />
-                        </button>
+                    <div className="bg-black/20 p-3 rounded-lg border border-white/5 space-y-3">
+                        <div className="flex items-center gap-3">
+                            <Image size={16} className="text-titan-purple" />
+                            <label className="text-sm text-white/70 cursor-pointer hover:text-white transition-colors">
+                                <span>Choose image from your device</span>
+                                <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleMediaChange}
+                                    className="hidden"
+                                />
+                            </label>
+                            <button
+                                type="button"
+                                onClick={() => { clearSelectedMedia(); setShowMediaInput(false); }}
+                                className="ml-auto p-1 hover:bg-white/10 rounded-full"
+                            >
+                                <X size={14} className="text-white/40" />
+                            </button>
+                        </div>
+
+                        {mediaFile && (
+                            <div className="rounded-lg border border-white/10 p-2">
+                                {mediaPreview && (
+                                    <img src={mediaPreview} alt="Selected media preview" className="w-full max-h-56 object-cover rounded-md" />
+                                )}
+                                <p className="text-xs text-white/50 mt-2 truncate">{mediaFile.name}</p>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -132,6 +188,10 @@ const CreatePost = ({ onPostCreated }) => {
             </form>
         </div>
     );
+};
+
+CreatePost.propTypes = {
+    onPostCreated: PropTypes.func
 };
 
 export default CreatePost;
