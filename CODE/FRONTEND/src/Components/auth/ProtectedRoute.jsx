@@ -8,8 +8,16 @@ import { Navigate, useLocation } from 'react-router-dom'
 import useAuthStore from '../../store/authStore'
 
 export default function ProtectedRoute({ children, allowedRoles }) {
-    const { isAuthenticated, user } = useAuthStore()
+    const { isAuthenticated, isInitialized, isLoading, user } = useAuthStore()
     const location = useLocation()
+
+    if (!isInitialized || isLoading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center text-white/60">
+                Checking session...
+            </div>
+        )
+    }
 
     if (!isAuthenticated) {
         return <Navigate to="/auth" state={{ from: location }} replace />
@@ -25,7 +33,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
             (allowedRoles.includes('HOST') && user?.hostStatus === 'ACTIVE')
 
         if (!hasAccess) {
-            // Redirect admins to their panel, others to dashboard
+            // Redirect admins to admin dashboard, others to player dashboard.
             if (userIsAdmin || userRole === 'ADMIN' || userRole === 'SUPERADMIN') {
                 return <Navigate to="/admin" replace />
             }
