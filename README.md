@@ -87,6 +87,17 @@ graph TD
 
 ---
 
+## 👥 Role Matrix
+
+| Role | Primary Scope | Key Capabilities |
+|---|---|---|
+| Player | Personal account and participation | Join tournaments, manage profile, wallet, teams/clans, stats, disputes, notifications |
+| Host | Own tournament operations | Create and manage own tournaments, handle participants, payments, stream setup, declare winners |
+| Admin | Platform operations and moderation | Manage tournaments, users, hosts, applications, disputes, and revenue reporting |
+| SuperAdmin | Full platform control | Everything an Admin can do, plus role and policy control, elevated governance, and top-level system administration |
+
+---
+
 ## 📂 Project Structure
 
 ```text
