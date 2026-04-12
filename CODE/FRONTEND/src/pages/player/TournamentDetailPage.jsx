@@ -20,8 +20,28 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import useAuthStore from '../../store/authStore'
-import { SpotlightCard, GradientText, TiltedCard, GlowBorder } from '../../Components/effects/ReactBits'
+import { SpotlightCard, GlowBorder } from '../../Components/effects/ReactBits'
 import api from '../../lib/api'
+
+const getTournamentStatusLabel = (status) => {
+    if (status === 'REGISTRATION' || status === 'UPCOMING') return 'REGISTRATION OPEN'
+    if (status === 'ONGOING') return 'LIVE'
+    if (status === 'PENDING_APPROVAL') return 'PENDING APPROVAL'
+    return status
+}
+
+const getTournamentStatusClass = (status, isRegistrationOpen) => {
+    if (status === 'ONGOING') return 'badge-live'
+    if (isRegistrationOpen) return 'badge-open'
+    return 'badge-completed'
+}
+
+const getPayoutClass = (position) => {
+    if (position === 1) return 'text-yellow-400'
+    if (position === 2) return 'text-gray-300'
+    if (position === 3) return 'text-orange-400'
+    return 'text-white/40'
+}
 
 export default function TournamentDetailPage() {
     const { id } = useParams()
@@ -116,6 +136,15 @@ export default function TournamentDetailPage() {
         )
     }
 
+    const isRegistrationOpen = ['REGISTRATION', 'UPCOMING'].includes(tournament.status)
+    const statusLabel = getTournamentStatusLabel(tournament.status)
+    let registerButtonLabel = 'Registration Closed'
+    if (registering) {
+        registerButtonLabel = 'Registering...'
+    } else if (isRegistrationOpen) {
+        registerButtonLabel = 'Register Now'
+    }
+
     return (
         <div className="min-h-screen bg-titan-bg py-8 px-4">
             <div className="max-w-4xl mx-auto">
@@ -138,11 +167,8 @@ export default function TournamentDetailPage() {
                 >
                     <div className="flex items-start justify-between mb-4">
                         <div>
-                            <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-3 ${tournament.status === 'ONGOING' ? 'badge-live' :
-                                tournament.status === 'UPCOMING' ? 'badge-open' :
-                                    'badge-completed'
-                                }`}>
-                                {tournament.status}
+                            <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-3 ${getTournamentStatusClass(tournament.status, isRegistrationOpen)}`}>
+                                {statusLabel}
                             </span>
                             <h1 className="font-display text-3xl sm:text-4xl font-bold">
                                 {tournament.name}
@@ -262,12 +288,10 @@ export default function TournamentDetailPage() {
                                     </div>
                                     <button
                                         onClick={handleRegister}
-                                        disabled={registering || tournament.status !== 'UPCOMING'}
+                                        disabled={registering || !isRegistrationOpen}
                                         className="btn-neon w-full py-4 text-lg font-bold tracking-wide disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        {registering ? 'Registering...' :
-                                            tournament.status !== 'UPCOMING' ? 'Registration Closed' :
-                                                'Register Now'}
+                                        {registerButtonLabel}
                                     </button>
                                 </div>
                             </GlowBorder>
@@ -299,15 +323,10 @@ export default function TournamentDetailPage() {
                             <SpotlightCard className="p-6">
                                 <h3 className="font-heading text-lg font-semibold mb-4">Prize Breakdown</h3>
                                 <div className="space-y-3">
-                                    {(tournament.payouts || []).map((payout, i) => (
-                                        <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-white/5">
+                                    {(tournament.payouts || []).map((payout) => (
+                                        <div key={payout.id || payout.position} className="flex items-center justify-between p-3 rounded-lg bg-white/5">
                                             <div className="flex items-center gap-3">
-                                                <Medal size={18} className={
-                                                    payout.position === 1 ? 'text-yellow-400' :
-                                                        payout.position === 2 ? 'text-gray-300' :
-                                                            payout.position === 3 ? 'text-orange-400' :
-                                                                'text-white/40'
-                                                } />
+                                                <Medal size={18} className={getPayoutClass(payout.position)} />
                                                 <span className="font-heading">#{payout.position}</span>
                                             </div>
                                             <span className="font-display font-bold">{formatCurrency(payout.amount)}</span>
