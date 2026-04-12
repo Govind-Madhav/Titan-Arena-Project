@@ -4,17 +4,43 @@
  */
 
 const { db } = require('../../db');
-const { wallets, transactions, users } = require('../../db/schema');
+const { wallets, transactions, users, kycRequests } = require('../../db/schema');
 const { eq, desc, and } = require('drizzle-orm');
 const walletService = require('./wallet.service');
 const Razorpay = require('razorpay');
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 
 // Initialize Razorpay
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
     key_secret: process.env.RAZORPAY_KEY_SECRET
 });
+
+// Helper: Check wallet activation status
+const checkWalletActivation = async (userId) => {
+    const [user] = await db.select({ billingAddress: users.billingAddress })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+    const [kyc] = await db.select({ status: kycRequests.status })
+        .from(kycRequests)
+        .where(eq(kycRequests.userId, userId))
+        .limit(1);
+
+    const isKycApproved = kyc?.status === 'APPROVED';
+    const hasBillingAddress = Boolean(user?.billingAddress);
+
+    return {
+        isActivated: isKycApproved && hasBillingAddress,
+        kycApproved: isKycApproved,
+        hasBillingAddress,
+        missingItems: [
+            !isKycApproved && 'KYC verification',
+            !hasBillingAddress && 'Billing address'
+        ].filter(Boolean)
+    };
+};
 
 // 1. Get Wallet
 const getWallet = async (req, res) => {
@@ -31,12 +57,21 @@ const getWallet = async (req, res) => {
         const user = await db.select({ billingAddress: users.billingAddress, invoiceEmail: users.invoiceEmail })
             .from(users).where(eq(users.id, userId)).limit(1);
 
+        // Check activation status
+        const activation = await checkWalletActivation(userId);
+
         res.json({
             success: true,
             data: {
                 ...wallet[0],
                 billingAddress: user[0]?.billingAddress || null,
-                invoiceEmail: user[0]?.invoiceEmail || null
+                invoiceEmail: user[0]?.invoiceEmail || null,
+                activation: {
+                    isActivated: activation.isActivated,
+                    kycApproved: activation.kycApproved,
+                    hasBillingAddress: activation.hasBillingAddress,
+                    missingItems: activation.missingItems
+                }
             }
         });
     } catch (error) {
@@ -55,7 +90,7 @@ const getTransactions = async (req, res) => {
             .from(transactions)
             .where(eq(transactions.userId, userId))
             .orderBy(desc(transactions.createdAt))
-            .limit(parseInt(limit));
+            .limit(Number.parseInt(limit));
 
         res.json({ success: true, data: history });
     } catch (error) {
@@ -98,6 +133,19 @@ const updateBillingAddress = async (req, res) => {
  */
 const initDeposit = async (req, res) => {
     try {
+        const userId = req.user.id;
+
+        // Check wallet activation
+        const activation = await checkWalletActivation(userId);
+        if (!activation.isActivated) {
+            return res.status(403).json({
+                success: false,
+                message: `Wallet is not active. Complete the following: ${activation.missingItems.join(', ')}`,
+                code: 'WALLET_NOT_ACTIVATED',
+                required: activation.missingItems
+            });
+        }
+
         const { amount } = req.body; // amount in RUPEES from client
         if (!amount || amount < 10) {
             return res.status(400).json({ success: false, message: 'Minimum deposit is ₹10' });
@@ -204,12 +252,24 @@ const verifyDeposit = async (req, res) => {
 const requestWithdraw = async (req, res) => {
     try {
         const userId = req.user.id;
+
+        // Check wallet activation
+        const activation = await checkWalletActivation(userId);
+        if (!activation.isActivated) {
+            return res.status(403).json({
+                success: false,
+                message: `Wallet is not active. Complete the following: ${activation.missingItems.join(', ')}`,
+                code: 'WALLET_NOT_ACTIVATED',
+                required: activation.missingItems
+            });
+        }
+
         const { amount, upiId } = req.body;
 
         if (!amount || amount < 100) {
             return res.status(400).json({ success: false, message: 'Minimum withdrawal is ₹100' });
         }
-        if (!upiId || !upiId.includes('@')) {
+        if (!upiId?.includes('@')) {
             return res.status(400).json({ success: false, message: 'A valid UPI ID (e.g. name@upi) is required' });
         }
 
@@ -271,7 +331,7 @@ const simulateDeposit = async (req, res) => {
 
         const result = await walletService.credit(
             userId,
-            parseInt(amount),
+            Number.parseInt(amount),
             'CREDIT',
             'TEST_DEPOSIT',
             'Simulated Test Deposit',
@@ -300,7 +360,7 @@ const simulateWithdrawal = async (req, res) => {
 
         const result = await walletService.debit(
             userId,
-            parseInt(amount),
+            Number.parseInt(amount),
             'DEBIT',
             'TEST_WITHDRAWAL',
             'Simulated Test Withdrawal',
@@ -319,10 +379,55 @@ const simulateWithdrawal = async (req, res) => {
 
 module.exports = {
     getWallet,
-    updateWallet: (req, res) => res.status(501).json({ success: false, message: 'Not implemented' }),
+    updateWallet: async (req, res) => {
+        try {
+            const { status } = req.body;
+            if (!status || !['ACTIVE', 'SUSPENDED'].includes(status)) {
+                return res.status(400).json({ success: false, message: 'Valid wallet status is required' });
+            }
+
+            await db.update(wallets)
+                .set({ status, updatedAt: new Date() })
+                .where(eq(wallets.userId, req.user.id));
+
+            const [updated] = await db.select().from(wallets).where(eq(wallets.userId, req.user.id)).limit(1);
+            return res.json({ success: true, message: 'Wallet updated', data: updated });
+        } catch (error) {
+            console.error('Update wallet error:', error);
+            return res.status(500).json({ success: false, message: 'Failed to update wallet' });
+        }
+    },
     getTransactions,
     updateBillingAddress,
-    createTransaction: (req, res) => res.status(501).json({ success: false, message: 'Not implemented' }),
+    createTransaction: async (req, res) => {
+        try {
+            const { direction, amount, source = 'MANUAL_ADJUSTMENT', message, metadata } = req.body;
+
+            if (!['CREDIT', 'DEBIT'].includes(direction)) {
+                return res.status(400).json({ success: false, message: 'direction must be CREDIT or DEBIT' });
+            }
+            if (!amount || amount <= 0) {
+                return res.status(400).json({ success: false, message: 'Valid amount is required' });
+            }
+
+            const normalizedAmount = Number.parseInt(amount, 10);
+            const result = direction === 'CREDIT'
+                ? await walletService.credit(req.user.id, normalizedAmount, 'CREDIT', source, message || 'Manual credit', metadata || {})
+                : await walletService.debit(req.user.id, normalizedAmount, 'DEBIT', source, message || 'Manual debit', metadata || {});
+
+            return res.status(201).json({
+                success: true,
+                message: `${direction} transaction created`,
+                data: result
+            });
+        } catch (error) {
+            if (error.message === 'Insufficient balance') {
+                return res.status(400).json({ success: false, message: 'Insufficient balance' });
+            }
+            console.error('Create transaction error:', error);
+            return res.status(500).json({ success: false, message: 'Failed to create transaction' });
+        }
+    },
     initDeposit,
     verifyDeposit,
     requestWithdraw,
