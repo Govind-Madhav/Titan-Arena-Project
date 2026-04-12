@@ -6,6 +6,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import PropTypes from 'prop-types'
 import {
     Users,
     Trophy,
@@ -22,7 +23,7 @@ import {
 } from 'lucide-react'
 import Layout from '../../Components/layout/Layout'
 import useAuthStore from '../../store/authStore'
-import { SpotlightCard, GradientText } from '../../Components/effects/ReactBits'
+import { GradientText } from '../../Components/effects/ReactBits'
 import api from '../../lib/api'
 import toast from 'react-hot-toast'
 
@@ -54,7 +55,7 @@ const AdminDashboard = () => {
                     totalTournaments: data.tournaments?.total || 0,
                     activeHosts: data.users?.hosts || 0,
                     revenue: data.platform?.totalBalance || 0,
-                    pendingKYC: 0
+                    pendingKYC: data.kyc?.pending || 0
                 });
             } catch (error) {
                 console.error("Failed to fetch admin stats", error);
@@ -66,8 +67,18 @@ const AdminDashboard = () => {
         if (user?.role === 'SUPERADMIN') {
             const fetchAdmins = async () => {
                 try {
-                    const res = await api.get('/admin/admins');
-                    setAdmins(res.data.data);
+                    const res = await api.get('/admin/users', {
+                        params: { page: 1, limit: 500 }
+                    });
+                    const allUsers = res.data?.data?.users || [];
+                    const adminUsers = allUsers
+                        .filter((u) => u.role === 'ADMIN' || u.role === 'SUPERADMIN' || u.isAdmin)
+                        .map((u) => ({
+                            id: u.id,
+                            username: u.username,
+                            managedUsersCount: 0
+                        }));
+                    setAdmins(adminUsers);
                 } catch (error) {
                     console.error("Failed to fetch admins", error);
                 }
@@ -190,8 +201,9 @@ const AdminDashboard = () => {
                                     <div className="space-y-4">
                                         <div className="grid grid-cols-2 gap-4">
                                             <div>
-                                                <label className="block text-xs text-white/40 mb-1">Transfer From</label>
+                                                <label htmlFor="transfer-from-admin" className="block text-xs text-white/40 mb-1">Transfer From</label>
                                                 <select
+                                                    id="transfer-from-admin"
                                                     value={fromAdmin}
                                                     onChange={(e) => setFromAdmin(e.target.value)}
                                                     className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-red-500 focus:outline-none"
@@ -205,8 +217,9 @@ const AdminDashboard = () => {
                                                 </select>
                                             </div>
                                             <div>
-                                                <label className="block text-xs text-white/40 mb-1">Transfer To</label>
+                                                <label htmlFor="transfer-to-admin" className="block text-xs text-white/40 mb-1">Transfer To</label>
                                                 <select
+                                                    id="transfer-to-admin"
                                                     value={toAdmin}
                                                     onChange={(e) => setToAdmin(e.target.value)}
                                                     className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-green-500 focus:outline-none"
@@ -277,9 +290,9 @@ const AdminDashboard = () => {
                                         borderColor="border-purple-500/20"
                                     />
                                     <ActionCard
-                                        to="/manageApplications"
-                                        title="Host Applications"
-                                        desc="Review pending host requests."
+                                        to="/admin/kyc"
+                                        title="KYC Panel"
+                                        desc="Review identity, document, and risk checks."
                                         icon={FileText}
                                         color="bg-yellow-500/10 hover:bg-yellow-500/20"
                                         borderColor="border-yellow-500/20"
@@ -293,7 +306,7 @@ const AdminDashboard = () => {
                                         borderColor="border-red-500/20"
                                     />
                                     <ActionCard
-                                        to="/manageTourn"
+                                        to="/admin/manageTourn"
                                         title="Tournament Oversight"
                                         desc="Monitor and control active events."
                                         icon={Trophy}
@@ -301,7 +314,7 @@ const AdminDashboard = () => {
                                         borderColor="border-pink-500/20"
                                     />
                                     <ActionCard
-                                        to="/manageTourn?create=true"
+                                        to="/manageTourn"
                                         title="Create Tournament"
                                         desc="Host a new tournament as admin."
                                         icon={Target}
@@ -334,7 +347,7 @@ const AdminDashboard = () => {
                                 <div className="space-y-3">
                                     <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
                                         <span className="text-sm">Pending KYC Requests</span>
-                                        <span className="font-bold text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded">0</span>
+                                        <span className="font-bold text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded">{stats.pendingKYC}</span>
                                     </div>
                                     <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
                                         <span className="text-sm">Reported Matches</span>
@@ -371,6 +384,15 @@ const StatsCard = ({ title, value, icon: Icon, color, trend, border = "border-wh
     </div>
 )
 
+StatsCard.propTypes = {
+    title: PropTypes.string.isRequired,
+    value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    icon: PropTypes.elementType.isRequired,
+    color: PropTypes.string.isRequired,
+    trend: PropTypes.string,
+    border: PropTypes.string,
+}
+
 const ActionCard = ({ to, title, desc, icon: Icon, color, borderColor }) => (
     <Link to={to} className={`block p-6 rounded-2xl border ${borderColor} ${color} transition-all group`}>
         <div className="flex items-start justify-between">
@@ -382,5 +404,14 @@ const ActionCard = ({ to, title, desc, icon: Icon, color, borderColor }) => (
         </div>
     </Link>
 )
+
+ActionCard.propTypes = {
+    to: PropTypes.string.isRequired,
+    title: PropTypes.string.isRequired,
+    desc: PropTypes.string.isRequired,
+    icon: PropTypes.elementType.isRequired,
+    color: PropTypes.string.isRequired,
+    borderColor: PropTypes.string.isRequired,
+}
 
 export default AdminDashboard
