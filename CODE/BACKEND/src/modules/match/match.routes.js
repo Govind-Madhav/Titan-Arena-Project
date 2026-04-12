@@ -11,7 +11,7 @@ const { requireNotBanned, requireAdmin } = require('../../middleware/role.middle
 
 // ─── Stream routes (must come before /:id to avoid route collision) ────────────
 router.get('/streams/live', matchController.getLiveStreams);
-router.get('/:id/stream', matchController.getMatchStream);
+router.get('/:id/stream', authOptional, matchController.getMatchStream);
 router.patch('/:id/stream', authRequired, requireNotBanned, matchController.updateStream);
 
 // Get matches for tournament
