@@ -1,12 +1,12 @@
 /**
  * Firebase Realtime Database Configuration
  * Used for real-time features: live match updates, notifications, lobby state
- * MySQL remains the source of truth for persistent data
+ * PostgreSQL remains the source of truth for persistent data
  */
 
 const admin = require('firebase-admin');
-const path = require('path');
-const fs = require('fs');
+const path = require('node:path');
+const fs = require('node:fs');
 
 let firebaseApp = null;
 let database = null;
@@ -128,7 +128,7 @@ const checkFirebaseHealth = async () => {
         const snapshot = await healthCheckRef.once('value');
         const data = snapshot.val();
 
-        if (data && data.timestamp === timestamp) {
+        if (data?.timestamp === timestamp) {
             return {
                 status: 'connected',
                 message: 'Firebase is healthy (write verified)',
