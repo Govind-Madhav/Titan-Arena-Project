@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { User, Shield, Link as LinkIcon, Lock, Eye, Wallet, Save, Copy, Trash2, LogOut, Mail, Phone, Calendar, AlertCircle } from 'lucide-react';
+import { User, Shield, Link as LinkIcon, Lock, Eye, Wallet, Save, Trash2, LogOut, Mail, Phone, Calendar, AlertCircle } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import toast from 'react-hot-toast';
 import FileUpload from '../../Components/common/FileUpload';
+import api from '../../lib/api';
 
 // Sidebar Navigation
 const SETTINGS_SECTIONS = [
@@ -121,7 +122,7 @@ export default function SettingsPage() {
                     <div className="lg:col-span-9">
                         <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-6 sm:p-8">
                             {activeSection === 'account' && <AccountSection formData={formData} handleChange={handleChange} handleAvatarUpload={handleAvatarUpload} user={user} />}
-                            {activeSection === 'security' && <SecuritySection user={user} />}
+                            {activeSection === 'security' && <SecuritySection user={user} refreshData={loadProfile} />}
                             {activeSection === 'connected' && <ConnectedAccountsSection gameProfiles={gameProfiles} refreshData={loadProfile} user={user} />}
                             {activeSection === 'privacy' && <PrivacySection formData={formData} handleChange={handleChange} />}
                             {activeSection === 'wallet' && <WalletSection user={user} />}
@@ -239,38 +240,373 @@ const AccountSection = ({ formData, handleChange, handleAvatarUpload, user }) =>
 );
 
 // 🔐 Security & Recovery Section
-const SecuritySection = ({ user }) => (
-    <div className="space-y-6">
-        <h2 className="text-2xl font-bold text-white mb-6">🔐 Security & Recovery</h2>
+const SecuritySection = ({ user, refreshData }) => {
+    const [mfaEnabled, setMfaEnabled] = useState(Boolean(user?.mfaEnabled));
+    const [mfaLoading, setMfaLoading] = useState(false);
+    const [sessions, setSessions] = useState([]);
+    const [sessionsLoading, setSessionsLoading] = useState(true);
 
-        <div className="space-y-4">
-            <ActionCard icon={Lock} title="Change Password" description="Update your account password" action="Change" />
-            <ActionCard icon={Mail} title="Change Email Address" description={user?.email || 'Not set'} action="Change" />
-            <ActionCard icon={Shield} title="Enable MFA" description="Two-factor authentication" action="Setup" />
-            <ActionCard icon={Phone} title="Phone Number" description="Add or change phone number" action="Add" badge="Verified" />
-            <ActionCard icon={Mail} title="Recovery Email" description="Backup email for account recovery" action="Add" badge="Verified" />
-        </div>
+    const [showMfaSetup, setShowMfaSetup] = useState(false);
+    const [mfaSetupData, setMfaSetupData] = useState(null);
+    const [mfaCode, setMfaCode] = useState('');
+    const [disableMfaCode, setDisableMfaCode] = useState('');
 
-        <div className="border-t border-white/10 pt-6">
-            <h3 className="text-lg font-bold text-white mb-4">Active Sessions</h3>
+    const [showEmailModal, setShowEmailModal] = useState(false);
+    const [emailForm, setEmailForm] = useState({ newEmail: '', otp: '', password: '' });
+    const [emailOtpSent, setEmailOtpSent] = useState(false);
+    const [emailLoading, setEmailLoading] = useState(false);
+
+    useEffect(() => {
+        fetchMfaStatus();
+        fetchSessions();
+    }, []);
+
+    const fetchMfaStatus = async () => {
+        try {
+            const res = await api.get('/auth/mfa/status');
+            if (res.data.success) {
+                setMfaEnabled(Boolean(res.data.data?.enabled));
+            }
+        } catch (error) {
+            console.error('Failed to fetch MFA status:', error);
+        }
+    };
+
+    const fetchSessions = async () => {
+        setSessionsLoading(true);
+        try {
+            const res = await api.get('/auth/sessions');
+            if (res.data.success) {
+                setSessions(res.data.sessions || []);
+            }
+        } catch (error) {
+            console.error('Failed to fetch sessions:', error);
+        } finally {
+            setSessionsLoading(false);
+        }
+    };
+
+    const handleInitMfa = async () => {
+        setMfaLoading(true);
+        try {
+            const res = await api.post('/auth/mfa/setup/init');
+            if (res.data.success) {
+                setMfaSetupData(res.data.data);
+                setShowMfaSetup(true);
+                toast.success('Authenticator setup started. Scan the QR code.');
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to initialize MFA setup');
+        } finally {
+            setMfaLoading(false);
+        }
+    };
+
+    const handleVerifyMfa = async () => {
+        if (!mfaCode || mfaCode.trim().length < 6) {
+            toast.error('Enter a valid 6-digit authenticator code');
+            return;
+        }
+
+        setMfaLoading(true);
+        try {
+            const res = await api.post('/auth/mfa/setup/verify', { code: mfaCode.trim() });
+            if (res.data.success) {
+                setMfaEnabled(true);
+                setShowMfaSetup(false);
+                setMfaCode('');
+                setMfaSetupData(null);
+                toast.success('MFA enabled successfully');
+                refreshData();
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to verify MFA code');
+        } finally {
+            setMfaLoading(false);
+        }
+    };
+
+    const handleDisableMfa = async () => {
+        if (!disableMfaCode || disableMfaCode.trim().length < 6) {
+            toast.error('Enter your authenticator code to disable MFA');
+            return;
+        }
+
+        setMfaLoading(true);
+        try {
+            const res = await api.post('/auth/mfa/disable', { code: disableMfaCode.trim() });
+            if (res.data.success) {
+                setMfaEnabled(false);
+                setDisableMfaCode('');
+                toast.success('MFA disabled');
+                refreshData();
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to disable MFA');
+        } finally {
+            setMfaLoading(false);
+        }
+    };
+
+    const handleInitChangeEmail = async () => {
+        if (!emailForm.newEmail) {
+            toast.error('Enter new email');
+            return;
+        }
+
+        setEmailLoading(true);
+        try {
+            const res = await api.post('/auth/change-email/init', { newEmail: emailForm.newEmail });
+            if (res.data.success) {
+                setEmailOtpSent(true);
+                toast.success('Verification code sent to new email');
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to send verification code');
+        } finally {
+            setEmailLoading(false);
+        }
+    };
+
+    const handleVerifyChangeEmail = async () => {
+        if (!emailForm.otp || !emailForm.password) {
+            toast.error('Enter OTP and current password');
+            return;
+        }
+
+        setEmailLoading(true);
+        try {
+            const res = await api.post('/auth/change-email/verify', {
+                newEmail: emailForm.newEmail,
+                otp: emailForm.otp,
+                password: emailForm.password
+            });
+            if (res.data.success) {
+                toast.success(res.data.message || 'Email updated');
+                setShowEmailModal(false);
+                setEmailOtpSent(false);
+                setEmailForm({ newEmail: '', otp: '', password: '' });
+                refreshData();
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to change email');
+        } finally {
+            setEmailLoading(false);
+        }
+    };
+
+    const handleLogoutAll = async () => {
+        try {
+            const res = await api.post('/auth/logout-all');
+            if (res.data.success) {
+                toast.success('Logged out from all devices');
+                fetchSessions();
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to logout all sessions');
+        }
+    };
+
+    const handleRevokeSession = async (sessionId) => {
+        try {
+            const res = await api.delete(`/auth/sessions/${sessionId}`);
+            if (res.data.success) {
+                toast.success('Session revoked');
+                fetchSessions();
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to revoke session');
+        }
+    };
+
+    const mfaDescription = mfaEnabled ? 'Authenticator app protection is enabled' : 'Add Google Authenticator / Authy 2FA';
+
+    let sessionsContent = <p className="text-white/50">No active sessions found.</p>;
+    if (sessionsLoading) {
+        sessionsContent = <p className="text-white/50">Loading sessions...</p>;
+    } else if (sessions.length > 0) {
+        sessionsContent = (
             <div className="space-y-3">
-                <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <p className="font-medium text-white">Chrome on Windows</p>
-                            <p className="text-sm text-white/60">Current session • Mumbai, India</p>
+                {sessions.map((session, index) => (
+                    <div key={session.id} className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="font-medium text-white">{session.userAgent || 'Unknown device'}</p>
+                                <p className="text-sm text-white/60">IP: {session.ipAddress || 'Unknown'} • Started: {new Date(session.createdAt).toLocaleString()}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {index === 0 && <span className="px-3 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full">Current</span>}
+                                <button onClick={() => handleRevokeSession(session.id)} className="btn-ghost px-3 py-1 text-xs">Revoke</button>
+                            </div>
                         </div>
-                        <span className="px-3 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full">Active</span>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-white mb-6">🔐 Security & Recovery</h2>
+
+            <div className="space-y-4">
+                <ActionCard
+                    icon={Lock}
+                    title="Change Password"
+                    description="Open password reset flow"
+                    action="Reset"
+                    onAction={() => { globalThis.location.href = '/forgot-password'; }}
+                />
+                <ActionCard
+                    icon={Mail}
+                    title="Change Email Address"
+                    description={user?.email || 'Not set'}
+                    action="Change"
+                    onAction={() => setShowEmailModal(true)}
+                />
+                <ActionCard
+                    icon={Shield}
+                    title={mfaEnabled ? 'MFA Enabled' : 'Enable MFA'}
+                    description={mfaDescription}
+                    action={mfaEnabled ? 'Manage' : 'Setup'}
+                    badge={mfaEnabled ? 'ON' : undefined}
+                    onAction={() => {
+                        if (mfaEnabled) {
+                            const el = document.getElementById('disable-mfa-box');
+                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        } else {
+                            handleInitMfa();
+                        }
+                    }}
+                    disabled={mfaLoading}
+                />
+                <ActionCard icon={Phone} title="Phone Number" description={user?.phone || 'Add phone number'} action="Soon" badge={user?.phoneVerified ? 'Verified' : undefined} disabled />
+                <ActionCard icon={Mail} title="Recovery Email" description={user?.recoveryEmail || 'Add backup email'} action="Soon" disabled />
+            </div>
+
+            {mfaEnabled && (
+                <div id="disable-mfa-box" className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl space-y-3">
+                    <h3 className="text-lg font-semibold text-red-300">Disable MFA</h3>
+                    <p className="text-sm text-white/70">Enter your current authenticator code to disable MFA.</p>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                        <input
+                            type="text"
+                            value={disableMfaCode}
+                            onChange={(e) => setDisableMfaCode(e.target.value)}
+                            placeholder="6-digit code"
+                            className="w-full sm:w-60 bg-black/20 border border-white/10 rounded-lg px-4 py-2.5 text-white outline-none"
+                        />
+                        <button onClick={handleDisableMfa} className="btn-ghost px-4 py-2" disabled={mfaLoading}>
+                            {mfaLoading ? 'Please wait...' : 'Disable MFA'}
+                        </button>
                     </div>
                 </div>
+            )}
+
+            <div className="border-t border-white/10 pt-6">
+                <h3 className="text-lg font-bold text-white mb-4">Active Sessions</h3>
+                {sessionsContent}
+
+                <button onClick={handleLogoutAll} className="mt-4 w-full flex items-center justify-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl hover:bg-red-500/20 transition-colors text-red-400 font-medium">
+                    <LogOut size={18} />
+                    Logout from All Devices
+                </button>
             </div>
-            <button className="mt-4 w-full flex items-center justify-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl hover:bg-red-500/20 transition-colors text-red-400 font-medium">
-                <LogOut size={18} />
-                Logout from All Devices
-            </button>
+
+            {showMfaSetup && mfaSetupData && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setShowMfaSetup(false)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setShowMfaSetup(false); }}
+                >
+                    <div
+                        className="w-full max-w-lg bg-titan-bg-card border border-white/10 rounded-2xl p-6"
+                        role="dialog"
+                        aria-modal="true"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 className="text-xl font-bold text-white mb-2">Set up Authenticator App</h3>
+                        <p className="text-sm text-white/70 mb-4">Scan this QR in Google Authenticator/Authy, then enter the 6-digit code.</p>
+
+                        <div className="bg-white rounded-lg p-4 w-fit mx-auto mb-4">
+                            <img src={mfaSetupData.qrCodeDataUrl} alt="MFA QR code" className="w-48 h-48" />
+                        </div>
+
+                        <p className="text-xs text-white/60 mb-2">Manual key (if scan fails):</p>
+                        <div className="bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-sm break-all text-white/80 mb-4">{mfaSetupData.secret}</div>
+
+                        <div className="flex gap-3">
+                            <input
+                                type="text"
+                                value={mfaCode}
+                                onChange={(e) => setMfaCode(e.target.value)}
+                                placeholder="Enter 6-digit code"
+                                className="flex-1 bg-black/20 border border-white/10 rounded-lg px-4 py-2.5 text-white outline-none"
+                            />
+                            <button onClick={handleVerifyMfa} className="btn-neon px-4 py-2" disabled={mfaLoading}>
+                                {mfaLoading ? 'Verifying...' : 'Verify'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showEmailModal && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setShowEmailModal(false)}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setShowEmailModal(false); }}
+                >
+                    <div
+                        className="w-full max-w-lg bg-titan-bg-card border border-white/10 rounded-2xl p-6 space-y-4"
+                        role="dialog"
+                        aria-modal="true"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 className="text-xl font-bold text-white">Change Email Address</h3>
+                        <input
+                            type="email"
+                            value={emailForm.newEmail}
+                            onChange={(e) => setEmailForm((prev) => ({ ...prev, newEmail: e.target.value }))}
+                            placeholder="new-email@example.com"
+                            className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2.5 text-white outline-none"
+                        />
+
+                        {emailOtpSent ? (
+                            <>
+                                <input
+                                    type="text"
+                                    value={emailForm.otp}
+                                    onChange={(e) => setEmailForm((prev) => ({ ...prev, otp: e.target.value }))}
+                                    placeholder="OTP from new email"
+                                    className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2.5 text-white outline-none"
+                                />
+                                <input
+                                    type="password"
+                                    value={emailForm.password}
+                                    onChange={(e) => setEmailForm((prev) => ({ ...prev, password: e.target.value }))}
+                                    placeholder="Current password"
+                                    className="w-full bg-black/20 border border-white/10 rounded-lg px-4 py-2.5 text-white outline-none"
+                                />
+                                <button onClick={handleVerifyChangeEmail} className="btn-neon w-full py-2.5" disabled={emailLoading}>
+                                    {emailLoading ? 'Updating...' : 'Verify and Update Email'}
+                                </button>
+                            </>
+                        ) : (
+                            <button onClick={handleInitChangeEmail} className="btn-neon w-full py-2.5" disabled={emailLoading}>
+                                {emailLoading ? 'Sending...' : 'Send Verification Code'}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
-    </div>
-);
+    );
+};
 
 // 🔗 Connected Accounts Section
 const ConnectedAccountsSection = ({ gameProfiles, refreshData, user }) => {
@@ -386,45 +722,267 @@ const PrivacySection = ({ formData, handleChange }) => (
 );
 
 // 💳 Wallet & Billing Section
-const WalletSection = ({ user }) => (
-    <div className="space-y-6">
-        <h2 className="text-2xl font-bold text-white mb-6">💳 Wallet & Billing</h2>
+const WalletSection = ({ user }) => {
+    const [wallet, setWallet] = useState(null);
+    const [transactions, setTransactions] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [billingForm, setBillingForm] = useState({
+        street: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        country: '',
+        invoiceEmail: user?.email || ''
+    });
+    const [editingBilling, setEditingBilling] = useState(false);
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 bg-gradient-to-br from-titan-purple/20 to-titan-blue/20 border border-white/10 rounded-xl">
-                <p className="text-sm text-white/60 mb-1">Wallet Balance</p>
-                <p className="text-2xl font-bold text-white">₹0.00</p>
+    useEffect(() => {
+        fetchWalletData();
+    }, []);
+
+    const fetchWalletData = async () => {
+        try {
+            const res = await api.get('/wallet');
+            if (res.data.success) {
+                setWallet(res.data.data);
+                if (res.data.data?.billingAddress) {
+                    setBillingForm(prev => ({ ...prev, ...res.data.data.billingAddress }));
+                }
+                setBillingForm(prev => ({ ...prev, invoiceEmail: res.data.data?.invoiceEmail || user?.email || '' }));
+            }
+        } catch (error) {
+            console.error('Error fetching wallet:', error);
+        }
+
+        try {
+            const res = await api.get('/wallet/transactions?limit=5');
+            if (res.data.success) {
+                setTransactions(res.data.data || []);
+            }
+        } catch (error) {
+            console.error('Error fetching transactions:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleUpdateBilling = async () => {
+        setSaving(true);
+        try {
+            const res = await api.put('/wallet/billing', {
+                billingAddress: {
+                    street: billingForm.street,
+                    city: billingForm.city,
+                    state: billingForm.state,
+                    postalCode: billingForm.postalCode,
+                    country: billingForm.country
+                },
+                invoiceEmail: billingForm.invoiceEmail
+            });
+            if (res.data.success) {
+                toast.success('Billing address updated!');
+                setEditingBilling(false);
+                fetchWalletData();
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to update billing address');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const formatCurrency = (paise) => {
+        return new Intl.NumberFormat('en-IN', {
+            style: 'currency',
+            currency: 'INR',
+            maximumFractionDigits: 0,
+        }).format((paise || 0) / 100);
+    };
+
+    if (loading) {
+        return <div className="text-white/40">Loading wallet data...</div>;
+    }
+
+    return (
+        <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-white mb-6">💳 Wallet & Billing</h2>
+
+            {/* Wallet Status Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 bg-gradient-to-br from-titan-purple/20 to-titan-blue/20 border border-white/10 rounded-xl">
+                    <p className="text-sm text-white/60 mb-1">Wallet Balance</p>
+                    <p className="text-2xl font-bold text-white">{formatCurrency(wallet?.balance)}</p>
+                </div>
+                <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                    <p className="text-sm text-white/60 mb-1">Locked Balance</p>
+                    <p className="text-2xl font-bold text-white">{formatCurrency(wallet?.locked)}</p>
+                </div>
+                <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                    <p className="text-sm text-white/60 mb-1">Status</p>
+                    {wallet?.activation?.isActivated ? (
+                        <span className="inline-block px-3 py-1 bg-green-500/20 text-green-400 text-sm font-bold rounded-full">Active</span>
+                    ) : (
+                        <span className="inline-block px-3 py-1 bg-red-500/20 text-red-400 text-sm font-bold rounded-full">Inactive</span>
+                    )}
+                </div>
             </div>
-            <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
-                <p className="text-sm text-white/60 mb-1">Locked Balance</p>
-                <p className="text-2xl font-bold text-white">₹0.00</p>
+
+            {/* Activation Status */}
+            {!wallet?.activation?.isActivated && (
+                <div className="p-4 bg-titan-warning/10 border border-titan-warning/30 rounded-xl">
+                    <p className="font-semibold text-titan-warning mb-2">⚠️ Wallet Not Activated</p>
+                    <p className="text-sm text-white/60 mb-3">Complete the following to activate your wallet:</p>
+                    <ul className="text-sm text-white/60 space-y-2">
+                        {!wallet?.activation?.kycApproved && (
+                            <li className="flex items-center gap-2">
+                                <span className="text-red-400">✕</span> KYC verification (required)
+                            </li>
+                        )}
+                        {!wallet?.activation?.hasBillingAddress && (
+                            <li className="flex items-center gap-2">
+                                <span className="text-red-400">✕</span> Billing address (required)
+                            </li>
+                        )}
+                        {wallet?.activation?.kycApproved && (
+                            <li className="flex items-center gap-2">
+                                <span className="text-green-400">✓</span> KYC verification approved
+                            </li>
+                        )}
+                        {wallet?.activation?.hasBillingAddress && (
+                            <li className="flex items-center gap-2">
+                                <span className="text-green-400">✓</span> Billing address added
+                            </li>
+                        )}
+                    </ul>
+                </div>
+            )}
+
+            {/* Billing Address Section */}
+            <div>
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-white">Billing Address</h3>
+                    {!editingBilling && (
+                        <button onClick={() => setEditingBilling(true)} className="btn-ghost text-sm px-3 py-1">
+                            {wallet?.billingAddress ? 'Edit' : 'Add'}
+                        </button>
+                    )}
+                </div>
+
+                {editingBilling ? (
+                    <div className="space-y-4 p-4 bg-white/5 border border-white/10 rounded-xl">
+                        <div>
+                            <label className="block text-sm text-white/60 mb-2">Street Address</label>
+                            <input
+                                type="text"
+                                value={billingForm.street}
+                                onChange={(e) => setBillingForm(prev => ({ ...prev, street: e.target.value }))}
+                                placeholder="123 Main St"
+                                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-titan-purple"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm text-white/60 mb-2">City</label>
+                                <input
+                                    type="text"
+                                    value={billingForm.city}
+                                    onChange={(e) => setBillingForm(prev => ({ ...prev, city: e.target.value }))}
+                                    placeholder="Mumbai"
+                                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-titan-purple"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-white/60 mb-2">State/Province</label>
+                                <input
+                                    type="text"
+                                    value={billingForm.state}
+                                    onChange={(e) => setBillingForm(prev => ({ ...prev, state: e.target.value }))}
+                                    placeholder="Maharashtra"
+                                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-titan-purple"
+                                />
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm text-white/60 mb-2">Postal Code</label>
+                                <input
+                                    type="text"
+                                    value={billingForm.postalCode}
+                                    onChange={(e) => setBillingForm(prev => ({ ...prev, postalCode: e.target.value }))}
+                                    placeholder="400001"
+                                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-titan-purple"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-white/60 mb-2">Country</label>
+                                <input
+                                    type="text"
+                                    value={billingForm.country}
+                                    onChange={(e) => setBillingForm(prev => ({ ...prev, country: e.target.value }))}
+                                    placeholder="India"
+                                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-titan-purple"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-white/60 mb-2">Invoice Email</label>
+                            <input
+                                type="email"
+                                value={billingForm.invoiceEmail}
+                                onChange={(e) => setBillingForm(prev => ({ ...prev, invoiceEmail: e.target.value }))}
+                                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-titan-purple"
+                            />
+                        </div>
+                        <div className="flex gap-3">
+                            <button onClick={handleUpdateBilling} disabled={saving} className="btn-neon px-4 py-2 flex-1">
+                                {saving ? 'Saving...' : 'Save Address'}
+                            </button>
+                            <button onClick={() => setEditingBilling(false)} className="btn-ghost px-4 py-2 flex-1">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                ) : wallet?.billingAddress ? (
+                    <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                        <p className="text-white">{wallet.billingAddress.street}</p>
+                        <p className="text-white">{wallet.billingAddress.city}, {wallet.billingAddress.state} {wallet.billingAddress.postalCode}</p>
+                        <p className="text-white">{wallet.billingAddress.country}</p>
+                        <p className="text-sm text-white/60 mt-2">Invoice Email: {wallet.invoiceEmail}</p>
+                    </div>
+                ) : (
+                    <p className="text-white/40 text-sm mb-4 p-4 bg-white/5 border border-white/10 rounded-xl">No billing address yet. Add one to activate your wallet.</p>
+                )}
             </div>
-            <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
-                <p className="text-sm text-white/60 mb-1">Wallet Status</p>
-                <span className="inline-block px-3 py-1 bg-green-500/20 text-green-400 text-sm font-bold rounded-full">Active</span>
-            </div>
-        </div>
 
-        <div>
-            <h3 className="text-lg font-bold text-white mb-4">Transaction History</h3>
-            <p className="text-white/40 text-sm">No transactions yet</p>
+            {/* Recent Transactions */}
+            {transactions.length > 0 && (
+                <div>
+                    <h3 className="text-lg font-bold text-white mb-4">Recent Transactions</h3>
+                    <div className="space-y-3">
+                        {transactions.map((tx) => (
+                            <div key={tx.id} className="p-4 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between">
+                                <div>
+                                    <p className="font-semibold text-white">{tx.type.replace('_', ' ')}</p>
+                                    <p className="text-sm text-white/40">{tx.message}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className={`font-bold ${tx.amount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {tx.amount >= 0 ? '+' : ''}{formatCurrency(tx.amount)}
+                                    </p>
+                                    <p className="text-xs text-white/30">{new Date(tx.createdAt).toLocaleDateString()}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
-
-        <div>
-            <h3 className="text-lg font-bold text-white mb-4">Billing Address</h3>
-            <button className="btn-secondary px-4 py-2 text-sm">Add Billing Address</button>
-        </div>
-
-        <div>
-            <h3 className="text-lg font-bold text-white mb-4">Payout / Withdrawal Setup</h3>
-            <p className="text-white/40 text-sm mb-4">Configure your payout method for prize winnings</p>
-            <button className="btn-secondary px-4 py-2 text-sm">Setup Payout Method</button>
-        </div>
-    </div>
-);
+    );
+};
 
 // Helper Component
-const ActionCard = ({ icon: Icon, title, description, action, badge }) => (
+const ActionCard = ({ icon: Icon, title, description, action, badge, onAction, disabled }) => (
     <div className="p-4 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between hover:bg-white/10 transition-colors">
         <div className="flex items-center gap-3">
             <Icon size={20} className="text-white/60" />
@@ -435,7 +993,7 @@ const ActionCard = ({ icon: Icon, title, description, action, badge }) => (
         </div>
         <div className="flex items-center gap-3">
             {badge && <span className="px-3 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full">{badge}</span>}
-            <button className="btn-ghost px-4 py-2 text-sm">{action}</button>
+            <button onClick={onAction} disabled={disabled} className="btn-ghost px-4 py-2 text-sm disabled:opacity-50">{action}</button>
         </div>
     </div>
 );
