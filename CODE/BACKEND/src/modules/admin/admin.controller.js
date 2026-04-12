@@ -6,22 +6,30 @@
 const { db } = require('../../db');
 const {
     users, wallets, playerProfiles, hostProfiles,
-    tournaments, tournamentParticipants, refreshTokens
+    tournaments, registrations, refreshTokens, kycRequests, hostApplications
 } = require('../../db/schema');
-const { eq, desc, count, sql, like, or, and } = require('drizzle-orm');
+const { eq, desc, count, sql, like, or, and, inArray } = require('drizzle-orm');
 
 // ─────────────────────────────────────────────
 // STATS
 // ─────────────────────────────────────────────
 exports.getStats = async (req, res) => {
     try {
-        const [[totalUsers], [totalTournaments], [activeTournaments], [totalPlayers], [totalHosts], [bannedUsers], [walletTotals]] = await Promise.all([
+        const [[totalUsers], [totalTournaments], [activeTournaments], [totalPlayers], [totalHosts], [bannedUsers], [pendingKyc], [walletTotals]] = await Promise.all([
             db.select({ count: count() }).from(users),
             db.select({ count: count() }).from(tournaments),
-            db.select({ count: count() }).from(tournaments).where(eq(tournaments.status, 'ACTIVE')),
+            db.select({ count: count() }).from(tournaments).where(or(
+                eq(tournaments.status, 'REGISTRATION'),
+                eq(tournaments.status, 'REG_CLOSED'),
+                eq(tournaments.status, 'ONGOING')
+            )),
             db.select({ count: count() }).from(users).where(eq(users.role, 'PLAYER')),
-            db.select({ count: count() }).from(users).where(eq(users.hostStatus, 'ACTIVE')),
+            db.select({ count: count() }).from(users).where(or(
+                eq(users.hostStatus, 'ACTIVE'),
+                eq(users.hostStatus, 'VERIFIED')
+            )),
             db.select({ count: count() }).from(users).where(eq(users.isBanned, true)),
+            db.select({ count: count() }).from(kycRequests).where(eq(kycRequests.status, 'PENDING')),
             db.select({ totalBalance: sql`SUM(${wallets.balance})`, totalLocked: sql`SUM(${wallets.locked})` }).from(wallets)
         ]);
 
@@ -30,6 +38,7 @@ exports.getStats = async (req, res) => {
             data: {
                 users: { total: Number(totalUsers.count), players: Number(totalPlayers.count), hosts: Number(totalHosts.count), banned: Number(bannedUsers.count) },
                 tournaments: { total: Number(totalTournaments.count), active: Number(activeTournaments.count) },
+                kyc: { pending: Number(pendingKyc.count) },
                 platform: { totalBalance: Number(walletTotals.totalBalance || 0), totalLocked: Number(walletTotals.totalLocked || 0) }
             }
         });
@@ -45,24 +54,90 @@ exports.getStats = async (req, res) => {
 exports.getUsers = async (req, res) => {
     try {
         const { page = 1, limit = 20, search, role, banned } = req.query;
-        const offset = (Number(page) - 1) * Number(limit);
+        const parsedPage = Number(page);
+        const parsedLimit = Number(limit);
+        const offset = (parsedPage - 1) * parsedLimit;
 
-        let conditions = [];
-        if (search) conditions.push(or(like(users.email, `%${search}%`), like(users.username, `%${search}%`)));
-        if (role) conditions.push(eq(users.role, role));
-        if (banned === 'true') conditions.push(eq(users.isBanned, true));
-        if (banned === 'false') conditions.push(eq(users.isBanned, false));
+        const filters = [];
+        if (search) {
+            const pattern = `%${search}%`;
+            filters.push(sql`(u.email ILIKE ${pattern} OR u.username ILIKE ${pattern})`);
+        }
+        if (role && role !== 'ALL') {
+            filters.push(sql`u.role = ${role}`);
+        }
+        if (banned === 'true') {
+            filters.push(sql`u."isBanned" = true`);
+        }
+        if (banned === 'false') {
+            filters.push(sql`u."isBanned" = false`);
+        }
 
-        const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+        const whereExpr = filters.length ? and(...filters) : undefined;
 
-        const [result, [{ total }]] = await Promise.all([
-            db.select({ id: users.id, username: users.username, email: users.email, role: users.role, isAdmin: users.isAdmin, hostStatus: users.hostStatus, isBanned: users.isBanned, emailVerified: users.emailVerified, countryCode: users.countryCode, createdAt: users.createdAt, ign: playerProfiles.ign, avatarUrl: playerProfiles.avatarUrl })
-                .from(users).leftJoin(playerProfiles, eq(users.id, playerProfiles.userId))
-                .where(whereClause).orderBy(desc(users.createdAt)).limit(Number(limit)).offset(offset),
-            db.select({ total: count() }).from(users).where(whereClause)
+        const listQuery = whereExpr
+            ? sql`
+                SELECT
+                    u.id,
+                    u.username,
+                    u.email,
+                    u.role,
+                    u.is_admin AS "isAdmin",
+                    u."hostStatus" AS "hostStatus",
+                    u."isBanned" AS "isBanned",
+                    u."emailVerified" AS "emailVerified",
+                    u.country_code AS "countryCode",
+                    u."platformUid" AS "platformUid",
+                    u."createdAt" AS "createdAt",
+                    p.ign,
+                    p."avatarUrl" AS "avatarUrl"
+                FROM "users" u
+                LEFT JOIN "playerprofile" p ON u.id = p."userId"
+                WHERE ${whereExpr}
+                ORDER BY u."createdAt" DESC
+                LIMIT ${parsedLimit} OFFSET ${offset}
+            `
+            : sql`
+                SELECT
+                    u.id,
+                    u.username,
+                    u.email,
+                    u.role,
+                    u.is_admin AS "isAdmin",
+                    u."hostStatus" AS "hostStatus",
+                    u."isBanned" AS "isBanned",
+                    u."emailVerified" AS "emailVerified",
+                    u.country_code AS "countryCode",
+                    u."platformUid" AS "platformUid",
+                    u."createdAt" AS "createdAt",
+                    p.ign,
+                    p."avatarUrl" AS "avatarUrl"
+                FROM "users" u
+                LEFT JOIN "playerprofile" p ON u.id = p."userId"
+                ORDER BY u."createdAt" DESC
+                LIMIT ${parsedLimit} OFFSET ${offset}
+            `;
+
+        const countQuery = whereExpr
+            ? sql`
+                SELECT COUNT(*)::int AS total
+                FROM "users" u
+                WHERE ${whereExpr}
+            `
+            : sql`
+                SELECT COUNT(*)::int AS total
+                FROM "users" u
+            `;
+
+        const [resultRows, totalRows] = await Promise.all([
+            db.execute(listQuery),
+            db.execute(countQuery)
         ]);
 
-        res.json({ success: true, data: { users: result, total: Number(total), page: Number(page), limit: Number(limit) } });
+        const result = resultRows.rows || [];
+        const total = Number(totalRows.rows?.[0]?.total || 0);
+
+        res.json({ success: true, data: { users: result, total, page: parsedPage, limit: parsedLimit } });
     } catch (error) {
         console.error('Admin getUsers error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch users' });
@@ -108,17 +183,91 @@ exports.updateUserRole = async (req, res) => {
 exports.getTournaments = async (req, res) => {
     try {
         const { page = 1, limit = 20, status } = req.query;
-        const offset = (Number(page) - 1) * Number(limit);
-        const whereClause = status ? eq(tournaments.status, status) : undefined;
+        const parsedPage = Number(page);
+        const parsedLimit = Number(limit);
+        const offset = (parsedPage - 1) * parsedLimit;
 
-        const [result, [{ total }]] = await Promise.all([
-            db.select({ id: tournaments.id, title: tournaments.title, status: tournaments.status, entryFee: tournaments.entryFee, prizePool: tournaments.prizePool, maxParticipants: tournaments.maxParticipants, currentParticipants: tournaments.currentParticipants, startDate: tournaments.startDate, hostId: tournaments.hostId, createdAt: tournaments.createdAt, hostUsername: users.username })
-                .from(tournaments).leftJoin(users, eq(tournaments.hostId, users.id))
-                .where(whereClause).orderBy(desc(tournaments.createdAt)).limit(Number(limit)).offset(offset),
-            db.select({ total: count() }).from(tournaments).where(whereClause)
+        const listQuery = status
+            ? sql`
+                SELECT
+                    t.id,
+                    t.name,
+                    t.game,
+                    t.description,
+                    t.rules,
+                    t.type,
+                    t.format,
+                    t."bannerUrl" AS "bannerUrl",
+                    t.status,
+                    t."entryFee" AS "entryFee",
+                    t."prizePool" AS "prizePool",
+                    COALESCE(t."maxParticipants", t."minTeamsRequired") AS "maxParticipants",
+                    t."startTime" AS "startTime",
+                    t."hostId" AS "hostId",
+                    t."createdAt" AS "createdAt",
+                    u.username AS "hostUsername"
+                FROM "tournament" t
+                LEFT JOIN "users" u ON t."hostId" = u.id
+                WHERE t.status = ${status}
+                ORDER BY t."createdAt" DESC
+                LIMIT ${parsedLimit} OFFSET ${offset}
+            `
+            : sql`
+                SELECT
+                    t.id,
+                    t.name,
+                    t.game,
+                    t.description,
+                    t.rules,
+                    t.type,
+                    t.format,
+                    t."bannerUrl" AS "bannerUrl",
+                    t.status,
+                    t."entryFee" AS "entryFee",
+                    t."prizePool" AS "prizePool",
+                    COALESCE(t."maxParticipants", t."minTeamsRequired") AS "maxParticipants",
+                    t."startTime" AS "startTime",
+                    t."hostId" AS "hostId",
+                    t."createdAt" AS "createdAt",
+                    u.username AS "hostUsername"
+                FROM "tournament" t
+                LEFT JOIN "users" u ON t."hostId" = u.id
+                ORDER BY t."createdAt" DESC
+                LIMIT ${parsedLimit} OFFSET ${offset}
+            `;
+
+        const countQuery = status
+            ? sql`SELECT COUNT(*)::int AS total FROM "tournament" WHERE status = ${status}`
+            : sql`SELECT COUNT(*)::int AS total FROM "tournament"`;
+
+        const [resultRows, totalRows] = await Promise.all([
+            db.execute(listQuery),
+            db.execute(countQuery)
         ]);
 
-        res.json({ success: true, data: { tournaments: result, total: Number(total), page: Number(page), limit: Number(limit) } });
+        const result = resultRows.rows || [];
+        const total = Number(totalRows.rows?.[0]?.total || 0);
+
+        const tournamentIds = result.map(t => t.id);
+        const participantRows = tournamentIds.length
+            ? await db.select({ tournamentId: registrations.tournamentId, count: count() })
+                .from(registrations)
+                .where(inArray(registrations.tournamentId, tournamentIds))
+                .groupBy(registrations.tournamentId)
+            : [];
+
+        const countsMap = new Map(participantRows.map(r => [r.tournamentId, Number(r.count)]));
+
+        const normalized = result.map(t => ({
+            ...t,
+            hostUsername: t.hostUsername || 'Unknown',
+            title: t.name,
+            startDate: t.startTime,
+            currentParticipants: countsMap.get(t.id) || 0,
+            active: ['REGISTRATION', 'REG_CLOSED', 'ONGOING'].includes(t.status)
+        }));
+
+        res.json({ success: true, data: { tournaments: normalized, total, page: parsedPage, limit: parsedLimit } });
     } catch (error) {
         console.error('Admin getTournaments error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch tournaments' });
@@ -137,7 +286,12 @@ exports.cancelTournament = async (req, res) => {
         }
 
         // Refund participants
-        const participants = await db.select({ userId: tournamentParticipants.userId }).from(tournamentParticipants).where(eq(tournamentParticipants.tournamentId, id));
+        const participants = await db.select({ userId: registrations.userId })
+            .from(registrations)
+            .where(and(
+                eq(registrations.tournamentId, id),
+                eq(registrations.paymentStatus, 'COMPLETED')
+            ));
 
         if (participants.length > 0 && tournament.entryFee > 0) {
             for (const p of participants) {
@@ -158,8 +312,25 @@ exports.cancelTournament = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.getHostApplications = async (req, res) => {
     try {
-        const { status = 'PENDING' } = req.query;
-        const result = await db.select({ id: hostProfiles.id, userId: hostProfiles.userId, status: hostProfiles.status, createdAt: hostProfiles.createdAt, username: users.username, email: users.email, ign: playerProfiles.ign, countryCode: users.countryCode })
+        const requestedStatus = (req.query.status || 'PENDING').toUpperCase();
+        let status = requestedStatus;
+        if (requestedStatus === 'APPROVED' || requestedStatus === 'VERIFIED') {
+            status = 'ACTIVE';
+        } else if (requestedStatus === 'REJECTED') {
+            status = 'REVOKED';
+        }
+
+        const result = await db.select({
+            id: hostProfiles.id,
+            userId: hostProfiles.userId,
+            status: hostProfiles.status,
+            createdAt: hostProfiles.createdAt,
+            username: users.username,
+            email: users.email,
+            ign: playerProfiles.ign,
+            avatarUrl: playerProfiles.avatarUrl,
+            countryCode: users.countryCode
+        })
             .from(hostProfiles).leftJoin(users, eq(hostProfiles.userId, users.id)).leftJoin(playerProfiles, eq(hostProfiles.userId, playerProfiles.userId))
             .where(eq(hostProfiles.status, status)).orderBy(desc(hostProfiles.createdAt));
 
@@ -182,12 +353,12 @@ exports.reviewHostApplication = async (req, res) => {
 
         if (action === 'approve') {
             await Promise.all([
-                db.update(hostProfiles).set({ status: 'APPROVED' }).where(eq(hostProfiles.id, id)),
-                db.update(users).set({ hostStatus: 'ACTIVE', role: 'HOST' }).where(eq(users.id, application.userId))
+                db.update(hostProfiles).set({ status: 'ACTIVE' }).where(eq(hostProfiles.id, id)),
+                db.update(users).set({ hostStatus: 'VERIFIED', role: 'HOST' }).where(eq(users.id, application.userId))
             ]);
             res.json({ success: true, message: 'Host application approved' });
         } else {
-            await db.update(hostProfiles).set({ status: 'REJECTED' }).where(eq(hostProfiles.id, id));
+            await db.update(hostProfiles).set({ status: 'REVOKED' }).where(eq(hostProfiles.id, id));
             res.json({ success: true, message: `Host application rejected: ${reason || 'No reason given'}` });
         }
     } catch (error) {
@@ -235,4 +406,119 @@ exports.adjustWallet = async (req, res) => {
         console.error('Admin wallet adjust error:', error);
         res.status(500).json({ success: false, message: 'Failed to adjust wallet' });
     }
+};
+
+// ─────────────────────────────────────────────
+// LEGACY/COMPATIBILITY ENDPOINTS (UI BACKWARD COMPAT)
+// ─────────────────────────────────────────────
+exports.getApplications = async (req, res) => {
+    try {
+        const pendingProfiles = await db.select({
+            id: hostProfiles.id,
+            userId: hostProfiles.userId,
+            status: hostProfiles.status,
+            createdAt: hostProfiles.createdAt,
+            username: users.username,
+            email: users.email,
+            ign: playerProfiles.ign,
+            avatarUrl: playerProfiles.avatarUrl,
+            countryCode: users.countryCode
+        })
+            .from(hostProfiles)
+            .leftJoin(users, eq(hostProfiles.userId, users.id))
+            .leftJoin(playerProfiles, eq(hostProfiles.userId, playerProfiles.userId))
+            .where(eq(hostProfiles.status, 'PENDING'))
+            .orderBy(desc(hostProfiles.createdAt));
+
+        const appMeta = await Promise.all(
+            pendingProfiles.map(async (profile) => {
+                const [latestApplication] = await db.select({
+                    notes: hostApplications.notes,
+                    documentsUrl: hostApplications.documentsUrl,
+                    submittedAt: hostApplications.createdAt
+                })
+                    .from(hostApplications)
+                    .where(eq(hostApplications.userId, profile.userId))
+                    .orderBy(desc(hostApplications.createdAt))
+                    .limit(1);
+
+                return {
+                    ...profile,
+                    notes: latestApplication?.notes || null,
+                    documentsUrl: latestApplication?.documentsUrl || null,
+                    applicationCreatedAt: latestApplication?.submittedAt || null
+                };
+            })
+        );
+
+        return res.json({ success: true, data: appMeta });
+    } catch (error) {
+        console.error('Admin getApplications error:', error);
+        return res.status(500).json({ success: false, message: 'Failed to fetch applications' });
+    }
+};
+
+exports.approveApplication = async (req, res) => {
+    req.body = { action: 'approve' };
+    return exports.reviewHostApplication(req, res);
+};
+
+exports.rejectApplication = async (req, res) => {
+    req.body = { action: 'reject', reason: req.body?.reason };
+    return exports.reviewHostApplication(req, res);
+};
+
+exports.getPendingHosts = async (req, res) => {
+    req.query.status = 'PENDING';
+    return exports.getHostApplications(req, res);
+};
+
+exports.getVerifiedHosts = async (req, res) => {
+    req.query.status = 'ACTIVE';
+    return exports.getHostApplications(req, res);
+};
+
+exports.approveHost = async (req, res) => {
+    req.body = { action: 'approve' };
+    return exports.reviewHostApplication(req, res);
+};
+
+exports.deleteHost = async (req, res) => {
+    req.body = { action: 'reject', reason: 'Rejected by admin' };
+    return exports.reviewHostApplication(req, res);
+};
+
+exports.toggleTournamentStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const isActive = String(req.query.isActive) === 'true';
+
+        const [t] = await db.select().from(tournaments).where(eq(tournaments.id, id)).limit(1);
+        if (!t) return res.status(404).json({ success: false, message: 'Tournament not found' });
+
+        const status = isActive ? 'REGISTRATION' : 'CANCELLED';
+        await db.update(tournaments).set({ status, updatedAt: new Date() }).where(eq(tournaments.id, id));
+
+        return res.json({ success: true, message: `Tournament status set to ${status}` });
+    } catch (error) {
+        console.error('Toggle tournament status error:', error);
+        return res.status(500).json({ success: false, message: 'Failed to update tournament status' });
+    }
+};
+
+exports.deleteTournamentByAdmin = async (req, res) => {
+    return exports.cancelTournament(req, res);
+};
+
+exports.reassignWorkload = async (req, res) => {
+    const { fromAdminId, toAdminId } = req.body || {};
+    if (!fromAdminId || !toAdminId || fromAdminId === toAdminId) {
+        return res.status(400).json({ success: false, message: 'Valid source and target admin IDs are required' });
+    }
+
+    return res.json({
+        success: true,
+        message: 'Workload reassignment acknowledged. Assignment model is not enforced in current schema.',
+        data: { fromAdminId, toAdminId }
+    });
 };
