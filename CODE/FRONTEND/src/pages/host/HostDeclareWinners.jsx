@@ -17,9 +17,17 @@ import toast from 'react-hot-toast';
 import Layout from '../../Components/layout/Layout';
 import { GradientText, SpotlightCard } from '../../Components/effects/ReactBits';
 
+const createWinnerEntry = () => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  playerId: '',
+  rank: '',
+  prizeAmount: '',
+  remarks: ''
+});
+
 const HostDeclareWinners = () => {
   const [tournamentId, setTournamentId] = useState('');
-  const [winners, setWinners] = useState([{ playerId: '', rank: '', prizeAmount: '', remarks: '' }]);
+  const [winners, setWinners] = useState([createWinnerEntry()]);
   const [loading, setLoading] = useState(false);
 
   // Handle input changes for winners
@@ -32,10 +40,7 @@ const HostDeclareWinners = () => {
 
   // Add new major winner form field
   const handleAddWinner = () => {
-    setWinners([
-      ...winners,
-      { playerId: '', rank: '', prizeAmount: '', remarks: '' },
-    ]);
+    setWinners([...winners, createWinnerEntry()]);
   };
 
   // Remove winner form field
@@ -69,14 +74,21 @@ const HostDeclareWinners = () => {
 
     setLoading(true);
     try {
+      const payload = winners.map((winner) => ({
+        userId: winner.playerId,
+        rank: Number(winner.rank),
+        prizeAmount: Number(winner.prizeAmount),
+        remarks: winner.remarks
+      }));
+
       const response = await api.post(
         `/tournaments/${tournamentId}/winners`,
-        { winners }
+        { winners: payload }
       );
 
-      if (response.data.status === 'success') {
+      if (response.data.success) {
         toast.success('Winners declared successfully!');
-        setWinners([{ playerId: '', rank: '', prizeAmount: '', remarks: '' }]); // Clear form
+        setWinners([createWinnerEntry()]); // Clear form
         setTournamentId('');
       } else {
         toast.error('Failed to declare winners: ' + response.data.message);
@@ -106,11 +118,12 @@ const HostDeclareWinners = () => {
           <form onSubmit={handleDeclareWinners}>
             <SpotlightCard className="bg-titan-bg-card border-white/10 p-8 mb-8">
               <div className="mb-8">
-                <label className="block text-sm font-medium text-white/60 mb-2">Tournament ID</label>
+                <label htmlFor="declare-winners-tournament-id" className="block text-sm font-medium text-white/60 mb-2">Tournament ID</label>
                 <div className="relative">
                   <Trophy className="absolute left-3 top-3.5 text-white/40" size={18} />
                   <input
-                    type="number"
+                    id="declare-winners-tournament-id"
+                    type="text"
                     value={tournamentId}
                     onChange={(e) => setTournamentId(e.target.value)}
                     className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-white focus:border-titan-purple focus:outline-none transition-colors"
@@ -122,16 +135,17 @@ const HostDeclareWinners = () => {
 
               <div className="space-y-6">
                 {winners.map((winner, index) => (
-                  <div key={index} className="p-6 bg-white/5 rounded-xl border border-white/5 relative group hover:border-white/10 transition-colors">
+                  <div key={winner.id} className="p-6 bg-white/5 rounded-xl border border-white/5 relative group hover:border-white/10 transition-colors">
                     <div className="absolute top-4 right-4 text-white/10 font-display text-4xl font-bold select-none">
                       #{index + 1}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
                       <div>
-                        <label className="block text-xs font-medium text-white/40 mb-1">Player ID</label>
+                        <label htmlFor={`winner-player-${winner.id}`} className="block text-xs font-medium text-white/40 mb-1">Player ID</label>
                         <input
-                          type="number"
+                          id={`winner-player-${winner.id}`}
+                          type="text"
                           name="playerId"
                           placeholder="Player ID"
                           value={winner.playerId}
@@ -141,10 +155,11 @@ const HostDeclareWinners = () => {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-white/40 mb-1">Rank</label>
+                        <label htmlFor={`winner-rank-${winner.id}`} className="block text-xs font-medium text-white/40 mb-1">Rank</label>
                         <div className="relative">
                           <Medal className="absolute left-3 top-2.5 text-white/40" size={14} />
                           <input
+                            id={`winner-rank-${winner.id}`}
                             type="number"
                             name="rank"
                             placeholder="Rank"
@@ -156,8 +171,9 @@ const HostDeclareWinners = () => {
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-white/40 mb-1">Prize Amount</label>
+                        <label htmlFor={`winner-prize-${winner.id}`} className="block text-xs font-medium text-white/40 mb-1">Prize Amount</label>
                         <input
+                          id={`winner-prize-${winner.id}`}
                           type="number"
                           name="prizeAmount"
                           placeholder="₹ Prize Amount"
@@ -168,8 +184,9 @@ const HostDeclareWinners = () => {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-white/40 mb-1">Remarks</label>
+                        <label htmlFor={`winner-remarks-${winner.id}`} className="block text-xs font-medium text-white/40 mb-1">Remarks</label>
                         <input
+                          id={`winner-remarks-${winner.id}`}
                           type="text"
                           name="remarks"
                           placeholder="Remarks (e.g. Winner, Runner-up)"
