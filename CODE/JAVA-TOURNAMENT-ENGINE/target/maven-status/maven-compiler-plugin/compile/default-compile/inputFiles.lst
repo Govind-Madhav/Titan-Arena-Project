@@ -1,3 +1,4 @@
+E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\bracket\strategy\DoubleEliminationStrategy.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\event\producer\MatchEventProducer.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\bracket\strategy\SingleEliminationStrategy.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\domain\Tournament.java
@@ -9,6 +10,7 @@ E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\j
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\api\BracketController.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\domain\Match.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\TournamentEngineApplication.java
+E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\bracket\strategy\RoundRobinStrategy.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\event\dto\outbound\MatchScheduledEvent.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\domain\MatchRepository.java
 E:\My projects\Esports Tournament Website\CODE\JAVA-TOURNAMENT-ENGINE\src\main\java\com\titanarena\tournamentengine\event\dto\inbound\TournamentCreatedEvent.java
