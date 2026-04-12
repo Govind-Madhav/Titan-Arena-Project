@@ -11,11 +11,93 @@ const { eq } = require('drizzle-orm');
 const { verifyIdToken } = require('../config/firebase.config');
 const { syncUser } = require('../services/userSync.service');
 
+const hasBearerHeader = (authHeader) => authHeader?.startsWith('Bearer ');
+const getBearerToken = (authHeader) => authHeader.split(' ')[1];
+
+const isFirebaseBearerToken = (token) => {
+    const raw = jwt.decode(token, { complete: true });
+    return raw?.payload?.iss === `https://securetoken.google.com/${process.env.FIREBASE_PROJECT_ID}`;
+};
+
+const normalizeRole = (role) => (role === 'SUPER_ADMIN' ? 'SUPERADMIN' : role);
+
+const buildSessionUser = (user) => ({
+    ...user,
+    role: normalizeRole(user.role),
+    isHost: user.hostStatus === 'VERIFIED',
+    isAdmin: user.isAdmin
+});
+
+const hydrateUserById = async (userId) => {
+    const result = await db.select({
+        id: users.id,
+        email: users.email,
+        username: users.username,
+        role: users.role,
+        isAdmin: users.isAdmin,
+        playerCode: users.playerCode,
+        hostStatus: users.hostStatus,
+        isBanned: users.isBanned,
+        emailVerified: users.emailVerified,
+        phoneVerified: users.phoneVerified,
+        registrationCompleted: users.registrationCompleted,
+        legalName: users.legalName,
+        phone: users.phone,
+        billingAddress: users.billingAddress
+    })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+    return result[0] || null;
+};
+
+const hydrateUserFromRefreshCookie = async (refreshToken) => {
+    const { refreshTokens: rtSchema } = require('../db/schema');
+    const rtResult = await db.select()
+        .from(rtSchema)
+        .where(eq(rtSchema.token, refreshToken))
+        .limit(1);
+
+    const storedToken = rtResult[0];
+    if (!storedToken || new Date(storedToken.expiresAt) <= new Date()) {
+        return null;
+    }
+
+    const userResult = await db.select().from(users).where(eq(users.id, storedToken.userId)).limit(1);
+    return userResult[0] ? buildSessionUser(userResult[0]) : null;
+};
+
+const resolveUserIdFromToken = async (token, req) => {
+    if (isFirebaseBearerToken(token)) {
+        const firebaseUser = await verifyIdToken(token);
+        req.firebaseUser = firebaseUser;
+
+        if (!firebaseUser.email_verified && process.env.NODE_ENV === 'production') {
+            const error = new Error('Email verification required');
+            error.status = 403;
+            error.payload = {
+                success: false,
+                message: 'Email verification required',
+                code: 'EMAIL_NOT_VERIFIED',
+                email: firebaseUser.email
+            };
+            throw error;
+        }
+
+        const syncedUser = await syncUser(firebaseUser);
+        return syncedUser.id;
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    return decoded.id || decoded.userId;
+};
+
 /**
  * AUTH CONTRACT:
  * - Firebase = identity proof only
  * - JWT = session auth only
- * - MySQL = single source of truth
+ * - PostgreSQL = single source of truth
  * - syncUser() MUST be used for all Firebase identities
  * 
  * PRODUCTION HARDENED: Hybrid Auth Middleware
@@ -25,105 +107,36 @@ const authRequired = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
 
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            // 🚨 SILENT REVIVE: Check for Refresh Token Cookie as Fallback
+        if (!hasBearerHeader(authHeader)) {
             const refreshToken = req.cookies?.refreshToken;
-            if (refreshToken) {
-                const { refreshTokens: rtSchema } = require('../db/schema');
-                const rtResult = await db.select()
-                    .from(rtSchema)
-                    .where(eq(rtSchema.token, refreshToken))
-                    .limit(1);
-
-                const storedToken = rtResult[0];
-                if (storedToken && new Date(storedToken.expiresAt) > new Date()) {
-                    // Valid cookie! Hydrate from DB
-                    const userResult = await db.select().from(users).where(eq(users.id, storedToken.userId)).limit(1);
-                    if (userResult[0]) {
-                        req.user = {
-                            ...userResult[0],
-                            isHost: userResult[0].hostStatus === 'VERIFIED',
-                            isAdmin: userResult[0].isAdmin
-                        };
-                        return next();
-                    }
-                }
+            if (!refreshToken) {
+                return res.status(401).json({ success: false, message: 'Authentication required' });
             }
-            return res.status(401).json({ success: false, message: 'Authentication required' });
+
+            const revivedUser = await hydrateUserFromRefreshCookie(refreshToken);
+            if (!revivedUser) {
+                return res.status(401).json({ success: false, message: 'Authentication required' });
+            }
+
+            req.user = revivedUser;
+            return next();
         }
 
-        const token = authHeader.split(' ')[1];
-        let decoded = null;
-        let isFirebase = false;
-
-        // 1. Detection Phase: Check if it's a Firebase token (STRONG)
+        const token = getBearerToken(authHeader);
+        let userId;
         try {
-            const raw = jwt.decode(token, { complete: true });
-            // Canonical Firebase detection: check issuer
-            if (raw?.payload?.iss === `https://securetoken.google.com/${process.env.FIREBASE_PROJECT_ID}`) {
-                isFirebase = true;
+            userId = await resolveUserIdFromToken(token, req);
+        } catch (error) {
+            if (error.payload) {
+                return res.status(error.status || 403).json(error.payload);
             }
-        } catch (e) {
-            // Not a valid JWT structure at all
-            return res.status(401).json({ success: false, message: 'Invalid token format' });
+            if (error.name === 'TokenExpiredError') {
+                return res.status(401).json({ success: false, message: 'Session expired', code: 'TOKEN_EXPIRED' });
+            }
+            return res.status(401).json({ success: false, message: 'Invalid or expired identity token' });
         }
 
-        let userId = null;
-        let firebaseUser = null;
-
-        if (isFirebase) {
-            // 2a. Firebase Path
-            try {
-                firebaseUser = await verifyIdToken(token);
-                req.firebaseUser = firebaseUser;
-
-                // 🚨 CRITICAL: Enforce Email Verification for Firebase Users
-                if (!firebaseUser.email_verified && process.env.NODE_ENV === 'production') {
-                    console.log(`🔐 Access Denied: Unverified email for UID ${firebaseUser.uid}`);
-                    return res.status(403).json({
-                        success: false,
-                        message: 'Email verification required',
-                        code: 'EMAIL_NOT_VERIFIED',
-                        email: firebaseUser.email
-                    });
-                }
-
-                const syncedUser = await syncUser(firebaseUser);
-                userId = syncedUser.id;
-            } catch (err) {
-                console.error('🔐 Firebase token verification failed:', err.message);
-                return res.status(401).json({ success: false, message: 'Invalid or expired identity token' });
-            }
-        } else {
-            // 2b. Legacy Path
-            try {
-                decoded = jwt.verify(token, process.env.JWT_SECRET);
-                userId = decoded.id || decoded.userId;
-            } catch (err) {
-                if (err.name === 'TokenExpiredError') {
-                    return res.status(401).json({ success: false, message: 'Session expired', code: 'TOKEN_EXPIRED' });
-                }
-                console.error('🔐 Legacy token verification failed:', err.message);
-                return res.status(401).json({ success: false, message: 'Access denied: Invalid session' });
-            }
-        }
-
-        // 3. Database hydration (Authoritative data)
-        const result = await db.select({
-            id: users.id,
-            email: users.email,
-            username: users.username,
-            role: users.role,
-            isAdmin: users.isAdmin,
-            playerCode: users.playerCode,
-            hostStatus: users.hostStatus,
-            isBanned: users.isBanned
-        })
-            .from(users)
-            .where(eq(users.id, userId))
-            .limit(1);
-
-        const user = result[0];
+        const user = await hydrateUserById(userId);
 
         if (!user) {
             return res.status(401).json({ success: false, message: 'Identity missing' });
@@ -133,14 +146,9 @@ const authRequired = async (req, res, next) => {
             return res.status(403).json({ success: false, message: 'Access denied: Account suspended' });
         }
 
-        // 4. Final Attachment
-        req.user = {
-            ...user,
-            isHost: user.hostStatus === 'VERIFIED', // Host is operational state, not role
-            isAdmin: user.isAdmin
-        };
+        req.user = buildSessionUser(user);
 
-        next();
+        return next();
     } catch (error) {
         console.error('🔴 Auth Middleware Critical Error:', error);
         return res.status(500).json({ success: false, message: 'Authentication service error' });
@@ -154,59 +162,32 @@ const authRequired = async (req, res, next) => {
 const authOptional = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
-
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            let isFirebase = false;
-
-            // Detect Firebase token
-            try {
-                const raw = jwt.decode(token, { complete: true });
-                if (raw?.payload?.iss === `https://securetoken.google.com/${process.env.FIREBASE_PROJECT_ID}`) {
-                    isFirebase = true;
-                }
-            } catch (e) {
-                // Invalid token, silently continue
-            }
-
-            if (isFirebase) {
-                // Firebase path
-                try {
-                    const firebaseUser = await verifyIdToken(token);
-                    req.firebaseUser = firebaseUser;
-                    const syncedUser = await syncUser(firebaseUser);
-                    req.user = syncedUser;
-                } catch (err) {
-                    // Silently continue without user
-                }
-            } else {
-                // JWT path
-                try {
-                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                    const result = await db.select({
-                        id: users.id,
-                        email: users.email,
-                        username: users.username,
-                        role: users.role,
-                        hostStatus: users.hostStatus,
-                        isBanned: users.isBanned
-                    })
-                        .from(users)
-                        .where(eq(users.id, decoded.userId))
-                        .limit(1);
-
-                    const user = result[0];
-                    if (user) {
-                        req.user = user;
-                    }
-                } catch (err) {
-                    // Silently continue without user
-                }
-            }
+        if (!hasBearerHeader(authHeader)) {
+            return next();
         }
-        next();
+
+        const token = getBearerToken(authHeader);
+        try {
+            if (isFirebaseBearerToken(token)) {
+                const firebaseUser = await verifyIdToken(token);
+                req.firebaseUser = firebaseUser;
+                const syncedUser = await syncUser(firebaseUser);
+                req.user = buildSessionUser(syncedUser);
+                return next();
+            }
+
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            const user = await hydrateUserById(decoded.id || decoded.userId);
+            if (user) {
+                req.user = buildSessionUser(user);
+            }
+        } catch (error) {
+            console.debug('authOptional token skipped:', error?.message);
+        }
+
+        return next();
     } catch (error) {
-        // Silently continue without user
+        console.debug('authOptional fallback:', error?.message);
         next();
     }
 };
@@ -214,12 +195,12 @@ const authOptional = async (req, res, next) => {
 // 2. Admin Guard
 const isAdmin = (req, res, next) => {
     // Check token claim first (Fast)
-    if (req.user && req.user.isAdmin) {
+    if (req.user?.isAdmin) {
         return next();
     }
 
     // Fallback: Check role (Legacy)
-    if (req.user && (req.user.role === 'ADMIN' || req.user.role === 'SUPERADMIN')) {
+    if (req.user?.role === 'ADMIN' || req.user?.role === 'SUPERADMIN') {
         return next();
     }
 
@@ -231,7 +212,7 @@ const isAdmin = (req, res, next) => {
 
 // 3. Super Admin Guard
 const isSuperAdmin = (req, res, next) => {
-    if (req.user && (req.user.role === 'SUPERADMIN')) {
+    if (req.user?.role === 'SUPERADMIN') {
         return next();
     }
     return res.status(403).json({
@@ -243,11 +224,11 @@ const isSuperAdmin = (req, res, next) => {
 // 4. Host Guard (New)
 const isHost = (req, res, next) => {
     // Check token claim
-    if (req.user && req.user.isHost) {
+    if (req.user?.isHost) {
         return next();
     }
     // Fallback: Check legacy database status if missing from token (optional)
-    if (req.user && req.user.hostStatus === 'VERIFIED') {
+    if (req.user?.hostStatus === 'VERIFIED') {
         return next();
     }
 
@@ -301,7 +282,7 @@ const authorize = (...allowedRoles) => (req, res, next) => {
 const firebaseAuth = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        if (!hasBearerHeader(authHeader)) {
             return res.status(401).json({
                 success: false,
                 message: 'Authentication required (ID Token missing)'
@@ -341,7 +322,7 @@ const firebaseAuth = async (req, res, next) => {
 const firebaseAuthOptional = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
-        if (authHeader && authHeader.startsWith('Bearer ')) {
+        if (hasBearerHeader(authHeader)) {
             const token = authHeader.split('Bearer ')[1];
             const decoded = await verifyIdToken(token);
             if (decoded.aud === process.env.FIREBASE_PROJECT_ID) {
@@ -350,6 +331,7 @@ const firebaseAuthOptional = async (req, res, next) => {
         }
         next();
     } catch (error) {
+        console.debug('firebaseAuthOptional fallback:', error?.message);
         next();
     }
 };
