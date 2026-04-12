@@ -29,6 +29,12 @@ public class BracketService {
     /** All BracketStrategy beans, keyed by their @Component qualifier */
     private final Map<String, BracketStrategy> strategies;
     private final MatchRepository matchRepository;
+        private static final String DEFAULT_FORMAT = "SINGLE_ELIMINATION";
+        private static final String DEFAULT_BEAN = "singleEliminationStrategy";
+        private static final Map<String, String> FORMAT_TO_BEAN = Map.of(
+                DEFAULT_FORMAT, DEFAULT_BEAN,
+                "DOUBLE_ELIMINATION", "doubleEliminationStrategy",
+                "ROUND_ROBIN", "roundRobinStrategy");
 
     /**
      * Generates a bracket for the given tournament using the appropriate strategy.
@@ -40,14 +46,15 @@ public class BracketService {
      * @return All created Match objects.
      */
     public List<Match> generateBracket(String tournamentId, String format, List<String> participants) {
-        String key = (format != null) ? format.toUpperCase() : "SINGLE_ELIMINATION";
-        BracketStrategy strategy = strategies.getOrDefault(key, strategies.get("SINGLE_ELIMINATION"));
+        String key = (format != null) ? format.toUpperCase() : DEFAULT_FORMAT;
+        String beanName = FORMAT_TO_BEAN.getOrDefault(key, DEFAULT_BEAN);
+        BracketStrategy strategy = strategies.getOrDefault(beanName, strategies.get(DEFAULT_BEAN));
 
         if (strategy == null) {
             throw new IllegalStateException("No BracketStrategy registered for format: " + key);
         }
 
-        log.info("🎯 Using strategy [{}] for tournament {}", key, tournamentId);
+        log.info("🎯 Using strategy [{} -> {}] for tournament {}", key, beanName, tournamentId);
         return strategy.generate(tournamentId, participants);
     }
 
