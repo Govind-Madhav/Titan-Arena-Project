@@ -13,11 +13,10 @@ import { useAuth } from '../Context/AuthContext';
 import StableCard from './StableCard';
 import {
   FaTrophy, FaUsers, FaSun, FaMoon,
-  FaFootballBall, FaTwitter,
+  FaTwitter,
   FaInstagram, FaFacebookF, FaYoutube,
   FaGamepad, FaCrown, FaFire, FaStar,
-  FaCalendarAlt, FaClock, FaPlay, FaMedal,
-  FaChevronRight, FaChevronLeft, FaQuoteLeft
+  FaCalendarAlt, FaClock, FaPlay, FaQuoteLeft
 } from 'react-icons/fa';
 
 const HomePage = () => {
@@ -29,8 +28,9 @@ const HomePage = () => {
   const [showModal, setShowModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showForgotModal, setShowForgotModal] = useState(false); // 🆕
-  const [isLoading, setIsLoading] = useState(false);
   const [cardsLoaded, setCardsLoaded] = useState(false);
+  const [upcomingTournaments, setUpcomingTournaments] = useState([]);
+  const [topPlayers, setTopPlayers] = useState([]);
 
   const [selectedRole, setSelectedRole] = useState('');
   const [loginEmail, setLoginEmail] = useState('');
@@ -56,6 +56,33 @@ const HomePage = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const fetchHomepageData = async () => {
+      try {
+        const [tournamentRes, leaderboardRes] = await Promise.all([
+          api.get('/tournaments'),
+          api.get('/stats/leaderboard?limit=6')
+        ]);
+
+        const tournamentList = Array.isArray(tournamentRes.data?.data)
+          ? tournamentRes.data.data
+          : [];
+        const leaderboardList = Array.isArray(leaderboardRes.data?.data)
+          ? leaderboardRes.data.data
+          : [];
+
+        setUpcomingTournaments(tournamentList.slice(0, 3));
+        setTopPlayers(leaderboardList.slice(0, 6));
+      } catch (error) {
+        console.error('Failed to load homepage live data:', error);
+        setUpcomingTournaments([]);
+        setTopPlayers([]);
+      }
+    };
+
+    fetchHomepageData();
+  }, []);
+
   const handleScrollToAbout = () => {
     if (aboutRef.current) {
       aboutRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -67,6 +94,13 @@ const HomePage = () => {
     { label: 'Player', value: 'PLAYER' },
     { label: 'Host', value: 'HOST' }
   ];
+
+  const getPlayerCardClass = (rankIndex) => {
+    if (rankIndex === 0) return 'from-yellow-500/20 to-orange-500/20 border-yellow-400';
+    if (rankIndex === 1) return 'from-gray-400/20 to-gray-500/20 border-gray-400';
+    if (rankIndex === 2) return 'from-orange-600/20 to-orange-700/20 border-orange-600';
+    return 'from-gray-700/20 to-gray-800/20 border-gray-600';
+  };
 
 
 
@@ -91,10 +125,10 @@ const HomePage = () => {
       console.log("Login response:", response.data);
 
       // Check if the login is successful and save data using AuthContext
-      if (response.data?.status === 'success' && response.data?.data) {
-        const userData = response.data.data;
-        const userRole = response.data.role;
-        const token = response.data.token;
+      if (response.data?.success && response.data?.data) {
+        const userData = response.data.data.user;
+        const userRole = userData?.role;
+        const token = response.data.data.accessToken;
 
         console.log("Login successful, user data:", userData);
         console.log("User role:", userRole);
@@ -108,12 +142,12 @@ const HomePage = () => {
 
         setTimeout(() => {
           console.log("Navigating to:", userRole);
-          if (userRole === 'ADMIN') {
-            navigate('/adminPage');
+          if (userRole === 'ADMIN' || userRole === 'SUPERADMIN') {
+            navigate('/admin');
           } else if (userRole === 'HOST') {
-            navigate('/hostPage');
+            navigate('/host');
           } else if (userRole === 'PLAYER') {
-            navigate('/userHomePage');
+            navigate('/dashboard');
           }
         }, 1500);
 
@@ -171,54 +205,18 @@ const HomePage = () => {
       return;
     }
 
-    const formData = new FormData();
-    formData.append('fullName', registerFullName);
-    formData.append('email', registerEmail);
-    formData.append('password', registerPassword);
-    formData.append('mobile', registerMobile);
-    formData.append('role', selectedRole);
-    formData.append('file', registerFile);
-
-    try {
-      setLoading(true);
-      const response = await api.post("/auth/register", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-          "Accept": "application/json"
-        }
-      });
-
-      if (response.data?.status === 'success') {
-        console.log("Registration successful", response.data);
-        toast.success(`Registered successfully as ${selectedRole}! Awaiting approval.`);
-
-        setShowModal(false);
-        setRegisterFullName('');
-        setRegisterEmail('');
-        setRegisterPassword('');
-        setRegisterMobile('');
-        setRegisterFile(null);
-        setSelectedRole('');
-      } else {
-        toast.error(response.data?.message || "Registration failed");
-      }
-
-    } catch (error) {
-      console.error("Registration Failed:", error.response?.data || error.message);
-      const errorMessage = error.response?.data?.message || "Registration failed! Please try again.";
-      toast.error(errorMessage);
-    } finally {
-      setLoading(false);
-    }
+    toast('Registration moved to the new auth flow. Redirecting...');
+    setShowModal(false);
+    navigate('/auth');
   };
 
   // 🆕 Forgot Password Submit Function
   const handleForgotPasswordSubmit = async (e) => {
     e.preventDefault();
 
-    // Validate all fields
-    if (!forgotEmail || !forgotNewPassword || !forgotConfirmPassword) {
-      toast.warn("Please fill in all fields!");
+    // Backend flow is email-based reset initiation from this screen.
+    if (!forgotEmail) {
+      toast.warn("Please enter your email!");
       return;
     }
 
@@ -229,29 +227,15 @@ const HomePage = () => {
       return;
     }
 
-    if (forgotNewPassword !== forgotConfirmPassword) {
-      toast.warn("New password and Confirm password do not match!");
-      return;
-    }
-
-    if (forgotNewPassword.length < 6) {
-      toast.warn("Password must be at least 6 characters long!");
-      return;
-    }
-
-    const forgotData = {
-      email: forgotEmail,
-      newPassword: forgotNewPassword,
-      confirmPassword: forgotConfirmPassword
-    };
+    const forgotData = { email: forgotEmail };
 
     try {
       setLoading(true);
-      const response = await api.put("/auth/forgot-password", forgotData);
+      const response = await api.post("/auth/forgot-password", forgotData);
 
-      if (response.data?.status === 'success') {
+      if (response.data?.success) {
         console.log("Password Reset Successful", response.data);
-        toast.success("Password reset successfully!");
+        toast.success("Password reset instructions sent to your email.");
 
         setShowForgotModal(false);
         setForgotEmail('');
@@ -451,14 +435,22 @@ const HomePage = () => {
               />
               <div className="flex justify-between gap-2">
                 {roles.map((role) => (
+                  (() => {
+                    const roleClass = selectedRole === role.value
+                      ? 'bg-yellow-400 text-black'
+                      : (darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-800');
+
+                    return (
                   <button
                     key={role.value}
                     type="button"
                     onClick={() => setSelectedRole(role.value)}
-                    className={`flex-1 py-2 rounded-lg font-semibold border transition ${selectedRole === role.value ? 'bg-yellow-400 text-black' : `${darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-800'}`}`}
+                    className={`flex-1 py-2 rounded-lg font-semibold border transition ${roleClass}`}
                   >
                     {role.label}
                   </button>
+                    );
+                  })()
                 ))}
               </div>
 
@@ -510,9 +502,16 @@ const HomePage = () => {
               />
 
               {/* 🆕 Forgot Password Link */}
-              <p className="text-center text-sm cursor-pointer text-yellow-400 hover:underline" onClick={() => { setShowForgotModal(true); setShowLoginModal(false); }}>
+              <button
+                type="button"
+                className="block w-full text-center text-sm text-yellow-400 hover:underline"
+                onClick={() => {
+                  setShowForgotModal(true);
+                  setShowLoginModal(false);
+                }}
+              >
                 Forgot Password?
-              </p>
+              </button>
 
               <button
                 type="submit"
@@ -661,10 +660,59 @@ const HomePage = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {!cardsLoaded ? (
+            {cardsLoaded ? (
+              upcomingTournaments.length > 0 ? upcomingTournaments.map((tournament, i) => (
+              <StableCard
+                key={`tournament-${tournament.id || tournament.name}`}
+                delay={i * 100}
+                animationType="fadeIn"
+                className="group relative bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-2xl p-6 hover:border-yellow-400/50 hover:scale-105 transition-all duration-300"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500 to-cyan-500 text-white">
+                    {tournament.status || 'Upcoming'}
+                  </div>
+                  <FaFire className="text-yellow-400 text-lg" />
+                </div>
+
+                <h3 className="text-xl font-bold text-white mb-2 group-hover:text-yellow-400 transition-colors duration-300">
+                  {tournament.name}
+                </h3>
+                <p className="text-gray-400 mb-4">{tournament.game || 'Esports'}</p>
+
+                <div className="space-y-2 mb-6">
+                  <div className="flex items-center text-gray-300">
+                    <FaCalendarAlt className="mr-2 text-yellow-400" />
+                    {tournament.startTime ? new Date(tournament.startTime).toLocaleDateString() : 'TBA'}
+                  </div>
+                  <div className="flex items-center text-gray-300">
+                    <FaClock className="mr-2 text-yellow-400" />
+                    {tournament.startTime ? new Date(tournament.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'TBA'}
+                  </div>
+                  <div className="flex items-center text-gray-300">
+                    <FaTrophy className="mr-2 text-yellow-400" />
+                    Prize: ₹{Number(tournament.prizePool || 0).toLocaleString()}
+                  </div>
+                  <div className="flex items-center text-gray-300">
+                    <FaUsers className="mr-2 text-yellow-400" />
+                    {Number(tournament.maxParticipants || 0)} Players
+                  </div>
+                </div>
+
+                <button className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black font-bold rounded-lg hover:from-yellow-400 hover:to-orange-400 transition-all duration-300 transform hover:scale-105">
+                  <FaPlay className="inline mr-2" />
+                  Join Tournament
+                </button>
+              </StableCard>
+            )) : (
+              <div className="col-span-full rounded-2xl border border-dashed border-gray-700 p-10 text-center text-gray-400">
+                Live tournament data is not available right now.
+              </div>
+            )
+            ) : (
               // Loading skeleton
-              Array.from({ length: 3 }).map((_, i) => (
-                <div key={`skeleton-${i}`} className="bg-gray-800/50 rounded-2xl p-6 animate-pulse">
+              ['tour-a', 'tour-b', 'tour-c'].map((skeletonKey) => (
+                <div key={skeletonKey} className="bg-gray-800/50 rounded-2xl p-6 animate-pulse">
                   <div className="h-4 bg-gray-700 rounded mb-4"></div>
                   <div className="h-6 bg-gray-700 rounded mb-2"></div>
                   <div className="h-4 bg-gray-700 rounded mb-4"></div>
@@ -675,81 +723,7 @@ const HomePage = () => {
                   </div>
                 </div>
               ))
-            ) : [
-              {
-                title: "Valorant Championship",
-                game: "Valorant",
-                date: "Dec 15, 2024",
-                time: "7:00 PM EST",
-                prize: "$10,000",
-                players: "128/128",
-                status: "Live",
-                color: "from-red-500 to-pink-500"
-              },
-              {
-                title: "CS2 Masters",
-                game: "Counter-Strike 2",
-                date: "Dec 20, 2024",
-                time: "6:00 PM EST",
-                prize: "$15,000",
-                players: "64/64",
-                status: "Starting Soon",
-                color: "from-blue-500 to-cyan-500"
-              },
-              {
-                title: "League of Legends Clash",
-                game: "League of Legends",
-                date: "Dec 25, 2024",
-                time: "8:00 PM EST",
-                prize: "$8,000",
-                players: "32/32",
-                status: "Registration Open",
-                color: "from-green-500 to-emerald-500"
-              }
-            ].map((tournament, i) => (
-              <StableCard
-                key={`tournament-${i}-${tournament.title}`}
-                delay={i * 100}
-                animationType="fadeIn"
-                className="group relative bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-2xl p-6 hover:border-yellow-400/50 hover:scale-105 transition-all duration-300"
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className={`px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r ${tournament.color} text-white`}>
-                    {tournament.status}
-                  </div>
-                  <FaFire className="text-yellow-400 text-lg" />
-                </div>
-
-                <h3 className="text-xl font-bold text-white mb-2 group-hover:text-yellow-400 transition-colors duration-300">
-                  {tournament.title}
-                </h3>
-                <p className="text-gray-400 mb-4">{tournament.game}</p>
-
-                <div className="space-y-2 mb-6">
-                  <div className="flex items-center text-gray-300">
-                    <FaCalendarAlt className="mr-2 text-yellow-400" />
-                    {tournament.date}
-                  </div>
-                  <div className="flex items-center text-gray-300">
-                    <FaClock className="mr-2 text-yellow-400" />
-                    {tournament.time}
-                  </div>
-                  <div className="flex items-center text-gray-300">
-                    <FaTrophy className="mr-2 text-yellow-400" />
-                    Prize: {tournament.prize}
-                  </div>
-                  <div className="flex items-center text-gray-300">
-                    <FaUsers className="mr-2 text-yellow-400" />
-                    {tournament.players} Players
-                  </div>
-                </div>
-
-                <button className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black font-bold rounded-lg hover:from-yellow-400 hover:to-orange-400 transition-all duration-300 transform hover:scale-105">
-                  <FaPlay className="inline mr-2" />
-                  Join Tournament
-                </button>
-              </StableCard>
-            ))}
+            )}
           </div>
         </div>
       </section>
@@ -769,10 +743,48 @@ const HomePage = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {!cardsLoaded ? (
+            {cardsLoaded ? (
+              topPlayers.length > 0 ? topPlayers.map((player, i) => (
+              <StableCard
+                key={`player-${player.userId || player.username || player.name || i}`}
+                delay={i * 100}
+                animationType="slideIn"
+                className={`group relative bg-gradient-to-br ${getPlayerCardClass(i)} border rounded-2xl p-6 hover:shadow-2xl hover:scale-105 transition-all duration-300`}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="text-3xl">🏆</div>
+                    <div>
+                      <h3 className="text-lg font-bold text-white">{player.username || player.name || 'Player'}</h3>
+                      <p className="text-sm text-gray-400">Rank #{player.rank || i + 1}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold text-yellow-400">{Number(player.points || player.score || 0).toLocaleString()}</div>
+                    <div className="text-sm text-gray-400">Points</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 text-center">
+                  <div>
+                    <div className="text-xl font-bold text-green-400">{Number(player.wins || 0)}</div>
+                    <div className="text-sm text-gray-400">Wins</div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-bold text-red-400">{Number(player.losses || 0)}</div>
+                    <div className="text-sm text-gray-400">Losses</div>
+                  </div>
+                </div>
+              </StableCard>
+            )) : (
+              <div className="col-span-full rounded-2xl border border-dashed border-gray-700 p-10 text-center text-gray-400">
+                Live leaderboard data is not available right now.
+              </div>
+            )
+            ) : (
               // Loading skeleton for leaderboard
-              Array.from({ length: 6 }).map((_, i) => (
-                <div key={`leaderboard-skeleton-${i}`} className="bg-gray-800/50 rounded-2xl p-6 animate-pulse">
+              ['leader-a', 'leader-b', 'leader-c', 'leader-d', 'leader-e', 'leader-f'].map((skeletonKey) => (
+                <div key={skeletonKey} className="bg-gray-800/50 rounded-2xl p-6 animate-pulse">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 bg-gray-700 rounded"></div>
@@ -789,50 +801,7 @@ const HomePage = () => {
                   </div>
                 </div>
               ))
-            ) : [
-              { rank: 1, name: "ProGamer99", wins: 156, losses: 12, winRate: "92.8%", avatar: "👑" },
-              { rank: 2, name: "ChampionX", wins: 142, losses: 18, winRate: "88.7%", avatar: "🥇" },
-              { rank: 3, name: "ElitePlayer", wins: 138, losses: 22, winRate: "86.2%", avatar: "🥈" },
-              { rank: 4, name: "GameMaster", wins: 134, losses: 26, winRate: "83.7%", avatar: "🥉" },
-              { rank: 5, name: "VictoryKing", wins: 128, losses: 32, winRate: "80.0%", avatar: "⭐" },
-              { rank: 6, name: "BattleLord", wins: 122, losses: 38, winRate: "76.2%", avatar: "⚔️" }
-            ].map((player, i) => (
-              <StableCard
-                key={`player-${i}-${player.name}`}
-                delay={i * 100}
-                animationType="slideIn"
-                className={`group relative bg-gradient-to-br ${i === 0 ? 'from-yellow-500/20 to-orange-500/20 border-yellow-400' :
-                    i === 1 ? 'from-gray-400/20 to-gray-500/20 border-gray-400' :
-                      i === 2 ? 'from-orange-600/20 to-orange-700/20 border-orange-600' :
-                        'from-gray-700/20 to-gray-800/20 border-gray-600'
-                  } border rounded-2xl p-6 hover:shadow-2xl hover:scale-105 transition-all duration-300`}
-              >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div className="text-3xl">{player.avatar}</div>
-                    <div>
-                      <h3 className="text-lg font-bold text-white">{player.name}</h3>
-                      <p className="text-sm text-gray-400">Rank #{player.rank}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-bold text-yellow-400">{player.winRate}</div>
-                    <div className="text-sm text-gray-400">Win Rate</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4 text-center">
-                  <div>
-                    <div className="text-xl font-bold text-green-400">{player.wins}</div>
-                    <div className="text-sm text-gray-400">Wins</div>
-                  </div>
-                  <div>
-                    <div className="text-xl font-bold text-red-400">{player.losses}</div>
-                    <div className="text-sm text-gray-400">Losses</div>
-                  </div>
-                </div>
-              </StableCard>
-            ))}
+            )}
           </div>
         </div>
       </section>
@@ -852,10 +821,14 @@ const HomePage = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {!cardsLoaded ? (
+            {cardsLoaded ? (
+              <div className="col-span-full rounded-2xl border border-dashed border-gray-700 p-10 text-center text-gray-400">
+                Player testimonials will appear here once community feedback is published.
+              </div>
+            ) : (
               // Loading skeleton for testimonials
-              Array.from({ length: 3 }).map((_, i) => (
-                <div key={`testimonial-skeleton-${i}`} className="bg-gray-800/50 rounded-2xl p-8 animate-pulse">
+              ['test-a', 'test-b', 'test-c'].map((skeletonKey) => (
+                <div key={skeletonKey} className="bg-gray-800/50 rounded-2xl p-8 animate-pulse">
                   <div className="flex items-center mb-6">
                     <div className="w-12 h-12 bg-gray-700 rounded mr-4"></div>
                     <div>
@@ -870,57 +843,7 @@ const HomePage = () => {
                   <div className="h-4 bg-gray-700 rounded"></div>
                 </div>
               ))
-            ) : [
-              {
-                name: "Alex 'ProGamer' Chen",
-                role: "Professional Player",
-                avatar: "🎮",
-                quote: "Titan Esports has revolutionized how I compete. The platform is intuitive, tournaments are well-organized, and the community is amazing!",
-                rating: 5
-              },
-              {
-                name: "Sarah 'HostQueen' Johnson",
-                role: "Tournament Host",
-                avatar: "👑",
-                quote: "Hosting tournaments has never been easier. The analytics, player management, and prize distribution tools are top-notch!",
-                rating: 5
-              },
-              {
-                name: "Mike 'Champion' Rodriguez",
-                role: "Competitive Player",
-                avatar: "🏆",
-                quote: "The leaderboard system keeps me motivated to improve. I've climbed from rank 1000 to top 50 in just 3 months!",
-                rating: 5
-              }
-            ].map((testimonial, i) => (
-              <StableCard
-                key={`testimonial-${i}-${testimonial.name}`}
-                delay={i * 200}
-                animationType="scaleIn"
-                className="group relative bg-gray-800/50 backdrop-blur-sm border border-gray-700 rounded-2xl p-8 hover:border-purple-400/50 hover:scale-105 transition-all duration-300"
-              >
-                <div className="flex items-center mb-6">
-                  <div className="text-4xl mr-4">{testimonial.avatar}</div>
-                  <div>
-                    <h3 className="text-lg font-bold text-white">{testimonial.name}</h3>
-                    <p className="text-gray-400 text-sm">{testimonial.role}</p>
-                  </div>
-                </div>
-
-                <div className="flex mb-4">
-                  {[...Array(testimonial.rating)].map((_, star) => (
-                    <FaStar key={star} className="text-yellow-400 text-sm" />
-                  ))}
-                </div>
-
-                <div className="relative">
-                  <FaQuoteLeft className="absolute -top-2 -left-2 text-purple-400 text-2xl opacity-30" />
-                  <p className="text-gray-300 leading-relaxed italic">
-                    "{testimonial.quote}"
-                  </p>
-                </div>
-              </StableCard>
-            ))}
+            )}
           </div>
         </div>
       </section>
@@ -1058,14 +981,16 @@ const HomePage = () => {
               </p>
               <div className="flex space-x-4">
                 {[
-                  { icon: FaTwitter, color: "hover:text-blue-400" },
-                  { icon: FaInstagram, color: "hover:text-pink-400" },
-                  { icon: FaFacebookF, color: "hover:text-blue-500" },
-                  { icon: FaYoutube, color: "hover:text-red-500" }
-                ].map((social, i) => (
+                  { icon: FaTwitter, color: "hover:text-blue-400", url: "https://twitter.com" },
+                  { icon: FaInstagram, color: "hover:text-pink-400", url: "https://instagram.com" },
+                  { icon: FaFacebookF, color: "hover:text-blue-500", url: "https://facebook.com" },
+                  { icon: FaYoutube, color: "hover:text-red-500", url: "https://youtube.com" }
+                ].map((social) => (
                   <a
-                    key={i}
-                    href="#"
+                    key={social.url}
+                    href={social.url}
+                    target="_blank"
+                    rel="noreferrer"
                     className={`text-2xl text-gray-400 transition-all duration-300 transform hover:scale-110 ${social.color}`}
                   >
                     <social.icon />
@@ -1078,14 +1003,14 @@ const HomePage = () => {
             <div>
               <h4 className="text-lg font-bold text-white mb-6">Quick Links</h4>
               <ul className="space-y-3">
-                {[
-                  "Tournaments",
-                  "Leaderboard",
-                  "Players",
+                ].map((link) => (
+                  <li key={link}>
+                    <button
+                      type="button"
                   "Host Events",
                   "Prizes",
                   "Community"
-                ].map((link, i) => (
+                    </button>
                   <li key={i}>
                     <a
                       href="#"
@@ -1098,14 +1023,14 @@ const HomePage = () => {
               </ul>
             </div>
 
-            {/* Support */}
-            <div>
-              <h4 className="text-lg font-bold text-white mb-6">Support</h4>
-              <ul className="space-y-3">
+                      ].map((link) => (
+                        <li key={link}>
+                          <button
+                            type="button"
                 {[
                   "Help Center",
                   "Contact Us",
-                  "FAQ",
+                          </button>
                   "Terms of Service",
                   "Privacy Policy",
                   "Refund Policy"
