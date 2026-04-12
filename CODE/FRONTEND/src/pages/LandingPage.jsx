@@ -13,8 +13,6 @@ import {
     Gamepad2,
     Crown,
     Target,
-    Swords,
-    Shield,
     Flame
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -275,6 +273,46 @@ function FeaturedTournaments() {
             .finally(() => setLoading(false))
     }, [])
 
+    const renderTournamentContent = () => {
+        if (loading) {
+            return (
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {[1, 2, 3].map(i => (
+                        <div key={i} className="glass-card h-80 animate-pulse" />
+                    ))}
+                </div>
+            )
+        }
+
+        if (tournaments.length === 0) {
+            return (
+                <div className="text-center py-16 glass-card rounded-2xl">
+                    <Trophy size={48} className="text-white/20 mx-auto mb-4" />
+                    <h3 className="font-heading text-xl font-semibold mb-2">No Tournaments Currently Open</h3>
+                    <p className="text-white/40">Check back later for new epic showdowns.</p>
+                </div>
+            )
+        }
+
+        return (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {tournaments.map((tournament, i) => (
+                    <motion.div
+                        key={tournament.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ delay: i * 0.1 }}
+                    >
+                        <TiltedCard maxTilt={5}>
+                            <TournamentCard tournament={tournament} />
+                        </TiltedCard>
+                    </motion.div>
+                ))}
+            </div>
+        )
+    }
+
     return (
         <section className="py-20 px-4 relative z-10">
             <div className="max-w-6xl mx-auto">
@@ -296,35 +334,7 @@ function FeaturedTournaments() {
                     </Link>
                 </motion.div>
 
-                {loading ? (
-                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {[1, 2, 3].map(i => (
-                            <div key={i} className="glass-card h-80 animate-pulse" />
-                        ))}
-                    </div>
-                ) : tournaments.length === 0 ? (
-                    <div className="text-center py-16 glass-card rounded-2xl">
-                        <Trophy size={48} className="text-white/20 mx-auto mb-4" />
-                        <h3 className="font-heading text-xl font-semibold mb-2">No Tournaments Currently Open</h3>
-                        <p className="text-white/40">Check back later for new epic showdowns.</p>
-                    </div>
-                ) : (
-                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {tournaments.map((tournament, i) => (
-                            <motion.div
-                                key={tournament.id}
-                                initial={{ opacity: 0, y: 20 }}
-                                whileInView={{ opacity: 1, y: 0 }}
-                                viewport={{ once: true }}
-                                transition={{ delay: i * 0.1 }}
-                            >
-                                <TiltedCard maxTilt={5}>
-                                    <TournamentCard tournament={tournament} />
-                                </TiltedCard>
-                            </motion.div>
-                        ))}
-                    </div>
-                )}
+                {renderTournamentContent()}
             </div>
         </section>
     )
@@ -350,37 +360,8 @@ function HighlightsSection() {
                     <p className="text-white/40">Epic moments from recent matches</p>
                 </motion.div>
 
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {/* Mock Highlight Cards */}
-                    {[
-                        { title: "Insane Clutch 1v4", game: "Valorant", views: "12K", thumbnail: "https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=800&auto=format&fit=crop" },
-                        { title: "Grand Final Final Zone", game: "BGMI", views: "45K", thumbnail: "https://images.unsplash.com/photo-1593305841991-05c29736ce37?q=80&w=800&auto=format&fit=crop" },
-                        { title: "Sniper Ace Montage", game: "CS2", views: "8K", thumbnail: "https://images.unsplash.com/photo-1624138784181-dc7f5b75e52e?q=80&w=800&auto=format&fit=crop" }
-                    ].map((clip, i) => (
-                        <motion.div
-                            key={i}
-                            initial={{ opacity: 0, y: 20 }}
-                            whileInView={{ opacity: 1, y: 0 }}
-                            transition={{ delay: i * 0.1 }}
-                            className="group relative aspect-video rounded-xl overflow-hidden border border-white/5 cursor-pointer"
-                        >
-                            <img src={clip.thumbnail} alt={clip.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent flex flex-col justify-end p-4">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs font-bold px-2 py-1 bg-titan-purple rounded">{clip.game}</span>
-                                    <div className="flex items-center gap-1 text-xs text-white/70">
-                                        <Shield size={12} /> {clip.views} views
-                                    </div>
-                                </div>
-                                <h3 className="font-bold text-white mt-2 group-hover:text-titan-purple-light transition-colors">{clip.title}</h3>
-                            </div>
-                            <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <div className="w-12 h-12 bg-white/20 backdrop-blur rounded-full flex items-center justify-center">
-                                    <div className="w-0 h-0 border-t-[8px] border-t-transparent border-l-[14px] border-l-white border-b-[8px] border-b-transparent ml-1" />
-                                </div>
-                            </div>
-                        </motion.div>
-                    ))}
+                <div className="glass-card rounded-2xl p-10 text-center text-white/60 border border-dashed border-white/10">
+                    No live highlights available yet.
                 </div>
             </div>
         </section>
