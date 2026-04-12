@@ -4,8 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Search, Filter, Shield, User, Phone, Mail } from 'lucide-react'
-import { Link } from 'react-router-dom';
+import { CheckCircle, XCircle, Search, Shield, User, Phone, Mail } from 'lucide-react'
 import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import Layout from '../../Components/layout/Layout';
@@ -51,6 +50,7 @@ const ManageHostsPage = () => {
       toast.success('Host approved successfully!');
       refreshData();
     } catch (error) {
+      console.error('Approve host failed:', error);
       toast.error('Failed to approve host!');
     } finally {
       setButtonLoadingId(null);
@@ -64,11 +64,65 @@ const ManageHostsPage = () => {
       toast.success('Host rejected and deleted!');
       refreshData();
     } catch (error) {
+      console.error('Reject host failed:', error);
       toast.error('Failed to delete host!');
     } finally {
       setButtonLoadingId(null);
     }
   };
+
+  let pendingHostsContent = null;
+  if (fetchLoading) {
+    pendingHostsContent = (
+      <div className="flex justify-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-titan-purple"></div>
+      </div>
+    );
+  } else if (pendingHosts.length === 0) {
+    pendingHostsContent = (
+      <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-8 text-center">
+        <p className="text-white/40">No pending host applications.</p>
+      </div>
+    );
+  } else {
+    pendingHostsContent = (
+      <div className="grid gap-4">
+        {pendingHosts.map(host => (
+          <div key={host.id} className="bg-titan-bg-card border border-white/5 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 hover:border-white/10 transition-all">
+            <div className="flex items-center gap-4 w-full md:w-auto">
+              <div className="w-16 h-16 rounded-full bg-white/5 p-1">
+                <img src={host.avatarUrl || 'https://via.placeholder.com/150'} alt="" className="w-full h-full rounded-full object-cover" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-lg">{host.username || host.ign || 'Unknown'}</h3>
+                <div className="flex flex-col gap-1 mt-1">
+                  <span className="flex items-center gap-2 text-white/40 text-sm"><Mail size={12} /> {host.email}</span>
+                  <span className="flex items-center gap-2 text-white/40 text-sm"><Phone size={12} /> {host.countryCode || 'N/A'}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 w-full md:w-auto justify-end">
+              <button
+                onClick={() => handleReject(host.id)}
+                disabled={buttonLoadingId === host.id}
+                className="px-6 py-2 rounded-xl border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
+              >
+                {buttonLoadingId === host.id ? '...' : <><XCircle size={18} /> Reject</>}
+              </button>
+              <button
+                onClick={() => handleApprove(host.id)}
+                disabled={buttonLoadingId === host.id}
+                className="px-6 py-2 rounded-xl bg-titan-purple hover:bg-titan-purple-dark text-white shadow-neon-sm transition-all flex items-center gap-2"
+              >
+                {buttonLoadingId === host.id ? 'Processing...' : <><CheckCircle size={18} /> Approve</>}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <Layout userRole="ADMIN">
@@ -94,51 +148,7 @@ const ManageHostsPage = () => {
               </span>
             </div>
 
-            {fetchLoading ? (
-              <div className="flex justify-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-titan-purple"></div>
-              </div>
-            ) : pendingHosts.length === 0 ? (
-              <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-8 text-center">
-                <p className="text-white/40">No pending host applications.</p>
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {pendingHosts.map(host => (
-                  <div key={host.id} className="bg-titan-bg-card border border-white/5 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 hover:border-white/10 transition-all">
-                    <div className="flex items-center gap-4 w-full md:w-auto">
-                      <div className="w-16 h-16 rounded-full bg-white/5 p-1">
-                        <img src={host.imageUrl || 'https://via.placeholder.com/150'} alt="" className="w-full h-full rounded-full object-cover" />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-white text-lg">{host.fullName}</h3>
-                        <div className="flex flex-col gap-1 mt-1">
-                          <span className="flex items-center gap-2 text-white/40 text-sm"><Mail size={12} /> {host.email}</span>
-                          <span className="flex items-center gap-2 text-white/40 text-sm"><Phone size={12} /> {host.mobile}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4 w-full md:w-auto justify-end">
-                      <button
-                        onClick={() => handleReject(host.id)}
-                        disabled={buttonLoadingId === host.id}
-                        className="px-6 py-2 rounded-xl border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
-                      >
-                        {buttonLoadingId === host.id ? '...' : <><XCircle size={18} /> Reject</>}
-                      </button>
-                      <button
-                        onClick={() => handleApprove(host.id)}
-                        disabled={buttonLoadingId === host.id}
-                        className="px-6 py-2 rounded-xl bg-titan-purple hover:bg-titan-purple-dark text-white shadow-neon-sm transition-all flex items-center gap-2"
-                      >
-                        {buttonLoadingId === host.id ? 'Processing...' : <><CheckCircle size={18} /> Approve</>}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {pendingHostsContent}
           </section>
 
           {/* Approved Hosts */}
@@ -175,22 +185,21 @@ const ManageHostsPage = () => {
                     <tr key={host.id} className="hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <img src={host.imageUrl} alt="" className="w-10 h-10 rounded-full" />
+                          <img src={host.avatarUrl || 'https://via.placeholder.com/80'} alt="" className="w-10 h-10 rounded-full" />
                           <div>
-                            <p className="font-medium text-white">{host.fullName}</p>
+                            <p className="font-medium text-white">{host.username || host.ign || 'Unknown'}</p>
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex flex-col text-sm text-white/60">
                           <span>{host.email}</span>
-                          <span>{host.mobile}</span>
+                          <span>{host.countryCode || 'N/A'}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-500/10 text-blue-500 text-xs font-bold">
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                          Organizer
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span><span>Organizer</span>
                         </span>
                       </td>
                       <td className="px-6 py-4 text-right">
