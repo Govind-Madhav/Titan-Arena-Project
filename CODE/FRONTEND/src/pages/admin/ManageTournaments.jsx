@@ -7,14 +7,9 @@ import { useState, useEffect } from 'react';
 import {
     Trophy,
     Calendar,
-    Users,
     DollarSign,
     Trash2,
-    Power,
-    Search,
-    AlertCircle,
-    CheckCircle,
-    XCircle
+    Power
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../lib/api';
@@ -34,7 +29,7 @@ const ManageTournaments = () => {
         try {
             setLoading(true);
             const res = await api.get('/admin/tournaments');
-            setTournaments(res.data.data || []);
+            setTournaments(res.data?.data?.tournaments || []);
         } catch (error) {
             console.error('Error fetching tournaments:', error);
             toast.error('Failed to load tournaments');
@@ -46,10 +41,12 @@ const ManageTournaments = () => {
     const toggleStatus = async (id, currentStatus) => {
         try {
             setActionLoadingId(id);
-            await api.put(`/admin/toggle-tournament-status/${id}?isActive=${!currentStatus}`);
-            toast.success(`Tournament ${!currentStatus ? 'activated' : 'deactivated'}`);
+            const nextIsActive = !currentStatus;
+            await api.put(`/admin/toggle-tournament-status/${id}?isActive=${nextIsActive}`);
+            toast.success(`Tournament ${nextIsActive ? 'activated' : 'deactivated'}`);
             fetchTournaments();
         } catch (error) {
+            console.error('Failed to update tournament status:', error);
             toast.error('Failed to update status');
         } finally {
             setActionLoadingId(null);
@@ -57,7 +54,7 @@ const ManageTournaments = () => {
     };
 
     const deleteTournament = async (id) => {
-        if (!window.confirm('Are you sure? This cannot be undone.')) return;
+        if (!globalThis.confirm('Are you sure? This cannot be undone.')) return;
 
         try {
             setActionLoadingId(id);
@@ -65,11 +62,100 @@ const ManageTournaments = () => {
             toast.success('Tournament deleted');
             fetchTournaments();
         } catch (error) {
+            console.error('Failed to delete tournament:', error);
             toast.error('Failed to delete tournament');
         } finally {
             setActionLoadingId(null);
         }
     };
+
+    const getStatusBadgeClass = (status) => {
+        if (status === 'CANCELLED') return 'bg-red-500/20 text-red-400 border-red-500/30';
+        if (status === 'COMPLETED') return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+        return 'bg-green-500/20 text-green-400 border-green-500/30';
+    };
+
+    let tournamentsContent;
+    if (loading) {
+        tournamentsContent = (
+            <div className="flex justify-center py-20">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-titan-purple"></div>
+            </div>
+        );
+    } else if (tournaments.length === 0) {
+        tournamentsContent = (
+            <div className="text-center py-20 border border-dashed border-white/10 rounded-3xl">
+                <Trophy className="mx-auto text-white/20 mb-4" size={48} />
+                <h3 className="text-xl font-bold text-white mb-2">No Tournaments Found</h3>
+                <p className="text-white/40">Platform seems quiet today.</p>
+            </div>
+        );
+    } else {
+        tournamentsContent = (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {tournaments.map(tournament => (
+                    <SpotlightCard key={tournament.id} className="flex flex-col h-full border-white/5 bg-titan-bg-card/50">
+                        {/* Card Image */}
+                        <div className="relative h-48 w-full rounded-xl overflow-hidden mb-5 group">
+                            <img
+                                src={tournament.bannerUrl || tournament.imageUrl || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&q=80"}
+                                alt={tournament.name}
+                                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                            <div className="absolute top-3 right-3">
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold border ${getStatusBadgeClass(tournament.status)}`}>
+                                    {tournament.status}
+                                </span>
+                            </div>
+                            <div className="absolute bottom-3 left-3 right-3">
+                                <h3 className="font-heading font-bold text-xl text-white truncate">{tournament.name}</h3>
+                                <p className="text-white/60 text-sm">{tournament.game}</p>
+                            </div>
+                        </div>
+
+                        {/* Card Details */}
+                        <div className="space-y-3 mb-6 flex-1">
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-white/40 flex items-center gap-2"><DollarSign size={14} /> Entry Fee</span>
+                                <span className="text-white font-medium">₹{tournament.entryFee}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-white/40 flex items-center gap-2"><Calendar size={14} /> Start Date</span>
+                                <span className="text-white font-medium">{new Date(tournament.startTime).toLocaleDateString()}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-white/40 flex items-center gap-2"><Trophy size={14} /> Prize Pool</span>
+                                <span className="text-titan-purple font-bold">₹{tournament.prizePool}</span>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex gap-3 pt-4 border-t border-white/5">
+                            <button
+                                onClick={() => toggleStatus(tournament.id, tournament.active)}
+                                disabled={actionLoadingId === tournament.id}
+                                className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${tournament.active
+                                    ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                                    : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
+                                    }`}
+                            >
+                                <Power size={16} />
+                                {tournament.active ? 'Disable' : 'Enable'}
+                            </button>
+                            <button
+                                onClick={() => deleteTournament(tournament.id)}
+                                disabled={actionLoadingId === tournament.id}
+                                className="px-4 py-2 rounded-xl bg-white/5 text-white/40 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                            >
+                                <Trash2 size={18} />
+                            </button>
+                        </div>
+                    </SpotlightCard>
+                ))}
+            </div>
+        );
+    }
 
     return (
         <Layout userRole="ADMIN">
@@ -97,83 +183,7 @@ const ManageTournaments = () => {
                     </div>
 
                     {/* Content */}
-                    {loading ? (
-                        <div className="flex justify-center py-20">
-                            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-titan-purple"></div>
-                        </div>
-                    ) : tournaments.length === 0 ? (
-                        <div className="text-center py-20 border border-dashed border-white/10 rounded-3xl">
-                            <Trophy className="mx-auto text-white/20 mb-4" size={48} />
-                            <h3 className="text-xl font-bold text-white mb-2">No Tournaments Found</h3>
-                            <p className="text-white/40">Platform seems quiet today.</p>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {tournaments.map(tournament => (
-                                <SpotlightCard key={tournament.id} className="flex flex-col h-full border-white/5 bg-titan-bg-card/50">
-                                    {/* Card Image */}
-                                    <div className="relative h-48 w-full rounded-xl overflow-hidden mb-5 group">
-                                        <img
-                                            src={tournament.imageUrl || "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&q=80"}
-                                            alt={tournament.name}
-                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                                        />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-                                        <div className="absolute top-3 right-3">
-                                            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${tournament.status === 'CANCELLED' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
-                                                tournament.status === 'COMPLETED' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                                                    'bg-green-500/20 text-green-400 border-green-500/30'
-                                                }`}>
-                                                {tournament.status}
-                                            </span>
-                                        </div>
-                                        <div className="absolute bottom-3 left-3 right-3">
-                                            <h3 className="font-heading font-bold text-xl text-white truncate">{tournament.name}</h3>
-                                            <p className="text-white/60 text-sm">{tournament.game}</p>
-                                        </div>
-                                    </div>
-
-                                    {/* Card Details */}
-                                    <div className="space-y-3 mb-6 flex-1">
-                                        <div className="flex items-center justify-between text-sm">
-                                            <span className="text-white/40 flex items-center gap-2"><DollarSign size={14} /> Entry Fee</span>
-                                            <span className="text-white font-medium">₹{tournament.entryFee}</span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-sm">
-                                            <span className="text-white/40 flex items-center gap-2"><Calendar size={14} /> Start Date</span>
-                                            <span className="text-white font-medium">{new Date(tournament.startTime).toLocaleDateString()}</span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-sm">
-                                            <span className="text-white/40 flex items-center gap-2"><Trophy size={14} /> Prize Pool</span>
-                                            <span className="text-titan-purple font-bold">₹{tournament.prizePool}</span>
-                                        </div>
-                                    </div>
-
-                                    {/* Actions */}
-                                    <div className="flex gap-3 pt-4 border-t border-white/5">
-                                        <button
-                                            onClick={() => toggleStatus(tournament.id, tournament.active)}
-                                            disabled={actionLoadingId === tournament.id}
-                                            className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${tournament.active
-                                                ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
-                                                : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
-                                                }`}
-                                        >
-                                            <Power size={16} />
-                                            {tournament.active ? 'Disable' : 'Enable'}
-                                        </button>
-                                        <button
-                                            onClick={() => deleteTournament(tournament.id)}
-                                            disabled={actionLoadingId === tournament.id}
-                                            className="px-4 py-2 rounded-xl bg-white/5 text-white/40 hover:bg-red-500/10 hover:text-red-500 transition-colors"
-                                        >
-                                            <Trash2 size={18} />
-                                        </button>
-                                    </div>
-                                </SpotlightCard>
-                            ))}
-                        </div>
-                    )}
+                    {tournamentsContent}
                 </div>
             </div>
         </Layout>
