@@ -10,6 +10,7 @@ import com.titanarena.tournamentengine.event.dto.outbound.MatchScheduledEvent;
 import com.titanarena.tournamentengine.event.producer.MatchEventProducer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.lang.NonNull;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -38,7 +39,7 @@ public class MatchOrchestratorService {
     private final ParticipantResolverService participantResolverService;
 
     @Async
-    public void onTournamentCreated(String tournamentId) {
+    public void onTournamentCreated(@NonNull String tournamentId) {
         try {
             log.info("🏆 Orchestrating bracket for tournament: {}", tournamentId);
 
@@ -79,17 +80,25 @@ public class MatchOrchestratorService {
     }
 
     @Async
-    public void onMatchCompleted(String matchId, String winnerId) {
+    public void onMatchCompleted(@NonNull String matchId, @NonNull String winnerId) {
         try {
             Match completed = matchRepository.findById(matchId).orElse(null);
-            if (completed == null || completed.getNextMatchId() == null)
+            if (completed == null)
                 return; // Final match
 
-            Match nextMatch = matchRepository.findById(completed.getNextMatchId()).orElse(null);
+            String nextMatchId = completed.getNextMatchId();
+            if (nextMatchId == null)
+                return;
+
+            Match nextMatch = matchRepository.findById(nextMatchId).orElse(null);
             if (nextMatch == null)
                 return;
 
-            Tournament tournament = tournamentRepository.findById(completed.getTournamentId()).orElse(null);
+            String completedTournamentId = completed.getTournamentId();
+            if (completedTournamentId == null)
+                return;
+
+            Tournament tournament = tournamentRepository.findById(completedTournamentId).orElse(null);
 
             // Advance winner into the correct slot
             if ("A".equals(completed.getNextMatchSlot())) {
@@ -103,7 +112,7 @@ public class MatchOrchestratorService {
             // Both slots filled → this match is now ready to play
             if (nextMatch.getParticipantAId() != null && nextMatch.getParticipantBId() != null) {
                 List<Match> all = matchRepository.findByTournamentIdOrderByRoundAscMatchNumberAsc(
-                        completed.getTournamentId());
+                    completedTournamentId);
                 int totalRounds = all.stream().mapToInt(Match::getRound).max().orElse(1);
                 matchEventProducer.publishMatchScheduled(toEvent(nextMatch, tournament, totalRounds));
                 log.info("✅ Next match {} ready: {} vs {}",
