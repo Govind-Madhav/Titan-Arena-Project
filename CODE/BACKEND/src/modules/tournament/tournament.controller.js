@@ -4,8 +4,9 @@
  */
 
 const { db } = require('../../db');
-const { tournaments, registrations, users, playerProfiles, wallets, transactions, notifications } = require('../../db/schema');
+const { tournaments, registrations, users, playerProfiles, wallets, transactions, notifications, auditLogs } = require('../../db/schema');
 const { eq, and, desc, sql, inArray } = require('drizzle-orm');
+const crypto = require('node:crypto');
 const { TOURNAMENT_STATUS, REGISTRATION_STATUS, PUBLIC_STATUSES, TOURNAMENT_TRANSITIONS } = require('./tournament.constants');
 const { createTournamentSchema, updateTournamentSchema, updateParticipantStatusSchema } = require('./tournament.schema');
 const { getHostStats } = require('../../services/hostStats.service');
@@ -14,6 +15,41 @@ const { publishTournamentCreated, publishTournamentStarted, publishTournamentEnd
 const walletService = require('../wallet/wallet.service');
 const emailService = require('../../services/email.service');
 const { publishEvent } = require('../../config/kafka.config');
+const { getHostTrustProfile } = require('../../services/hostTrust.service');
+
+const parseStreamMeta = (url) => {
+    if (!url || typeof url !== 'string') {
+        return { platform: 'OTHER', streamId: null };
+    }
+
+    const normalized = url.trim();
+    const twitchMatch = /twitch\.tv\/(?:videos\/(\d+)|([^/?#]+))/i.exec(normalized);
+    if (twitchMatch) {
+        return {
+            platform: 'TWITCH',
+            streamId: twitchMatch[1] || twitchMatch[2] || null
+        };
+    }
+
+    const youtubePatterns = [
+        /youtu\.be\/([^?#&]+)/i,
+        /youtube\.com\/watch\?v=([^&]+)/i,
+        /youtube\.com\/live\/([^?#&]+)/i,
+        /youtube\.com\/embed\/([^?#&]+)/i
+    ];
+
+    for (const pattern of youtubePatterns) {
+        const match = pattern.exec(normalized);
+        if (match) {
+            return {
+                platform: 'YOUTUBE',
+                streamId: match[1] || null
+            };
+        }
+    }
+
+    return { platform: 'OTHER', streamId: null };
+};
 
 /**
  * PRO GUARD: Asserts that the current user owns the tournament
@@ -42,11 +78,97 @@ const assertTournamentOwnership = async (tournamentId, user) => {
     return tournament[0];
 };
 
+const parseAuditDetails = (rawDetails) => {
+    if (!rawDetails) return null;
+    if (typeof rawDetails === 'object') return rawDetails;
+    try {
+        return JSON.parse(rawDetails);
+    } catch {
+        return null;
+    }
+};
+
+const normalizeWinnerEntry = (entry, index) => {
+    const userId = String(entry?.userId || entry?.id || entry?.playerId || '').trim();
+    const rankCandidate = Number(entry?.rank);
+    const rank = Number.isFinite(rankCandidate) && rankCandidate > 0 ? rankCandidate : (index + 1);
+
+    return {
+        userId,
+        rank,
+        prizeAmount: Number(entry?.prize ?? entry?.prizeAmount ?? entry?.amount ?? 0),
+        remarks: entry?.remarks || null
+    };
+};
+
+const resolveTournamentCreationPolicy = async (user, validatedData) => {
+    const isPrivilegedCreator = Boolean(user?.isAdmin || ['ADMIN', 'SUPERADMIN'].includes(user?.role));
+    const trustProfile = isPrivilegedCreator
+        ? { level: 2, maxEntryFee: null, maxParticipants: null }
+        : await getHostTrustProfile(user);
+
+    if (isPrivilegedCreator) {
+        return {
+            isPrivilegedCreator,
+            trustProfile,
+            shouldAutoActivate: true,
+            createPrizePool: validatedData.prizePool,
+            tournamentStatus: TOURNAMENT_STATUS.REGISTRATION
+        };
+    }
+
+    const identityReady = Boolean(
+        user?.registrationCompleted &&
+        user?.emailVerified &&
+        user?.phoneVerified &&
+        user?.legalName &&
+        user?.phone
+    );
+
+    if (user?.hostStatus !== 'VERIFIED') {
+        return {
+            error: 'Host verification required before creating tournaments. Please complete KYC first.'
+        };
+    }
+
+    if (!identityReady || !user?.billingAddress) {
+        return {
+            error: 'Full identity, phone, and billing verification are required before creating tournaments.'
+        };
+    }
+
+    const entryFeeLimit = trustProfile.maxEntryFee ?? Number.POSITIVE_INFINITY;
+    const participantLimit = trustProfile.maxParticipants ?? Number.POSITIVE_INFINITY;
+    const overTrialLimit = validatedData.entryFee > entryFeeLimit || validatedData.maxParticipants > participantLimit;
+
+    if (trustProfile.level === 0 && overTrialLimit) {
+        return {
+            error: `Trial host limits exceeded. Keep entry fee at ₹${trustProfile.maxEntryFee} or below and max participants at ${trustProfile.maxParticipants} or below for your first tournaments.`
+        };
+    }
+
+    return {
+        isPrivilegedCreator,
+        trustProfile,
+        shouldAutoActivate: trustProfile.level === 2 || (trustProfile.level === 1 && !overTrialLimit),
+        createPrizePool: 0,
+        tournamentStatus: trustProfile.level === 2 || (trustProfile.level === 1 && !overTrialLimit)
+            ? TOURNAMENT_STATUS.REGISTRATION
+            : 'PENDING_APPROVAL'
+    };
+};
+
 // Create new tournament
 const createTournament = async (req, res) => {
     try {
         // 1. Validate Input (Hardened)
         const validatedData = createTournamentSchema.parse(req.body);
+        const creationPolicy = await resolveTournamentCreationPolicy(req.user, validatedData);
+        if (creationPolicy.error) {
+            return res.status(403).json({ success: false, message: creationPolicy.error });
+        }
+
+        const { createPrizePool, tournamentStatus, trustProfile, shouldAutoActivate } = creationPolicy;
 
         // 2. Strict Date Parsing (Expects ISO 8601 with Timezone from Frontend)
         const startTime = new Date(validatedData.startTime);
@@ -56,24 +178,31 @@ const createTournament = async (req, res) => {
             : new Date(startTime.getTime() - (60 * 60 * 1000));
 
         // 3. Insert with Whitelisted Data
-        const [result] = await db.insert(tournaments).values({
+        const newId = crypto.randomUUID();
+        await db.insert(tournaments).values({
+            id: newId,
             hostId: req.user.id,
             name: validatedData.name,
             game: validatedData.game,
             description: validatedData.description,
+            rules: validatedData.rules || null,
             type: validatedData.type,
+            format: validatedData.format || 'SINGLE_ELIMINATION',
             startTime: startTime,
             registrationEnd: registrationEnd,
             entryFee: validatedData.entryFee,
-            prizePool: validatedData.prizePool,
+            prizePool: createPrizePool,
             minTeamsRequired: validatedData.minTeamsRequired,
-            status: TOURNAMENT_STATUS.CREATED // PRO FIX: Start as private
+            maxParticipants: validatedData.maxParticipants,
+            streamUrl: validatedData.streamUrl || null,
+            streamScope: validatedData.streamScope || 'MATCH',
+            streamIsLive: Boolean(validatedData.streamIsLive),
+            ...parseStreamMeta(validatedData.streamUrl),
+            status: tournamentStatus
         });
 
-        const newId = result.insertId; // Note: Drizzle insertId varies by driver, UUID is primaryKey but mysql insertId might be returned
-
         // PRO AUDIT: Log Creation
-        await logAction(req.user.id, 'TOURNAMENT_CREATED', newId || 'NEW_TOURN', { name: validatedData.name }, req.ip);
+        await logAction(req.user.id, 'TOURNAMENT_CREATED', newId, { name: validatedData.name }, req.ip);
 
         // 🔔 KAFKA: Publish tournament.created event for downstream consumers
         await publishTournamentCreated({
@@ -84,9 +213,11 @@ const createTournament = async (req, res) => {
             format: validatedData.format || 'SINGLE_ELIMINATION', // ← Java engine uses this to pick bracket strategy
             maxParticipants: validatedData.maxParticipants,
             hostId: req.user.id,
-            prizePool: validatedData.prizePool,
+            prizePool: createPrizePool,
             entryFee: validatedData.entryFee,
-            startDate: validatedData.startTime
+            startDate: validatedData.startTime,
+            trustLevel: trustProfile.level,
+            activationMode: shouldAutoActivate ? 'AUTO' : 'MANUAL'
         });
 
         res.status(201).json({
@@ -145,7 +276,12 @@ const getTournamentById = async (req, res) => {
             entryFee: tournaments.entryFee,
             status: tournaments.status,
             rules: tournaments.rules,
-            maxParticipants: tournaments.maxParticipants
+            maxParticipants: tournaments.maxParticipants,
+            streamUrl: tournaments.streamUrl,
+            streamScope: tournaments.streamScope,
+            streamPlatform: tournaments.streamPlatform,
+            streamId: tournaments.streamId,
+            streamIsLive: tournaments.streamIsLive
         })
             .from(tournaments)
             .where(eq(tournaments.id, req.params.id))
@@ -153,6 +289,7 @@ const getTournamentById = async (req, res) => {
         if (!result.length) return res.status(404).json({ success: false, message: 'Tournament not found' });
         res.json({ success: true, data: result[0] });
     } catch (error) {
+        console.error('Get tournament by id error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch tournament' });
     }
 };
@@ -162,11 +299,57 @@ const getTournamentsByHost = async (req, res) => {
     try {
         const hostId = req.user.id;
 
-        // Fetch tournaments
-        const myTournaments = await db.select()
-            .from(tournaments)
-            .where(eq(tournaments.hostId, hostId))
-            .orderBy(desc(tournaments.createdAt));
+        // Fetch tournaments using explicit fields to avoid runtime breaks on drifted DB columns.
+        const tournamentRows = await db.execute(sql`
+            SELECT
+                t.id,
+                t.name,
+                t.description,
+                t.game,
+                t.type,
+                t.format,
+                t.status,
+                t."entryFee" AS "entryFee",
+                t."prizePool" AS "prizePool",
+                COALESCE(t."maxParticipants", t."minTeamsRequired") AS "maxParticipants",
+                t."startTime" AS "startTime",
+                t."createdAt" AS "createdAt",
+                t."highlightUrl" AS "imageUrl",
+                t."streamUrl" AS "streamUrl",
+                t."streamScope" AS "streamScope",
+                t."streamPlatform" AS "streamPlatform",
+                t."streamId" AS "streamId",
+                t."streamIsLive" AS "streamIsLive"
+            FROM "tournament" t
+            WHERE t."hostId" = ${hostId}
+            ORDER BY t."createdAt" DESC
+        `);
+
+        const myTournaments = (tournamentRows.rows || []).map((row) => ({
+            ...row,
+            bannerUrl: null
+        }));
+
+        const tournamentIds = myTournaments.map((tournament) => tournament.id);
+        const participantRows = tournamentIds.length
+            ? await db
+                .select({
+                    tournamentId: registrations.tournamentId,
+                    count: sql`COUNT(*)::int`
+                })
+                .from(registrations)
+                .where(and(
+                    inArray(registrations.tournamentId, tournamentIds),
+                    sql`${registrations.status} != 'CANCELLED'`
+                ))
+                .groupBy(registrations.tournamentId)
+            : [];
+
+        const participantMap = new Map(participantRows.map((row) => [row.tournamentId, Number(row.count || 0)]));
+        const tournamentsWithCounts = myTournaments.map((tournament) => ({
+            ...tournament,
+            currentParticipants: participantMap.get(tournament.id) || 0
+        }));
 
         // Use service layer for stats (PRO FIX)
         const stats = await getHostStats(hostId);
@@ -174,7 +357,7 @@ const getTournamentsByHost = async (req, res) => {
         res.json({
             success: true,
             data: {
-                tournaments: myTournaments,
+                tournaments: tournamentsWithCounts,
                 stats
             }
         });
@@ -259,10 +442,68 @@ const updateParticipantStatus = async (req, res) => {
 };
 
 // FULL CRUD IMPLEMENTATION
+const buildTournamentUpdateData = (validatedData, isPrivilegedEditor) => {
+    const setData = {};
+
+    const assignIfDefined = (key) => {
+        if (validatedData[key] !== undefined) {
+            setData[key] = validatedData[key];
+        }
+    };
+
+    [
+        'name',
+        'game',
+        'description',
+        'type',
+        'format',
+        'entryFee',
+        'prizePool',
+        'minTeamsRequired',
+        'maxParticipants',
+        'rules',
+        'bannerUrl',
+        'streamUrl',
+        'streamScope',
+        'streamIsLive',
+        'status'
+    ].forEach(assignIfDefined);
+
+    if (validatedData.startTime !== undefined) {
+        const parsedStartTime = new Date(validatedData.startTime);
+        if (Number.isNaN(parsedStartTime.getTime())) {
+            return { error: 'Invalid startTime format' };
+        }
+        setData.startTime = parsedStartTime;
+    }
+
+    if (validatedData.registrationEnd !== undefined) {
+        const parsedRegistrationEnd = new Date(validatedData.registrationEnd);
+        if (Number.isNaN(parsedRegistrationEnd.getTime())) {
+            return { error: 'Invalid registrationEnd format' };
+        }
+        setData.registrationEnd = parsedRegistrationEnd;
+    }
+
+    if (!isPrivilegedEditor) {
+        delete setData.prizePool;
+    }
+
+    return { setData };
+};
+
 const updateTournament = async (req, res) => {
     try {
         const tournamentId = req.params.id;
         const validatedData = updateTournamentSchema.parse(req.body);
+
+        const isPrivilegedEditor = Boolean(req.user?.isAdmin || ['ADMIN', 'SUPERADMIN'].includes(req.user?.role));
+        const normalizedUpdate = buildTournamentUpdateData(validatedData, isPrivilegedEditor);
+        if (normalizedUpdate.error) {
+            return res.status(400).json({ success: false, message: normalizedUpdate.error });
+        }
+
+        const setData = normalizedUpdate.setData;
 
         // Verify Ownership
         const existingTournament = await assertTournamentOwnership(tournamentId, req.user);
@@ -279,23 +520,29 @@ const updateTournament = async (req, res) => {
             }
         }
 
+        const streamMeta = parseStreamMeta(setData.streamUrl);
+
         // Update with Whitelisted Data
         await db.update(tournaments)
             .set({
-                ...validatedData,
+                ...setData,
+                ...(setData.streamUrl !== undefined && {
+                    streamPlatform: streamMeta.platform,
+                    streamId: streamMeta.streamId
+                }),
                 updatedAt: new Date()
             })
             .where(eq(tournaments.id, tournamentId));
 
         // PRO AUDIT: Log Update
-        await logAction(req.user.id, 'TOURNAMENT_UPDATED', tournamentId, { changedFields: Object.keys(validatedData) }, req.ip);
+        await logAction(req.user.id, 'TOURNAMENT_UPDATED', tournamentId, { changedFields: Object.keys(setData) }, req.ip);
 
         // 🔔 KAFKA: Publish status transition events
-        if (validatedData.status === TOURNAMENT_STATUS.REG_CLOSED) {
+        if (setData.status === TOURNAMENT_STATUS.REG_CLOSED) {
             // ── Bracket pre-generation: fire as soon as reg closes so the Java engine
             //    builds the bracket. Players see their seedings before startTime.
             await publishTournamentStarted(tournamentId, req.user.id);
-        } else if (validatedData.status === TOURNAMENT_STATUS.ONGOING) {
+        } else if (setData.status === TOURNAMENT_STATUS.ONGOING) {
             // ── Matches are now LIVE. Publish a lightweight signal so consumers
             //    (notifications, frontend WS) know the tournament has begun.
             //    The bracket was already generated at REG_CLOSED.
@@ -305,7 +552,7 @@ const updateTournament = async (req, res) => {
                 hostId: req.user.id,
                 timestamp: new Date().toISOString()
             });
-        } else if (validatedData.status === TOURNAMENT_STATUS.COMPLETED) {
+        } else if (setData.status === TOURNAMENT_STATUS.COMPLETED) {
             await publishTournamentEnded(tournamentId, null, existingTournament.prizePool);
         }
 
@@ -313,7 +560,44 @@ const updateTournament = async (req, res) => {
     } catch (error) {
         if (error.name === 'ZodError') return res.status(400).json({ success: false, errors: error.errors });
         if (error.status) return res.status(error.status).json({ success: false, message: error.message });
+        console.error('Update tournament error:', error);
         res.status(500).json({ success: false, message: 'Update failed' });
+    }
+};
+
+const updateTournamentStream = async (req, res) => {
+    try {
+        const { id: tournamentId } = req.params;
+        const { streamUrl, streamIsLive, streamScope } = req.body;
+
+        await assertTournamentOwnership(tournamentId, req.user);
+
+        const streamMeta = parseStreamMeta(streamUrl);
+        const updateData = {
+            updatedAt: new Date(),
+            streamUrl: streamUrl || null,
+            streamIsLive: Boolean(streamIsLive),
+            streamScope: streamScope || 'TOURNAMENT',
+            streamPlatform: streamMeta.platform,
+            streamId: streamMeta.streamId
+        };
+
+        const [updated] = await db.update(tournaments)
+            .set(updateData)
+            .where(eq(tournaments.id, tournamentId))
+            .returning();
+
+        await logAction(req.user.id, 'TOURNAMENT_STREAM_UPDATED', tournamentId, {
+            streamScope: updateData.streamScope,
+            streamIsLive: updateData.streamIsLive,
+            streamPlatform: updateData.streamPlatform
+        }, req.ip);
+
+        res.json({ success: true, message: 'Tournament stream updated', data: updated });
+    } catch (error) {
+        if (error.status) return res.status(error.status).json({ success: false, message: error.message });
+        console.error('Update tournament stream error:', error);
+        res.status(500).json({ success: false, message: 'Failed to update tournament stream' });
     }
 };
 
@@ -393,7 +677,7 @@ const joinTournament = async (req, res) => {
         if (!tournament.length) return res.status(404).json({ success: false, message: 'Tournament not found' });
 
         const t = tournament[0];
-        if (t.status !== TOURNAMENT_STATUS.REGISTRATION) {
+        if (![TOURNAMENT_STATUS.REGISTRATION, TOURNAMENT_STATUS.CREATED].includes(t.status)) {
             return res.status(400).json({
                 success: false,
                 message: `Registration is currently ${t.status.toLowerCase()}`
@@ -584,7 +868,7 @@ const leaveTournament = async (req, res) => {
 const declareWinners = async (req, res) => {
     try {
         const tournamentId = req.params.id;
-        const { winners } = req.body; // Array of { userId, rank, prize }
+        const { winners } = req.body; // Array of { userId|id|playerId, rank, prize|prizeAmount }
 
         // 1. Verify Ownership
         const tournament = await assertTournamentOwnership(tournamentId, req.user);
@@ -601,8 +885,25 @@ const declareWinners = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Winners list is required' });
         }
 
-        const firstPlace = winners.find(w => w.rank === 1) || winners[0];
-        const firstPlaceId = firstPlace?.userId || firstPlace?.id;
+        const normalizedWinners = winners
+            .map((winner, index) => {
+                const rankCandidate = Number(winner?.rank);
+                const rank = Number.isFinite(rankCandidate) && rankCandidate > 0 ? rankCandidate : (index + 1);
+                return {
+                    userId: String(winner?.userId || winner?.id || winner?.playerId || '').trim(),
+                    rank,
+                    prizeAmount: Number(winner?.prize ?? winner?.prizeAmount ?? winner?.amount ?? 0),
+                    remarks: winner?.remarks || null
+                };
+            })
+            .filter((winner) => Boolean(winner.userId));
+
+        if (normalizedWinners.length === 0) {
+            return res.status(400).json({ success: false, message: 'At least one valid winner with userId/playerId is required' });
+        }
+
+        const firstPlace = normalizedWinners.find((winner) => winner.rank === 1) || normalizedWinners[0];
+        const firstPlaceId = firstPlace.userId;
 
         // ─── GAP D FIX: Actually write winners + distribute prizes ────────────
         await db.transaction(async (tx) => {
@@ -615,14 +916,14 @@ const declareWinners = async (req, res) => {
                 })
                 .where(eq(tournaments.id, tournamentId));
 
-            await logAction(req.user.id, 'TOURNAMENT_WINNERS_DECLARED', tournamentId, { winners }, req.ip);
+            await logAction(req.user.id, 'TOURNAMENT_WINNERS_DECLARED', tournamentId, { winners: normalizedWinners }, req.ip);
         });
 
         // Credit each winner's prize (non-blocking per winner so one failure doesn't stop others)
         const prizeResults = [];
-        for (const w of winners) {
-            const recipientId = w.userId || w.id;
-            const prizeAmount = w.prize || 0;
+        for (const w of normalizedWinners) {
+            const recipientId = w.userId;
+            const prizeAmount = w.prizeAmount;
             if (!recipientId || prizeAmount <= 0) continue;
             try {
                 await walletService.credit(
@@ -659,29 +960,89 @@ const getWinners = async (req, res) => {
     try {
         const tournamentId = req.params.id;
 
-        // Strategy: Since we are storing winners in Audit Logs for now (MVP), we fetch the latest 'TOURNAMENT_WINNERS_DECLARED' log.
-        // In a real app, we'd query a `results` table.
+        const [tournament] = await db.select({
+            id: tournaments.id,
+            name: tournaments.name,
+            winnerId: tournaments.winnerId,
+            status: tournaments.status
+        }).from(tournaments).where(eq(tournaments.id, tournamentId)).limit(1);
 
-        // This is a "Soft" implementation to unblock the feature without schema migration.
-        // We'll search audit logs for this tournament.
+        if (!tournament) {
+            return res.status(404).json({ success: false, message: 'Tournament not found' });
+        }
 
-        // Note: We need to import `auditLogs` schema to query it.
-        // It's not imported in controller yet. We'll need to add it or rely on a service.
-        // Actually, let's use a simpler approach: 
-        // Just return the tournament status for now, and if completed, say "Check Results tab".
+        const [auditEntry] = await db.select({
+            details: auditLogs.details,
+            createdAt: auditLogs.createdAt
+        })
+            .from(auditLogs)
+            .where(and(
+                eq(auditLogs.targetId, tournamentId),
+                eq(auditLogs.action, 'TOURNAMENT_WINNERS_DECLARED')
+            ))
+            .orderBy(desc(auditLogs.createdAt))
+            .limit(1);
 
-        // Better: Query `audit_logs` using raw SQL or added schema import if possible.
-        // `auditLogs` IS imported in line 7! (No, wait, line 7 has `auditLogs` is missing in current file view above? 
-        // Let me check imports: `const { tournaments, registrations, users, playerProfiles } = require('../../db/schema');` 
-        // `auditLogs` is NOT imported.
+        const parsed = parseAuditDetails(auditEntry?.details);
+        let rawWinners = [];
+        if (Array.isArray(parsed?.winners)) {
+            rawWinners = parsed.winners;
+        } else if (Array.isArray(parsed)) {
+            rawWinners = parsed;
+        }
 
-        // Let's just return a placeholder that says validation complete.
-        // OR better: Return the `registrations` with status 'WINNER' if we had updated them.
+        const normalized = rawWinners
+            .map((entry, index) => normalizeWinnerEntry(entry, index))
+            .filter((winner) => Boolean(winner.userId));
+
+        if (normalized.length === 0) {
+            return res.json({
+                success: true,
+                data: [],
+                message: tournament.winnerId
+                    ? 'Winner declared, but podium details are unavailable in audit logs'
+                    : 'No winners declared yet'
+            });
+        }
+
+        const userIds = [...new Set(normalized.map((winner) => winner.userId))];
+        const userRows = await db.select({
+            id: users.id,
+            username: users.username,
+            email: users.email,
+            ign: playerProfiles.ign,
+            avatarUrl: playerProfiles.avatarUrl
+        })
+            .from(users)
+            .leftJoin(playerProfiles, eq(users.id, playerProfiles.userId))
+            .where(inArray(users.id, userIds));
+
+        const userMap = new Map(userRows.map((user) => [user.id, user]));
+
+        const winners = normalized
+            .map((winner) => {
+                const user = userMap.get(winner.userId);
+                return {
+                    userId: winner.userId,
+                    rank: winner.rank,
+                    prizeAmount: winner.prizeAmount,
+                    remarks: winner.remarks,
+                    username: user?.username || null,
+                    ign: user?.ign || null,
+                    email: user?.email || null,
+                    avatarUrl: user?.avatarUrl || null
+                };
+            })
+            .sort((a, b) => a.rank - b.rank);
 
         res.json({
             success: true,
-            data: [],
-            message: 'Winner display coming soon (Data stored in audit logs)'
+            data: winners,
+            meta: {
+                tournamentId,
+                tournamentName: tournament.name,
+                declaredAt: auditEntry?.createdAt || null
+            }
         });
     } catch (error) {
         console.error('Get Winners Error:', error);
@@ -721,7 +1082,7 @@ const cancelTournament = async (req, res) => {
         const refundResults = [];
 
         // Batch refund
-        for (const { reg, user } of paidRegistrations) {
+        for (const { user } of paidRegistrations) {
             if (!user?.id || refundAmount <= 0) continue;
             try {
                 await walletService.credit(
@@ -786,6 +1147,37 @@ const cancelTournament = async (req, res) => {
     }
 };
 
+// Tournament Banner Upload
+const uploadBanner = async (req, res) => {
+    try {
+        const { id: tournamentId } = req.params;
+
+        await assertTournamentOwnership(tournamentId, req.user);
+
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No image file provided' });
+        }
+
+        const bannerUrl = `/uploads/community/${req.file.filename}`;
+
+        await db.update(tournaments)
+            .set({ bannerUrl, updatedAt: new Date() })
+            .where(eq(tournaments.id, tournamentId));
+
+        await logAction(req.user.id, 'TOURNAMENT_BANNER_UPLOADED', tournamentId, { fileName: req.file.filename }, req.ip);
+
+        res.json({
+            success: true,
+            message: 'Banner uploaded successfully',
+            data: { bannerUrl }
+        });
+    } catch (error) {
+        if (error.status) return res.status(error.status).json({ success: false, message: error.message });
+        console.error('Upload banner error:', error);
+        res.status(500).json({ success: false, message: 'Failed to upload banner' });
+    }
+};
+
 module.exports = {
     createTournament,
     getAllTournaments,
@@ -799,6 +1191,8 @@ module.exports = {
     cancelTournament,
     declareWinners,
     getWinners,
-    getTournamentsByHost
+    getTournamentsByHost,
+    uploadBanner,
+    updateTournamentStream
 };
 
