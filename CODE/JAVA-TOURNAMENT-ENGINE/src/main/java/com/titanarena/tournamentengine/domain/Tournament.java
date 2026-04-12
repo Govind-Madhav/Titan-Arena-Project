@@ -9,11 +9,11 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 /**
- * READ-ONLY mirror of the `tournaments` table managed by Node.js/Drizzle.
+ * READ-ONLY mirror of the `tournament` table managed by Node.js/Drizzle.
  * Java never mutates this — ddl-auto=none enforces it.
  */
 @Entity
-@Table(name = "tournaments")
+@Table(name = "tournament")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -38,27 +38,27 @@ public class Tournament {
     @Column(name = "status")
     private String status;
 
-    @Column(name = "max_participants")
+    @Column(name = "maxParticipants")
     private Integer maxParticipants;
 
-    @Column(name = "prize_pool", precision = 12, scale = 2)
+    @Column(name = "prizePool", precision = 12, scale = 2)
     private BigDecimal prizePool;
 
-    @Column(name = "entry_fee", precision = 10, scale = 2)
+    @Column(name = "entryFee", precision = 10, scale = 2)
     private BigDecimal entryFee;
 
-    @Column(name = "host_id")
+    @Column(name = "hostId")
     private String hostId;
 
-    @Column(name = "start_time")
+    @Column(name = "startTime")
     private Instant startTime;
 
-    @Column(name = "end_time")
+    @Column(name = "endTime")
     private Instant endTime;
 
-    @Column(name = "created_at")
+    @Column(name = "createdAt")
     private Instant createdAt;
 
-    @Column(name = "updated_at")
+    @Column(name = "updatedAt")
     private Instant updatedAt;
 }
