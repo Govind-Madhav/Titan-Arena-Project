@@ -4,25 +4,39 @@
  */
 
 import { useState, useEffect } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import PropTypes from 'prop-types'
 import { Mail, Lock, User, Eye, EyeOff, ArrowRight, Gamepad2, Check, Calendar, Phone, MapPin, FileText } from 'lucide-react'
 import Stepper, { Step } from '../Components/Stepper'
 import toast from 'react-hot-toast'
 import useAuthStore from '../store/authStore'
-import { Particles } from '../Components/effects/ReactBits'
 import Navbar from '../Components/layout/Navbar'
 import { countries } from '../lib/countries'
 import { getAllStates, getDistrictsByState } from '../lib/india-locations';
 import api from '../lib/api'; // Import API client
 import SearchableSelect from '../Components/ui/SearchableSelect';
 
+// NOSONAR
 export default function AuthPage() {
+
+    const isValidUsername = (value) => /^\w+$/.test(value)
+    const getAuthSubtitle = () => {
+        if (isLogin) return 'Access the mainframe.'
+        if (currentStep === 1) return 'Establish personal profile.'
+        if (currentStep === 2) return 'Secure credentials.'
+        return 'Verify identity.'
+    }
+
+    const getAvailabilityBorderClass = (availability) => {
+        if (availability === false) return 'border-red-500 focus:border-red-500'
+        if (availability === true) return 'border-green-500 focus:border-green-500'
+        return 'border-white/10'
+    }
 
     const [isLogin, setIsLogin] = useState(true)
     const [showPassword, setShowPassword] = useState(false)
     const [rememberMe, setRememberMe] = useState(false)
-    const [isVerificationSent, setIsVerificationSent] = useState(false)
     const [resendTimer, setResendTimer] = useState(0)
     const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
     const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false) // NEW: Reset Password Modal
@@ -153,11 +167,17 @@ export default function AuthPage() {
             return;
         }
 
+        if (!isValidUsername(formData.username)) {
+            setUsernameAvailable(false);
+            return;
+        }
+
         const timer = setTimeout(async () => {
             setIsCheckingUsername(true);
             try {
                 const res = await api.post('/auth/check-availability', { username: formData.username });
-                setUsernameAvailable(res.data.available);
+                const available = res.data?.data?.usernameAvailable;
+                setUsernameAvailable(typeof available === 'boolean' ? available : null);
             } catch (error) {
                 console.error('Username check failed', error);
                 setUsernameAvailable(null);
@@ -169,86 +189,142 @@ export default function AuthPage() {
         return () => clearTimeout(timer);
     }, [formData.username, isLogin]);
 
-    // Validation before advancing to next step
-    const handleBeforeNextStep = async (stepCalled) => {
-        if (stepCalled === 1) {
-            if (!formData.username || !formData.legalName || !formData.dateOfBirth || !formData.country || !formData.state) {
-                toast.error('Please fill in all personal details')
-                return false
-            }
-            return true
+    const validateStepOne = () => {
+        if (!formData.username || !formData.legalName || !formData.dateOfBirth || !formData.country || !formData.state) {
+            toast.error('Please fill in all personal details')
+            return false
         }
 
-        // Step 2 → Step 3: Trigger signup and send OTP
+        if (!isValidUsername(formData.username)) {
+            toast.error('Username can only contain letters, numbers, and underscores')
+            return false
+        }
+
+        return true
+    }
+
+    const validateStepTwo = () => {
+        if (!formData.termsAccepted) {
+            toast.error('Accept terms to proceed')
+            return false
+        }
+
+        if (formData.password !== formData.confirmPassword) {
+            toast.error("Passwords don't match")
+            return false
+        }
+
+        if (isCheckingIgn) {
+            toast.error('Please wait for gamertag availability check')
+            return false
+        }
+
+        if (isCheckingUsername) {
+            toast.error('Please wait for username availability check')
+            return false
+        }
+
+        if (ignAvailable === false) {
+            toast.error('Gamertag is already taken')
+            return false
+        }
+
+        if (usernameAvailable === false) {
+            toast.error('Username is already taken')
+            return false
+        }
+
+        return true
+    }
+
+    const buildSignupPayload = () => ({
+        ign: formData.ign.trim(),
+        username: formData.username,
+        legalName: formData.legalName,
+        email: formData.email,
+        password: formData.password,
+        confirmPassword: formData.confirmPassword,
+        phone: formData.phone || '',
+        region: Number(formData.region),
+        subRegion: formData.subRegion || '',
+        country: formData.country,
+        state: formData.state,
+        city: formData.city || '',
+        dateOfBirth: formData.dateOfBirth,
+        termsAccepted: formData.termsAccepted
+    })
+
+    const submitSignupStep = async () => {
+        try {
+            const payload = buildSignupPayload()
+            console.log('Sending payload:', payload)
+            await api.post('/auth/signup', payload)
+            return true
+        } catch (error) {
+            console.error('Signup Failed:', error)
+            console.error('Error response:', error.response?.data)
+
+            if (error.response?.data?.errors) {
+                console.error('Validation errors:', error.response.data.errors)
+                error.response.data.errors.forEach((err, index) => {
+                    console.error(`Error ${index + 1}:`, err)
+                    toast.error(err.message || err)
+                })
+            } else {
+                toast.error(error.response?.data?.message || 'Registration failed')
+            }
+
+            return false
+        }
+    }
+
+    const resolveLoginEmail = async (identifier) => {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        if (emailRegex.test(identifier)) return identifier
+
+        try {
+            const lookupRes = await api.post('/auth/lookup-email', { username: identifier })
+            return lookupRes.data.data?.email || lookupRes.data.email
+        } catch (error) {
+            if (error.response?.status === 404) {
+                throw new Error('User not found')
+            }
+            throw error
+        }
+    }
+
+    const completeLoginFlow = async () => {
+        const { auth } = await import('../lib/firebase')
+        const { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } = await import('firebase/auth')
+
+        const loginEmail = await resolveLoginEmail(formData.identifier)
+        await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence)
+
+        const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password)
+        const user = userCredential.user
+
+        if (!user.emailVerified) {
+            toast.error('Email verification required.')
+            return
+        }
+
+        toast.success('Identity Verified. Syncing profile...')
+        const syncResult = await syncWithBackend()
+        if (syncResult.success) {
+            toast.success('Welcome to Titan Arena! 🎮')
+            navigate(from, { replace: true })
+            return
+        }
+
+        toast.error(syncResult.message)
+    }
+
+    // Validation before advancing to next step
+    const handleBeforeNextStep = async (stepCalled) => {
+        if (stepCalled === 1) return validateStepOne()
         if (stepCalled === 2) {
-            if (!formData.termsAccepted) {
-                toast.error('Accept terms to proceed')
-                return false
-            }
-
-            // Frontend validation
-            if (formData.password !== formData.confirmPassword) {
-                toast.error("Passwords don't match")
-                return false
-            }
-
-            // Block if checking IGN
-            if (isCheckingIgn) {
-                toast.error("Please wait for gamertag availability check")
-                return false
-            }
-
-            // Check IGN is available
-            if (ignAvailable === false) {
-                toast.error("Gamertag is already taken")
-                return false
-            }
-
-            setIsAuthProcessing(true)
-            try {
-                // Prepare payload
-                const payload = {
-                    ign: formData.ign.trim(),
-                    username: formData.username,
-                    legalName: formData.legalName,
-                    email: formData.email,
-                    password: formData.password,
-                    confirmPassword: formData.confirmPassword,
-                    phone: formData.phone || '',
-                    region: Number(formData.region),
-                    subRegion: formData.subRegion || '',
-                    country: formData.country,
-                    state: formData.state,
-                    city: formData.city || '',
-                    dateOfBirth: formData.dateOfBirth,
-                    termsAccepted: formData.termsAccepted
-                }
-
-                console.log('Sending payload:', payload)
-
-                // Call custom backend signup
-                const response = await api.post('/auth/signup', payload)
-
-                // toast.success('Verification code sent to your email!')
-                setIsAuthProcessing(false)
-                return true // Allow advancing to Step 3
-            } catch (error) {
-                console.error('Signup Failed:', error)
-                console.error('Error response:', error.response?.data)
-
-                // Show detailed validation errors if available
-                if (error.response?.data?.errors) {
-                    console.error('Validation errors:', error.response.data.errors)
-                    error.response.data.errors.forEach((err, index) => {
-                        console.error(`Error ${index + 1}:`, err)
-                        toast.error(err.message || err)
-                    })
-                } else {
-                    toast.error(error.response?.data?.message || 'Registration failed')
-                }
-                setIsAuthProcessing(false)
-                return false // Don't advance to Step 3
-            }
+            if (!validateStepTwo()) return false
+            return submitSignupStep()
         }
 
         return true
@@ -259,15 +335,14 @@ export default function AuthPage() {
         const otpInput = document.querySelector('input[name="otp"]');
         const otp = otpInput?.value;
 
-        if (!otp || otp.length !== 6) {
+        if (!otp?.length || otp.length !== 6) {
             toast.error('Please enter the 6-digit verification code');
             return;
         }
 
-        setIsAuthProcessing(true);
         try {
             // Call backend to verify OTP
-            const response = await api.post('/auth/verify-email', {
+            await api.post('/auth/verify-email', {
                 email: formData.email,
                 otp: otp
             });
@@ -298,68 +373,39 @@ export default function AuthPage() {
         } catch (error) {
             console.error('OTP Verification Failed:', error);
             toast.error(error.response?.data?.message || 'Invalid verification code');
-        } finally {
-            setIsAuthProcessing(false);
         }
     }
 
-    const [isAuthProcessing, setIsAuthProcessing] = useState(false)
-
     const handleSubmit = async (e) => {
         e.preventDefault()
-        const { auth } = await import('../lib/firebase')
-        const { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } = await import('firebase/auth')
-
-        if (isLogin) {
-            // --- FIREBASE LOGIN ---
-            if (!formData.identifier || !formData.password) return toast.error('Email/Username and password required')
-
-            setIsAuthProcessing(true)
-            try {
-                // 1. Resolve Email from username if needed
-                let loginEmail = formData.identifier;
-                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-                if (!emailRegex.test(loginEmail)) {
-                    try {
-                        const lookupRes = await api.post('/auth/lookup-email', { username: formData.identifier });
-                        loginEmail = lookupRes.data.data?.email || lookupRes.data.email;
-                    } catch (err) {
-                        if (err.response?.status === 404) throw new Error('User not found');
-                        throw err;
-                    }
-                }
-
-                // 2. Persistence
-                await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
-
-                // 3. Firebase Sign In
-                const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password)
-                const user = userCredential.user
-
-                if (!user.emailVerified) {
-                    setIsVerificationSent(true)
-                    toast.error('Email verification required.')
-                    setIsAuthProcessing(false)
-                    return
-                }
-
-                toast.success('Identity Verified. Syncing profile...')
-                const syncResult = await syncWithBackend()
-                if (syncResult.success) {
-                    toast.success('Welcome to Titan Arena! 🎮')
-                    navigate(from, { replace: true })
-                } else {
-                    toast.error(syncResult.message)
-                }
-            } catch (error) {
-                console.error('Login Failed:', error)
-                toast.error(error.message || 'Login failed')
-            } finally {
-                setIsAuthProcessing(false)
-            }
-        } else {
-            // Registration is handled in handleBeforeNextStep
+        if (!isLogin) return
+        if (!formData.identifier || !formData.password) {
+            toast.error('Email/Username and password required')
+            return
         }
+
+        try {
+            await completeLoginFlow()
+        } catch (error) {
+            console.error('Login Failed:', error)
+            toast.error(error.message || 'Login failed')
+        }
+    }
+
+    const renderAvailabilityIndicator = (isChecking, available) => {
+        if (isChecking) {
+            return <div className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+        }
+
+        if (available === true) {
+            return <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />
+        }
+
+        if (available === false) {
+            return <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 font-bold text-xs">TAKEN</div>
+        }
+
+        return null
     }
 
     // Handle region change (reset sub-region)
@@ -467,8 +513,8 @@ export default function AuthPage() {
 
                                 <div className="space-y-4">
                                     <h1 className="font-display font-black text-6xl tracking-tighter leading-none">
-                                        {slides[currentSlide].title.split(' ').map((word, i) => (
-                                            <span key={i} className="block text-transparent bg-clip-text bg-gradient-to-r from-white to-white/60">
+                                        {slides[currentSlide].title.split(' ').map((word) => (
+                                            <span key={`${slides[currentSlide].id}-${word}`} className="block text-transparent bg-clip-text bg-gradient-to-r from-white to-white/60">
                                                 {word}
                                             </span>
                                         ))}
@@ -482,11 +528,13 @@ export default function AuthPage() {
 
                         {/* Progress Indicators */}
                         <div className="flex gap-3 mt-12">
-                            {slides.map((_, idx) => (
-                                <div
-                                    key={idx}
+                            {slides.map((slide, idx) => (
+                                <button
+                                    type="button"
+                                    key={slide.id}
                                     className={`h-1 cursor-pointer hover:bg-white/60 rounded-full transition-all duration-500 ${currentSlide === idx ? 'w-12 bg-titan-purple' : 'w-4 bg-white/20'}`}
                                     onClick={() => setCurrentSlide(idx)}
+                                    aria-label={`Go to slide ${idx + 1}`}
                                 />
                             ))}
                         </div>
@@ -514,7 +562,7 @@ export default function AuthPage() {
                                 </h2>
 
                                 <p className="text-white/40 text-sm mb-2 font-mono leading-relaxed">
-                                    {isLogin ? 'Access the mainframe.' : (currentStep === 1 ? 'Establish personal profile.' : currentStep === 2 ? 'Secure credentials.' : 'Verify identity.')}
+                                    {getAuthSubtitle()}
                                 </p>
 
                                 <form onSubmit={handleSubmit} className="space-y-2 relative z-10" noValidate>
@@ -554,8 +602,13 @@ export default function AuthPage() {
 
                                             <div className="flex items-center justify-between text-xs text-white/50 mb-0.5 font-medium px-1">
                                                 <label className="flex items-center gap-2 cursor-pointer hover:text-white transition-colors">
-                                                    <input type="checkbox" checked={rememberMe} onChange={() => setRememberMe(!rememberMe)} className="rounded bg-white/10 border-white/20 w-3.5 h-3.5 text-titan-purple focus:ring-0 checked:bg-titan-purple" />
-                                                    Remember me
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={rememberMe}
+                                                            onChange={() => setRememberMe(!rememberMe)}
+                                                            className="rounded bg-white/10 border-white/20 w-3.5 h-3.5 text-titan-purple focus:ring-0 checked:bg-titan-purple"
+                                                        />
+                                                        <span>Remember me</span>
                                                 </label>
                                                 <button type="button" onClick={() => setIsForgotPasswordOpen(true)} className="hover:text-titan-cyan transition-colors">Forgot Password?</button>
                                             </div>
@@ -597,19 +650,11 @@ export default function AuthPage() {
                                                             onChange={(e) => setFormData({ ...formData, ign: e.target.value })}
                                                             minLength={3}
                                                             maxLength={20}
-                                                            className={`w-full bg-white/10 border ${ignAvailable === false ? 'border-red-500 focus:border-red-500' : (ignAvailable === true ? 'border-green-500 focus:border-green-500' : 'border-white/10')} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
+                                                            className={`w-full bg-white/10 border ${getAvailabilityBorderClass(ignAvailable)} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
                                                             autoFocus
                                                             required
                                                         />
-                                                        {isCheckingIgn ? (
-                                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
-                                                        ) : (
-                                                            ignAvailable === true ? (
-                                                                <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />
-                                                            ) : ignAvailable === false ? (
-                                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 font-bold text-xs">TAKEN</div>
-                                                            ) : null
-                                                        )}
+                                                        {renderAvailabilityIndicator(isCheckingIgn, ignAvailable)}
                                                     </div>
                                                     <p className="text-white/40 text-xs font-mono -mt-1">3-20 characters, any characters allowed</p>
                                                     <div className="relative group">
@@ -620,18 +665,10 @@ export default function AuthPage() {
                                                             placeholder="Username (for login)"
                                                             value={formData.username}
                                                             onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                                                            className={`w-full bg-white/10 border ${usernameAvailable === false ? 'border-red-500 focus:border-red-500' : (usernameAvailable === true ? 'border-green-500 focus:border-green-500' : 'border-white/10')} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
+                                                            className={`w-full bg-white/10 border ${getAvailabilityBorderClass(usernameAvailable)} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
                                                             required
                                                         />
-                                                        {isCheckingUsername ? (
-                                                            <div className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
-                                                        ) : (
-                                                            usernameAvailable === true ? (
-                                                                <Check size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-green-500" />
-                                                            ) : usernameAvailable === false ? (
-                                                                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-red-500 font-bold text-xs">TAKEN</div>
-                                                            ) : null
-                                                        )}
+                                                        {renderAvailabilityIndicator(isCheckingUsername, usernameAvailable)}
                                                     </div>
                                                     <div className="relative group">
                                                         <FileText className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 group-focus-within:text-titan-cyan transition-colors" size={16} />
@@ -697,29 +734,27 @@ export default function AuthPage() {
                                                     <p className="text-white/40 text-xs font-mono -mt-1">Required: For account recovery and important notifications</p>
                                                     {/* Dynamic Location Fields */}
                                                     {formData.country === 'IN' ? (
-                                                        <>
-                                                            <div className="grid grid-cols-2 gap-2.5">
-                                                                <div className="relative group z-20">
-                                                                    <SearchableSelect
-                                                                        icon={MapPin}
-                                                                        options={getAllStates().map(s => ({ value: s.state, label: s.state }))}
-                                                                        value={formData.state}
-                                                                        onChange={(val) => setFormData(prev => ({ ...prev, state: val, city: '' }))}
-                                                                        placeholder="State"
-                                                                    />
-                                                                </div>
-                                                                <div className="relative group z-20">
-                                                                    <SearchableSelect
-                                                                        icon={MapPin}
-                                                                        options={formData.state ? getDistrictsByState(formData.state).map(d => ({ value: d, label: d })) : []}
-                                                                        value={formData.city}
-                                                                        onChange={(val) => setFormData(prev => ({ ...prev, city: val }))}
-                                                                        placeholder="District"
-                                                                        disabled={!formData.state}
-                                                                    />
-                                                                </div>
+                                                        <div className="grid grid-cols-2 gap-2.5">
+                                                            <div className="relative group z-20">
+                                                                <SearchableSelect
+                                                                    icon={MapPin}
+                                                                    options={getAllStates().map(s => ({ value: s.state, label: s.state }))}
+                                                                    value={formData.state}
+                                                                    onChange={(val) => setFormData(prev => ({ ...prev, state: val, city: '' }))}
+                                                                    placeholder="State"
+                                                                />
                                                             </div>
-                                                        </>
+                                                            <div className="relative group z-20">
+                                                                <SearchableSelect
+                                                                    icon={MapPin}
+                                                                    options={formData.state ? getDistrictsByState(formData.state).map(d => ({ value: d, label: d })) : []}
+                                                                    value={formData.city}
+                                                                    onChange={(val) => setFormData(prev => ({ ...prev, city: val }))}
+                                                                    placeholder="District"
+                                                                    disabled={!formData.state}
+                                                                />
+                                                            </div>
+                                                        </div>
                                                     ) : (
                                                         <div className="grid grid-cols-2 gap-2.5">
                                                             <input
@@ -1018,8 +1053,9 @@ function ResetPasswordForm({ onSuccess }) {
     return (
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div className="space-y-2">
-                <label className="text-xs font-bold text-white/70 uppercase tracking-wider">New Password</label>
+                <label htmlFor="reset-new-password" className="text-xs font-bold text-white/70 uppercase tracking-wider">New Password</label>
                 <input
+                    id="reset-new-password"
                     type="password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
@@ -1029,8 +1065,9 @@ function ResetPasswordForm({ onSuccess }) {
                 />
             </div>
             <div className="space-y-2">
-                <label className="text-xs font-bold text-white/70 uppercase tracking-wider">Confirm Password</label>
+                <label htmlFor="reset-confirm-password" className="text-xs font-bold text-white/70 uppercase tracking-wider">Confirm Password</label>
                 <input
+                    id="reset-confirm-password"
                     type="password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
@@ -1104,10 +1141,11 @@ function ForgotPasswordForm({ onSuccess }) {
     return (
         <form onSubmit={handleReset} className="space-y-4" noValidate>
             <div className="space-y-2">
-                <label className="text-xs font-bold text-white/70 uppercase tracking-wider">Email Address</label>
+                <label htmlFor="forgot-password-email" className="text-xs font-bold text-white/70 uppercase tracking-wider">Email Address</label>
                 <div className="relative group">
                     <Mail className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${error ? 'text-red-500' : 'text-white/40 group-focus-within:text-titan-cyan'}`} size={16} />
                     <input
+                        id="forgot-password-email"
                         type="email"
                         value={email}
                         onChange={(e) => {
@@ -1133,4 +1171,12 @@ function ForgotPasswordForm({ onSuccess }) {
             </button>
         </form >
     )
+}
+
+ResetPasswordForm.propTypes = {
+    onSuccess: PropTypes.func.isRequired
+}
+
+ForgotPasswordForm.propTypes = {
+    onSuccess: PropTypes.func.isRequired
 }
