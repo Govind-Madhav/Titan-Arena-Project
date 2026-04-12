@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Copyright (c) 2025 Titan E-sports. All rights reserved.
  * This code is proprietary and confidential.
@@ -6,7 +7,7 @@
 const { pgTable, varchar, boolean, timestamp, integer, text, index, uniqueIndex, primaryKey, bigint, json, numeric, doublePrecision } = require('drizzle-orm/pg-core');
 const { pgEnum } = require('drizzle-orm/pg-core');
 const { sql } = require('drizzle-orm');
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 
 // Define PostgreSQL Enums
 const authProviderEnum = pgEnum('auth_provider', ['FIREBASE', 'LEGACY']);
@@ -225,7 +226,14 @@ const tournaments = pgTable('tournament', {
     name: varchar('name', { length: 255 }).notNull(),
     game: varchar('game', { length: 100 }).notNull(),
     description: text('description'),
+    rules: text('rules'),
     highlightUrl: varchar('highlightUrl', { length: 500 }),
+    bannerUrl: varchar('bannerUrl', { length: 500 }),
+    streamUrl: text('streamUrl'),
+    streamPlatform: varchar('streamPlatform', { length: 20 }).default('OTHER'),
+    streamId: varchar('streamId', { length: 191 }),
+    streamScope: varchar('streamScope', { length: 20 }).default('MATCH'),
+    streamIsLive: boolean('streamIsLive').notNull().default(false),
     type: varchar('type', { length: 50 }).notNull(),
     format: varchar('format', { length: 50 }).notNull().default('SINGLE_ELIMINATION'), // bracket format
     seeding: varchar('seeding', { length: 20 }).notNull().default('RANDOM'),           // RANDOM | MMR
@@ -234,6 +242,7 @@ const tournaments = pgTable('tournament', {
     entryFee: bigint('entryFee', { mode: 'number' }).notNull(),
     prizePool: bigint('prizePool', { mode: 'number' }).notNull(),
     minTeamsRequired: integer('minTeamsRequired').notNull(),
+    maxParticipants: integer('maxParticipants'),
     insufficientRegPolicy: varchar('insufficientRegPolicy', { length: 50 }).notNull().default('CANCEL'),
     status: varchar('status', { length: 50 }).notNull().default('UPCOMING'),
     currentRound: integer('currentRound').default(0),
