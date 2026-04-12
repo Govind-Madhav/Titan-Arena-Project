@@ -28,6 +28,7 @@ import ClanPage from './pages/player/ClanPage'
 import ClanDetailPage from './pages/player/ClanDetailPage'
 import AchievementsPage from './pages/player/AchievementsPage'
 import DisputesPage from './pages/player/DisputesPage'
+import CommunityPage from './pages/player/CommunityPage'
 
 import ProtectedRoute from './Components/auth/ProtectedRoute'
 import SessionWarning from './Components/auth/SessionWarning'
@@ -38,7 +39,7 @@ import AdminDisputesPage from './pages/admin/AdminDisputesPage'
 import ManageUsers from './pages/admin/ManageUsers'
 import ManageHosts from './pages/admin/ManageHosts'
 import ManageTournaments from './pages/admin/ManageTournaments'
-import ManageApplications from './pages/admin/ManageApplications' // New
+import ManageKycPanel from './pages/admin/ManageKycPanel'
 
 // Host Components
 import HostDashboard from './pages/host/HostHomepage'
@@ -184,6 +185,14 @@ function App() {
             }
           />
           <Route
+            path="/community"
+            element={
+              <ProtectedRoute>
+                <CommunityPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/feed"
             element={<FeedPage />}
           />
@@ -226,12 +235,28 @@ function App() {
           path="/manageApplications"
           element={
             <ProtectedRoute allowedRoles={['ADMIN', 'SUPERADMIN']}>
-              <ManageApplications />
+              <ManageKycPanel />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/kyc"
+          element={
+            <ProtectedRoute allowedRoles={['ADMIN', 'SUPERADMIN']}>
+              <ManageKycPanel />
             </ProtectedRoute>
           }
         />
         <Route
           path="/manageTourn"
+          element={
+            <ProtectedRoute allowedRoles={['HOST', 'ADMIN', 'SUPERADMIN']}>
+              <HostManageTourn />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/manageTourn"
           element={
             <ProtectedRoute allowedRoles={['ADMIN', 'SUPERADMIN']}>
               <ManageTournaments />
