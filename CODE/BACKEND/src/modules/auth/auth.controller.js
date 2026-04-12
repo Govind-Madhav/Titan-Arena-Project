@@ -8,15 +8,19 @@ const { users, wallets, refreshTokens, playerProfiles, hostProfiles } = require(
 const { eq, or, and, gt } = require('drizzle-orm');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 const { z } = require('zod');
 const emailService = require('../../utils/email.service');
 const statsService = require('../../services/stats.service');
 const uidService = require('../../services/uid.service');
 const otpService = require('../../services/otp.service');
 const { syncUser } = require('../../services/userSync.service');
+const { getHostTrustProfile } = require('../../services/hostTrust.service');
 const { validateSubRegion } = require('../../config/regions.config');
 const { admin } = require('../../config/firebase.config');
+const { getRedisClient } = require('../../config/redis.config');
+const { authenticator } = require('otplib');
+const QRCode = require('qrcode');
 
 // Validation schemas
 const signupSchema = z.object({
@@ -36,7 +40,7 @@ const signupSchema = z.object({
     country: z.string().min(2, 'Country is required'),
     state: z.string().min(2, 'State is required'),
     city: z.string().optional(),
-    username: z.string().min(3, 'Username must be at least 3 characters').regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'), // Strict validation for username
+    username: z.string().min(3, 'Username must be at least 3 characters').regex(/^\w+$/, 'Username can only contain letters, numbers, and underscores'), // Strict validation for username
     termsAccepted: z.boolean().refine(val => val === true, 'You must accept the terms and conditions'),
     role: z.enum(['PLAYER', 'ADMIN', 'SUPERADMIN']).optional().default('PLAYER')
 }).refine((data) => data.password === data.confirmPassword, {
@@ -61,6 +65,10 @@ const metadataSchema = z.object({
     city: z.string().optional(),
     phone: z.string().optional()
 });
+
+const MFA_PENDING_TTL_SECONDS = 10 * 60;
+const getMfaPendingKey = (userId) => `mfa:pending:${userId}`;
+const getMfaSecretKey = (userId) => `mfa:secret:${userId}`;
 
 
 // Generate tokens
@@ -130,6 +138,7 @@ exports.lookupEmail = async (req, res) => {
 exports.signup = async (req, res) => {
     try {
         const data = signupSchema.parse(req.body);
+        const smtpConfigured = Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
 
         // Check existing user in database
         const existingUsers = await db.select()
@@ -198,10 +207,19 @@ exports.signup = async (req, res) => {
         });
 
 
-        // Generate & Send OTP
+        // Generate OTP and send verification email
         try {
             const otp = await otpService.generateOtp(data.email);
             console.log(`🔐 OTP for ${data.email}: ${otp}`); // DEV: Show OTP in terminal
+
+            if (!smtpConfigured) {
+                await redis.del(pendingKey);
+                return res.status(503).json({
+                    success: false,
+                    message: 'Email service is not configured on the server. Please contact support.'
+                });
+            }
+
             await emailService.sendVerificationEmail(data.email, otp, ign);
         } catch (emailError) {
             console.error('Failed to send verification email:', emailError);
@@ -568,7 +586,7 @@ exports.logoutAllDevices = async (req, res) => {
         });
     }
 };
-// 🚀 HYBRID SYNC: Pass identity metadata to MySQL
+// 🚀 HYBRID SYNC: Pass identity metadata to PostgreSQL
 exports.sync = async (req, res) => {
     try {
         if (!req.firebaseUser) {
@@ -577,6 +595,7 @@ exports.sync = async (req, res) => {
 
         const metadata = metadataSchema.parse(req.body);
         const user = await syncUser(req.firebaseUser, metadata);
+        const hostTrust = await getHostTrustProfile(user);
 
         // 🔄 Session Exchange: Issue Backend Tokens
 
@@ -610,6 +629,7 @@ exports.sync = async (req, res) => {
             message: 'Identity synchronized successfully',
             data: {
                 user,
+                hostTrust,
                 accessToken,
                 expiresAt: accessTokenExpiry.toISOString()
             }
@@ -650,6 +670,7 @@ exports.getMe = async (req, res) => {
                 username: users.username,
                 platformUid: users.platformUid, // Added Public UID
                 role: users.role,
+                isAdmin: users.isAdmin,
                 hostStatus: users.hostStatus,
                 isBanned: users.isBanned,
                 createdAt: users.createdAt,
@@ -677,7 +698,8 @@ exports.getMe = async (req, res) => {
         // Structure it like Prisma did
         const responseData = {
             ...data.user,
-            wallet: data.wallet
+            wallet: data.wallet,
+            hostTrust: await getHostTrustProfile(data.user)
         };
 
         res.json({
@@ -740,6 +762,108 @@ exports.resendVerification = async (req, res) => {
 };
 
 // Verify email
+const createVerifiedUserInTransaction = async (data) => {
+    let userId;
+
+    await db.transaction(async (tx) => {
+        const { uid: platformUid } = await Promise.resolve(uidService.generatePlatformUid(data.region, tx));
+        userId = crypto.randomUUID();
+
+        await tx.insert(users).values({
+            id: userId,
+            platformUid,
+            username: data.username,
+            email: data.email,
+            passwordHash: data.passwordHash,
+            legalName: data.legalName,
+            dateOfBirth: new Date(data.dateOfBirth),
+            phone: data.phone,
+            phoneVerified: false,
+            countryCode: data.country,
+            state: data.state,
+            city: data.city,
+            regionCode: data.region,
+            subRegionCode: data.subRegion,
+            role: data.role || 'PLAYER',
+            hostStatus: 'NOT_VERIFIED',
+            emailVerified: true,
+            isBanned: false,
+            registrationCompleted: true,
+            termsAccepted: data.termsAccepted,
+            passwordUpdatedAt: new Date(),
+            lastLoginAt: new Date(),
+            createdAt: new Date(),
+            updatedAt: new Date()
+        });
+
+        const now = new Date();
+        await tx.insert(wallets).values({
+            id: crypto.randomUUID(),
+            userId,
+            balance: 0,
+            locked: 0,
+            createdAt: now,
+            updatedAt: now
+        });
+
+        try {
+            await tx.insert(playerProfiles).values({
+                userId,
+                ign: data.ign,
+                realName: data.legalName,
+                dateOfBirth: new Date(data.dateOfBirth),
+                country: data.country,
+                state: data.state,
+                city: data.city,
+                completionPercentage: 60
+            });
+        } catch (error) {
+            if (error.code === '23505') {
+                throw new Error('Gamertag already taken');
+            }
+            throw error;
+        }
+    });
+
+    return userId;
+};
+
+const mapVerifyEmailError = (error) => {
+    if (error.message === 'Gamertag already taken') {
+        return {
+            status: 409,
+            body: {
+                success: false,
+                message: 'Gamertag already taken. Please sign up again with a different gamertag.'
+            }
+        };
+    }
+
+    if (error.code === '23505' || error.message?.includes('duplicate key')) {
+        if (error.sqlMessage?.includes('username') || error.message?.includes('username')) {
+            return {
+                status: 409,
+                body: {
+                    success: false,
+                    message: 'Gamertag already taken. Please sign up again with a different username.'
+                }
+            };
+        }
+
+        if (error.sqlMessage?.includes('email') || error.message?.includes('email')) {
+            return {
+                status: 409,
+                body: {
+                    success: false,
+                    message: 'Email already registered'
+                }
+            };
+        }
+    }
+
+    return null;
+};
+
 exports.verifyEmail = async (req, res) => {
     try {
         const { email, otp } = req.body;
@@ -784,97 +908,13 @@ exports.verifyEmail = async (req, res) => {
             });
         }
 
-        // Create user in database with transaction
         let userId;
         try {
-            await db.transaction(async (tx) => {
-                // CRITICAL: Generate UID with region
-                const { uid: platformUid } = await uidService.generatePlatformUid(data.region, tx);
-
-                // Generate user ID
-                userId = crypto.randomUUID();
-
-                // Create User
-                await tx.insert(users).values({
-                    id: userId,
-                    platformUid: platformUid,
-                    username: data.username,
-                    email: data.email,
-                    passwordHash: data.passwordHash,
-                    legalName: data.legalName,
-                    dateOfBirth: new Date(data.dateOfBirth),
-                    phone: data.phone,
-                    phoneVerified: false, // Not verified yet
-                    countryCode: data.country,
-                    state: data.state,
-                    city: data.city,
-                    regionCode: data.region,
-                    subRegionCode: data.subRegion,
-                    role: data.role || 'PLAYER',
-                    hostStatus: 'NOT_VERIFIED',
-                    emailVerified: true,
-                    isBanned: false,
-                    registrationCompleted: true,
-                    termsAccepted: data.termsAccepted,
-                    passwordUpdatedAt: new Date(),
-                    lastLoginAt: new Date(),
-                    createdAt: new Date(),
-                    updatedAt: new Date()
-                });
-
-                // Create Wallet
-                const now = new Date();
-                await tx.insert(wallets).values({
-                    id: crypto.randomUUID(),
-                    userId: userId,
-                    balance: 0,
-                    locked: 0,
-                    createdAt: now,
-                    updatedAt: now
-                });
-
-                // Create Profile with IGN
-                // DB constraint handles race condition
-                try {
-                    await tx.insert(playerProfiles).values({
-                        userId: userId,
-                        ign: data.ign,
-                        realName: data.legalName,
-                        dateOfBirth: new Date(data.dateOfBirth),
-                        country: data.country,
-                        state: data.state,
-                        city: data.city,
-                        completionPercentage: 60
-                    });
-                } catch (err) {
-                    // PostgreSQL unique violation (23505)
-                    if (err.code === '23505') {
-                        throw new Error('Gamertag already taken');
-                    }
-                    throw err;
-                }
-            });
+            userId = await createVerifiedUserInTransaction(data);
         } catch (error) {
-            // Handle duplicate entry errors
-            if (error.message === 'Gamertag already taken') {
-                return res.status(409).json({
-                    success: false,
-                    message: 'Gamertag already taken. Please sign up again with a different gamertag.'
-                });
-            }
-            if (error.code === '23505' || error.message?.includes('duplicate key')) {
-                if (error.sqlMessage?.includes('username') || error.message?.includes('username')) {
-                    return res.status(409).json({
-                        success: false,
-                        message: 'Gamertag already taken. Please sign up again with a different username.'
-                    });
-                }
-                if (error.sqlMessage?.includes('email') || error.message?.includes('email')) {
-                    return res.status(409).json({
-                        success: false,
-                        message: 'Email already registered'
-                    });
-                }
+            const mappedError = mapVerifyEmailError(error);
+            if (mappedError) {
+                return res.status(mappedError.status).json(mappedError.body);
             }
             throw error;
         }
@@ -962,6 +1002,52 @@ exports.getNotifications = async (req, res) => {
 };
 
 // Update user profile
+const buildUserUpdates = ({ bio, avatarUrl, phone, phoneVisibility, country, state, city }) => {
+    const updates = {};
+    if (bio !== undefined) updates.bio = bio;
+    if (avatarUrl !== undefined) updates.avatarUrl = avatarUrl;
+    if (phone !== undefined) updates.phone = phone;
+    if (phoneVisibility !== undefined) updates.phoneVisibility = phoneVisibility;
+    if (country !== undefined) updates.countryCode = country;
+    if (state !== undefined) updates.state = state;
+    if (city !== undefined) updates.city = city;
+    return updates;
+};
+
+const buildProfileUpdates = ({ ign, bio, avatarUrl, country, state, city, discordId, discordVisibility, profileVisibility }) => {
+    const updates = {};
+    if (ign !== undefined) updates.ign = ign;
+    if (bio !== undefined) updates.bio = bio;
+    if (avatarUrl !== undefined) updates.avatarUrl = avatarUrl;
+    if (country !== undefined) updates.country = country;
+    if (state !== undefined) updates.state = state;
+    if (city !== undefined) updates.city = city;
+    if (discordId !== undefined) updates.discordId = discordId;
+    if (discordVisibility !== undefined) updates.discordVisibility = discordVisibility;
+    if (profileVisibility !== undefined) updates.profileVisibility = profileVisibility;
+    return updates;
+};
+
+const upsertPlayerProfile = async (userId, profileUpdates) => {
+    if (Object.keys(profileUpdates).length === 0) {
+        return;
+    }
+
+    const existingProfile = await db.select().from(playerProfiles).where(eq(playerProfiles.userId, userId)).limit(1);
+
+    if (existingProfile.length > 0) {
+        await db.update(playerProfiles)
+            .set(profileUpdates)
+            .where(eq(playerProfiles.userId, userId));
+        return;
+    }
+
+    await db.insert(playerProfiles).values({
+        userId,
+        ...profileUpdates
+    });
+};
+
 exports.updateProfile = async (req, res) => {
     try {
         const {
@@ -969,8 +1055,7 @@ exports.updateProfile = async (req, res) => {
             country, state, city,
             phone, phoneVisibility,
             discordId, discordVisibility,
-            profileVisibility,
-            username // Only if allowed to change
+            profileVisibility
         } = req.body;
 
         const userId = req.user.id;
@@ -980,15 +1065,9 @@ exports.updateProfile = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Bio max 500 chars' });
         }
 
-        // 1. Update Users Table
-        const userUpdates = {};
-        if (bio !== undefined) userUpdates.bio = bio;
-        if (avatarUrl !== undefined) userUpdates.avatarUrl = avatarUrl;
-        if (phone !== undefined) userUpdates.phone = phone;
-        if (phoneVisibility !== undefined) userUpdates.phoneVisibility = phoneVisibility;
-        if (country !== undefined) userUpdates.countryCode = country; // Map to countryCode
-        if (state !== undefined) userUpdates.state = state;
-        if (city !== undefined) userUpdates.city = city;
+        const payload = { bio, avatarUrl, ign, country, state, city, phone, phoneVisibility, discordId, discordVisibility, profileVisibility };
+        const userUpdates = buildUserUpdates(payload);
+        const profileUpdates = buildProfileUpdates(payload);
 
         if (Object.keys(userUpdates).length > 0) {
             await db.update(users)
@@ -996,34 +1075,7 @@ exports.updateProfile = async (req, res) => {
                 .where(eq(users.id, userId));
         }
 
-        // 2. Update PlayerProfiles Table
-        const profileUpdates = {};
-        if (ign !== undefined) profileUpdates.ign = ign;
-        if (bio !== undefined) profileUpdates.bio = bio; // Sync
-        if (avatarUrl !== undefined) profileUpdates.avatarUrl = avatarUrl; // Sync
-        if (country !== undefined) profileUpdates.country = country;
-        if (state !== undefined) profileUpdates.state = state;
-        if (city !== undefined) profileUpdates.city = city;
-        if (discordId !== undefined) profileUpdates.discordId = discordId;
-        if (discordVisibility !== undefined) profileUpdates.discordVisibility = discordVisibility;
-        if (profileVisibility !== undefined) profileUpdates.profileVisibility = profileVisibility;
-
-        if (Object.keys(profileUpdates).length > 0) {
-            // Check if profile exists
-            const existingProfile = await db.select().from(playerProfiles).where(eq(playerProfiles.userId, userId)).limit(1);
-
-            if (existingProfile.length > 0) {
-                await db.update(playerProfiles)
-                    .set(profileUpdates)
-                    .where(eq(playerProfiles.userId, userId));
-            } else {
-                // Create if missing (Recovery)
-                await db.insert(playerProfiles).values({
-                    userId,
-                    ...profileUpdates
-                });
-            }
-        }
+        await upsertPlayerProfile(userId, profileUpdates);
 
         // Return updated user data
         const updatedUserRaw = await db.select().from(users).where(eq(users.id, userId)).limit(1);
@@ -1107,6 +1159,7 @@ exports.forgotPassword = async (req, res) => {
 exports.checkAvailability = async (req, res) => {
     try {
         const { username, email } = req.body;
+        const usernameRegex = /^\w+$/;
 
         const result = {
             usernameAvailable: true,
@@ -1114,6 +1167,16 @@ exports.checkAvailability = async (req, res) => {
         };
 
         if (username) {
+            if (!usernameRegex.test(username)) {
+                result.usernameAvailable = false;
+                return res.json({
+                    success: true,
+                    available: false,
+                    reason: 'Username can only contain letters, numbers, and underscores',
+                    data: result
+                });
+            }
+
             const user = await db.select({ id: users.id })
                 .from(users)
                 .where(eq(users.username, username))
@@ -1131,6 +1194,7 @@ exports.checkAvailability = async (req, res) => {
 
         res.json({
             success: true,
+            available: username ? result.usernameAvailable : result.emailAvailable,
             data: result
         });
 
@@ -1285,12 +1349,12 @@ exports.triggerPasswordReset = async (req, res) => {
 // Helper: Generate Username Suggestions
 
 const generateSuggestions = (baseTag) => {
-    const suggestions = [];
     const randomSuffix = () => Math.floor(Math.random() * 1000);
-    suggestions.push(`${baseTag}${randomSuffix()}`);
-    suggestions.push(`${baseTag}_${randomSuffix()}`);
-    suggestions.push(`${baseTag}XP`);
-    return suggestions;
+    return [
+        `${baseTag}${randomSuffix()}`,
+        `${baseTag}_${randomSuffix()}`,
+        `${baseTag}XP`
+    ];
 };
 
 // Deactivate Account (Soft Freeze)
@@ -1353,8 +1417,8 @@ exports.deleteAccount = async (req, res) => {
         // Financial Check
         const wallet = await db.select().from(wallets).where(eq(wallets.userId, userId)).limit(1);
         if (wallet[0]) {
-            const balance = parseFloat(wallet[0].balance) || 0;
-            const locked = parseFloat(wallet[0].locked) || 0;
+            const balance = Number.parseFloat(wallet[0].balance) || 0;
+            const locked = Number.parseFloat(wallet[0].locked) || 0;
 
             if (balance > 0 || locked > 0) {
                 return res.status(400).json({
@@ -1554,6 +1618,156 @@ exports.verifyChangeEmail = async (req, res) => {
     } catch (error) {
         console.error('Verify Change Email error:', error);
         res.status(500).json({ success: false, message: 'Failed to update email' });
+    }
+};
+
+// MFA - Status
+exports.getMfaStatus = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const [user] = await db.select({ mfaEnabled: users.mfaEnabled })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1);
+
+        res.json({
+            success: true,
+            data: {
+                enabled: Boolean(user?.mfaEnabled)
+            }
+        });
+    } catch (error) {
+        console.error('Get MFA status error:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch MFA status' });
+    }
+};
+
+// MFA - Setup (generate secret + QR)
+exports.initMfaSetup = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const [user] = await db.select({
+            email: users.email,
+            username: users.username,
+            mfaEnabled: users.mfaEnabled
+        })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        if (user.mfaEnabled) {
+            return res.status(400).json({ success: false, message: 'MFA is already enabled' });
+        }
+
+        const redis = getRedisClient();
+        const appName = process.env.APP_NAME || 'Titan Arena';
+        const secret = authenticator.generateSecret();
+        const accountLabel = user.email || user.username || `user-${userId}`;
+        const otpauthUrl = authenticator.keyuri(accountLabel, appName, secret);
+        const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
+
+        await redis.set(getMfaPendingKey(userId), secret, { EX: MFA_PENDING_TTL_SECONDS });
+
+        res.json({
+            success: true,
+            data: {
+                secret,
+                otpauthUrl,
+                qrCodeDataUrl,
+                expiresInSeconds: MFA_PENDING_TTL_SECONDS
+            }
+        });
+    } catch (error) {
+        console.error('Init MFA setup error:', error);
+        res.status(500).json({ success: false, message: 'Failed to initialize MFA setup' });
+    }
+};
+
+// MFA - Verify setup code and enable
+exports.verifyMfaSetup = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { code } = req.body;
+
+        if (!code || String(code).trim().length < 6) {
+            return res.status(400).json({ success: false, message: 'A valid 6-digit code is required' });
+        }
+
+        const redis = getRedisClient();
+        const pendingSecret = await redis.get(getMfaPendingKey(userId));
+
+        if (!pendingSecret) {
+            return res.status(400).json({ success: false, message: 'MFA setup has expired. Please generate a new QR code.' });
+        }
+
+        const token = String(code).replaceAll(/\s+/g, '');
+        const isValid = authenticator.verify({ token, secret: pendingSecret });
+
+        if (!isValid) {
+            return res.status(400).json({ success: false, message: 'Invalid authenticator code' });
+        }
+
+        await db.update(users)
+            .set({ mfaEnabled: true })
+            .where(eq(users.id, userId));
+
+        await redis.set(getMfaSecretKey(userId), pendingSecret);
+        await redis.del(getMfaPendingKey(userId));
+
+        res.json({ success: true, message: 'MFA enabled successfully' });
+    } catch (error) {
+        console.error('Verify MFA setup error:', error);
+        res.status(500).json({ success: false, message: 'Failed to verify MFA setup' });
+    }
+};
+
+// MFA - Disable
+exports.disableMfa = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { code } = req.body;
+        const redis = getRedisClient();
+
+        const [user] = await db.select({ mfaEnabled: users.mfaEnabled })
+            .from(users)
+            .where(eq(users.id, userId))
+            .limit(1);
+
+        if (!user?.mfaEnabled) {
+            return res.status(400).json({ success: false, message: 'MFA is not enabled' });
+        }
+
+        const secret = await redis.get(getMfaSecretKey(userId));
+        if (!secret) {
+            return res.status(400).json({ success: false, message: 'MFA secret not found. Contact support.' });
+        }
+
+        if (!code || String(code).trim().length < 6) {
+            return res.status(400).json({ success: false, message: 'Enter a valid authenticator code to disable MFA' });
+        }
+
+        const token = String(code).replaceAll(/\s+/g, '');
+        const isValid = authenticator.verify({ token, secret });
+        if (!isValid) {
+            return res.status(400).json({ success: false, message: 'Invalid authenticator code' });
+        }
+
+        await db.update(users)
+            .set({ mfaEnabled: false })
+            .where(eq(users.id, userId));
+
+        await redis.del(getMfaSecretKey(userId));
+        await redis.del(getMfaPendingKey(userId));
+
+        res.json({ success: true, message: 'MFA disabled successfully' });
+    } catch (error) {
+        console.error('Disable MFA error:', error);
+        res.status(500).json({ success: false, message: 'Failed to disable MFA' });
     }
 };
 
