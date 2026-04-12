@@ -15,7 +15,9 @@ router.get('/status', authRequired, kycController.getHostStatus);
 
 // Admin routes
 router.get('/admin/kyc', authRequired, requireAdmin(), kycController.listKYCRequests);
+router.get('/admin/kyc/:id', authRequired, requireAdmin(), kycController.getKYCRequestById);
 router.patch('/admin/kyc/:id/approve', authRequired, requireAdmin(), kycController.approveKYC);
 router.patch('/admin/kyc/:id/reject', authRequired, requireAdmin(), kycController.rejectKYC);
+router.patch('/admin/kyc/:id/suspicious', authRequired, requireAdmin(), kycController.flagKYCAsSuspicious);
 
 module.exports = router;
