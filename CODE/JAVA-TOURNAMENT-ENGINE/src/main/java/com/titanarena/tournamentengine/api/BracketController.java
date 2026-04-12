@@ -8,6 +8,7 @@ import com.titanarena.tournamentengine.orchestration.ParticipantResolverService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.lang.NonNull;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -27,21 +28,24 @@ import java.util.stream.Collectors;
 @Slf4j
 public class BracketController {
 
+    private static final String SUCCESS_KEY = "success";
+    private static final String MESSAGE_KEY = "message";
+
     private final BracketService bracketService;
     private final TournamentRepository tournamentRepository;
     private final ParticipantResolverService participantResolverService;
 
     @GetMapping("/{tournamentId}")
-    public ResponseEntity<?> getBracket(@PathVariable String tournamentId) {
+    public ResponseEntity<Map<String, Object>> getBracket(@PathVariable @NonNull String tournamentId) {
         if (!tournamentRepository.existsById(tournamentId)) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).build();
         }
 
         List<Match> matches = bracketService.getMatches(tournamentId);
         if (matches.isEmpty()) {
             return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Bracket not yet generated",
+                    SUCCESS_KEY, true,
+                    MESSAGE_KEY, "Bracket not yet generated",
                     "data", Map.of("rounds", List.of())));
         }
 
@@ -50,7 +54,7 @@ public class BracketController {
                 .collect(Collectors.groupingBy(m -> BracketStrategy.roundName(m.getRound(), totalRounds)));
 
         return ResponseEntity.ok(Map.of(
-                "success", true,
+            SUCCESS_KEY, true,
                 "data", Map.of(
                         "tournamentId", tournamentId,
                         "totalRounds", totalRounds,
@@ -59,18 +63,18 @@ public class BracketController {
     }
 
     @PostMapping("/{tournamentId}/generate")
-    public ResponseEntity<?> generateBracket(
-            @PathVariable String tournamentId,
-            @RequestParam(defaultValue = "SINGLE_ELIMINATION") String format) {
+    public ResponseEntity<Map<String, Object>> generateBracket(
+            @PathVariable @NonNull String tournamentId,
+            @RequestParam(defaultValue = "SINGLE_ELIMINATION") @NonNull String format) {
         if (!tournamentRepository.existsById(tournamentId)) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.status(404).build();
         }
 
         List<String> participants = participantResolverService.getApprovedParticipants(tournamentId);
         if (participants.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "No approved participants found"));
+                    SUCCESS_KEY, false,
+                    MESSAGE_KEY, "No approved participants found"));
         }
 
         List<Match> matches = bracketService.generateBracket(tournamentId, format, participants);
@@ -78,8 +82,8 @@ public class BracketController {
                 matches.size());
 
         return ResponseEntity.ok(Map.of(
-                "success", true,
-                "message", "Bracket generated",
+            SUCCESS_KEY, true,
+            MESSAGE_KEY, "Bracket generated",
                 "data", Map.of("matchesCreated", matches.size(), "format", format)));
     }
 }
