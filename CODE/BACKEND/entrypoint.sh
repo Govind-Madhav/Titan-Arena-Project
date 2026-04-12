@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-# Default to MySQL port if not set
-PORT_TO_CHECK="${DB_PORT:-3306}"
+# Default to PostgreSQL port if not set
+PORT_TO_CHECK="${DB_PORT:-5432}"
 HOST_TO_CHECK="${DB_HOST:-database}"
 
 echo "⏳ Waiting for database at $HOST_TO_CHECK:$PORT_TO_CHECK..."
