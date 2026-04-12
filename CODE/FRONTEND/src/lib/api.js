@@ -26,17 +26,15 @@ api.interceptors.request.use(
         }
 
         // 2. Fallback: Use Firebase ID token (ONLY for initial login/sync)
-        const firebaseUser = auth.currentUser
+        const firebaseUser = auth?.currentUser
         if (firebaseUser) {
             try {
                 const token = await firebaseUser.getIdToken()
                 console.log('🔐 API: Using Firebase token for', config.url)
                 config.headers.Authorization = `Bearer ${token}`
-            } catch (e) {
-                console.error('🔐 API: Failed to fetch Firebase ID token')
+            } catch (error) {
+                console.error('🔐 API: Failed to fetch Firebase ID token', error)
             }
-        } else {
-            console.warn('🔐 API: No token available for', config.url)
         }
 
         return config
