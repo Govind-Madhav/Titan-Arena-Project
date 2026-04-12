@@ -54,8 +54,10 @@ const getFeed = async (req, res) => {
                 .from(blockedUsers)
                 .where(eq(blockedUsers.blockerId, currentUserId));
 
-            conditions.push(notInArray(posts.userId, blockersQuery));
-            conditions.push(notInArray(posts.userId, blockedQuery));
+            conditions.push(
+                notInArray(posts.userId, blockersQuery),
+                notInArray(posts.userId, blockedQuery)
+            );
         }
 
         const feed = await db.select({
@@ -111,12 +113,34 @@ const deletePost = async (req, res) => {
 
         res.json({ success: true, message: 'Post deleted' });
     } catch (error) {
+        console.error('Delete post error:', error);
         res.status(500).json({ success: false, message: 'Failed to delete post' });
+    }
+};
+
+// Upload Image for Post
+const uploadPostImage = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, message: 'No image file provided' });
+        }
+
+        const mediaUrl = `/uploads/community/${req.file.filename}`;
+
+        res.json({
+            success: true,
+            message: 'Image uploaded successfully',
+            data: { mediaUrl }
+        });
+    } catch (error) {
+        console.error('Upload image error:', error);
+        res.status(500).json({ success: false, message: 'Failed to upload image' });
     }
 };
 
 module.exports = {
     createPost,
     getFeed,
-    deletePost
+    deletePost,
+    uploadPostImage
 };
