@@ -22,6 +22,12 @@ import api from '../../lib/api'
 
 export default function WalletPage() {
     const [wallet, setWallet] = useState({ balance: 0, locked: 0, availableBalance: 0 })
+    const [activation, setActivation] = useState({
+        isActivated: false,
+        kycApproved: false,
+        hasBillingAddress: false,
+        missingItems: []
+    })
     const [transactions, setTransactions] = useState([])
     const [loading, setLoading] = useState(true)
     const [depositAmount, setDepositAmount] = useState('')
@@ -30,6 +36,7 @@ export default function WalletPage() {
     const [withdrawAmount, setWithdrawAmount] = useState('')
     const [upiId, setUpiId] = useState('')
     const [paying, setPaying] = useState(false)
+    const [showActivationModal, setShowActivationModal] = useState(false)
 
     useEffect(() => {
         fetchWallet()
@@ -39,7 +46,12 @@ export default function WalletPage() {
     const fetchWallet = async () => {
         try {
             const res = await api.get('/wallet')
-            setWallet(res.data.data || { balance: 0, locked: 0, availableBalance: 0 })
+            const data = res.data.data || { balance: 0, locked: 0, availableBalance: 0 }
+            setWallet(data)
+            // Store activation status
+            if (data.activation) {
+                setActivation(data.activation)
+            }
         } catch (error) {
             console.error('Failed to fetch wallet:', error)
         }
@@ -74,6 +86,12 @@ export default function WalletPage() {
             return
         }
 
+        // Check wallet activation
+        if (!activation.isActivated) {
+            setShowActivationModal(true)
+            return
+        }
+
         // In dev mode, just use the simulator for speed
         if (import.meta.env.DEV) {
             const toastId = toast.loading('Simulating deposit...')
@@ -98,6 +116,13 @@ export default function WalletPage() {
 
             // Step 1: Create order on backend
             const orderRes = await api.post('/wallet/deposit/init', { amount })
+            if (!orderRes.data.success) {
+                if (orderRes.data.code === 'WALLET_NOT_ACTIVATED') {
+                    setShowActivationModal(true)
+                    return
+                }
+                throw new Error(orderRes.data.message)
+            }
             const { orderId, key, currency } = orderRes.data.data
 
             // Step 2: Open Razorpay checkout modal
@@ -150,6 +175,12 @@ export default function WalletPage() {
             return
         }
 
+        // Check wallet activation
+        if (!activation.isActivated) {
+            setShowActivationModal(true)
+            return
+        }
+
         if (import.meta.env.DEV) {
             const toastId = toast.loading('Simulating withdrawal...')
             try {
@@ -173,7 +204,12 @@ export default function WalletPage() {
                 setWithdrawModal(false); setWithdrawAmount(''); setUpiId('')
             }
         } catch (error) {
-            toast.error(error.response?.data?.message || 'Withdrawal failed')
+            const errData = error.response?.data
+            if (errData?.code === 'WALLET_NOT_ACTIVATED') {
+                setShowActivationModal(true)
+            } else {
+                toast.error(errData?.message || 'Withdrawal failed')
+            }
         }
     }
 
@@ -242,6 +278,18 @@ export default function WalletPage() {
                                     <p className="font-heading font-bold text-titan-warning">{formatCurrency(wallet.locked)}</p>
                                 </div>
                             </div>
+
+                            {/* Activation Status Indicator */}
+                            {!activation.isActivated && (
+                                <div className="mb-6 p-4 bg-titan-warning/10 border border-titan-warning/30 rounded-lg">
+                                    <p className="font-semibold text-titan-warning mb-2">⚠️ Wallet Not Activated</p>
+                                    <p className="text-sm text-white/60 mb-3">Complete the following to activate:</p>
+                                    <ul className="text-sm text-white/60 space-y-1 mb-3">
+                                        {!activation.kycApproved && <li>• KYC verification (required)</li>}
+                                        {!activation.hasBillingAddress && <li>• Billing address (required)</li>}
+                                    </ul>
+                                </div>
+                            )}
 
                             <div className="flex gap-3">
                                 <button onClick={handleDeposit} disabled={paying} className="btn-neon flex-1 flex items-center justify-center gap-2">
@@ -348,6 +396,78 @@ export default function WalletPage() {
                     )}
                 </motion.div>
             </div>
+
+            {/* Wallet Activation Modal */}
+            <AnimatePresence>
+                {showActivationModal && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4"
+                        onClick={() => setShowActivationModal(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="glass-card p-8 max-w-md w-full"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="font-display text-2xl font-bold">Activate Your Wallet</h2>
+                                <button onClick={() => setShowActivationModal(false)} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
+
+                            <div className="space-y-4">
+                                <p className="text-white/70 mb-4">To use your wallet for deposits and withdrawals, please complete the following:</p>
+
+                                {/* KYC Status */}
+                                <div className={`p-4 rounded-lg border ${activation.kycApproved ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                                    <div className="flex items-start gap-3">
+                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${activation.kycApproved ? 'bg-green-500/30 text-green-400' : 'bg-red-500/30 text-red-400'}`}>
+                                            {activation.kycApproved ? '✓' : '○'}
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-semibold text-white">KYC Verification</p>
+                                            <p className="text-sm text-white/60 mt-1">
+                                                {activation.kycApproved ? 'Verified' : 'Not yet verified. Go to Settings to complete KYC.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Billing Address Status */}
+                                <div className={`p-4 rounded-lg border ${activation.hasBillingAddress ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                                    <div className="flex items-start gap-3">
+                                        <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${activation.hasBillingAddress ? 'bg-green-500/30 text-green-400' : 'bg-red-500/30 text-red-400'}`}>
+                                            {activation.hasBillingAddress ? '✓' : '○'}
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-semibold text-white">Billing Address</p>
+                                            <p className="text-sm text-white/60 mt-1">
+                                                {activation.hasBillingAddress ? 'Added' : 'Not yet added. Go to Settings to add billing address.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={() => {
+                                        setShowActivationModal(false)
+                                        window.location.href = '/settings#wallet' // Navigate to settings wallet section
+                                    }}
+                                    className="btn-neon w-full py-3 mt-6"
+                                >
+                                    Go to Settings
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Withdrawal Modal */}
             <AnimatePresence>
