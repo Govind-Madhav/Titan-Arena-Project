@@ -4,12 +4,23 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Search, Filter, Shield, User } from 'lucide-react'
-import { Link } from 'react-router-dom';
+import { CheckCircle, XCircle, Search, Shield, User } from 'lucide-react'
 import api from '../../lib/api';
 import toast from 'react-hot-toast';
 import Layout from '../../Components/layout/Layout';
 import { GradientText } from '../../Components/effects/ReactBits';
+
+const toDisplayUser = (user) => ({
+  id: user.id,
+  fullName: user.ign || user.username || 'Unknown User',
+  email: user.email,
+  role: user.role || 'PLAYER',
+  hostStatus: user.hostStatus,
+  platformUid: user.platformUid,
+  imageUrl: user.avatarUrl || 'https://via.placeholder.com/150',
+  createdAt: user.createdAt,
+  emailVerified: Boolean(user.emailVerified)
+});
 
 const ManageUsersPage = () => {
   const [pendingUsers, setPendingUsers] = useState([]);
@@ -24,33 +35,31 @@ const ManageUsersPage = () => {
   const refreshData = async () => {
     try {
       setFetchLoading(true);
-      await Promise.all([fetchPendingUsers(), fetchApprovedUsers()]);
+      await fetchUsers();
     } finally {
       setFetchLoading(false);
     }
   };
 
-  const fetchPendingUsers = async () => {
+  const fetchUsers = async () => {
     try {
-      const res = await api.get('/admin/pending-players');
-      setPendingUsers(res.data.data || []);
-    } catch (e) { console.error(e) }
-  };
-
-  const fetchApprovedUsers = async () => {
-    try {
-      const res = await api.get('/admin/verified-players');
-      setApprovedUsers(res.data.data || []);
+      const res = await api.get('/admin/users', {
+        params: { page: 1, limit: 500 }
+      });
+      const users = (res.data?.data?.users || []).map(toDisplayUser);
+      setPendingUsers(users.filter((user) => !user.emailVerified));
+      setApprovedUsers(users.filter((user) => user.emailVerified));
     } catch (e) { console.error(e) }
   };
 
   const handleApprove = async (id) => {
     try {
       setButtonLoadingId(id);
-      await api.put(`/admin/approve-player/${id}`);
+      await api.patch(`/admin/users/${id}/role`, { role: 'PLAYER', isAdmin: false });
       toast.success('Player approved successfully!');
       refreshData();
     } catch (error) {
+      console.error(error);
       toast.error('Failed to approve player!');
     } finally {
       setButtonLoadingId(null);
@@ -60,15 +69,69 @@ const ManageUsersPage = () => {
   const handleReject = async (id) => {
     try {
       setButtonLoadingId(id);
-      await api.delete(`/admin/delete-player/${id}`);
+      await api.post(`/admin/users/${id}/ban`, { ban: true, reason: 'Rejected by admin' });
       toast.success('Player rejected and deleted!');
       refreshData();
     } catch (error) {
+      console.error(error);
       toast.error('Failed to delete player!');
     } finally {
       setButtonLoadingId(null);
     }
   };
+
+  let pendingSectionContent = null;
+  if (fetchLoading) {
+    pendingSectionContent = (
+      <div className="flex justify-center py-12">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-titan-purple"></div>
+      </div>
+    );
+  } else if (pendingUsers.length === 0) {
+    pendingSectionContent = (
+      <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-8 text-center">
+        <p className="text-white/40">No pending requests at the moment.</p>
+      </div>
+    );
+  } else {
+    pendingSectionContent = (
+      <div className="grid gap-4">
+        {pendingUsers.map(user => (
+          <div key={user.id} className="bg-titan-bg-card border border-white/5 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 hover:border-white/10 transition-all">
+            <div className="flex items-center gap-4 w-full md:w-auto">
+              <div className="w-16 h-16 rounded-full bg-white/5 p-1">
+                <img src={user.imageUrl || 'https://via.placeholder.com/150'} alt="" className="w-full h-full rounded-full object-cover" />
+              </div>
+              <div>
+                <h3 className="font-bold text-white text-lg">{user.fullName}</h3>
+                <p className="text-white/40 text-sm">{user.email}</p>
+                <div className="flex gap-2 mt-2">
+                  <span className="bg-white/5 text-white/60 px-2 py-1 rounded text-xs">Player</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 w-full md:w-auto justify-end">
+              <button
+                onClick={() => handleReject(user.id)}
+                disabled={buttonLoadingId === user.id}
+                className="px-6 py-2 rounded-xl border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
+              >
+                {buttonLoadingId === user.id ? '...' : <><XCircle size={18} /> Reject</>}
+              </button>
+              <button
+                onClick={() => handleApprove(user.id)}
+                disabled={buttonLoadingId === user.id}
+                className="px-6 py-2 rounded-xl bg-titan-purple hover:bg-titan-purple-dark text-white shadow-neon-sm transition-all flex items-center gap-2"
+              >
+                {buttonLoadingId === user.id ? 'Processing...' : <><CheckCircle size={18} /> Approve</>}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <Layout userRole="ADMIN">
@@ -94,51 +157,7 @@ const ManageUsersPage = () => {
               </span>
             </div>
 
-            {fetchLoading ? (
-              <div className="flex justify-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-titan-purple"></div>
-              </div>
-            ) : pendingUsers.length === 0 ? (
-              <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-8 text-center">
-                <p className="text-white/40">No pending requests at the moment.</p>
-              </div>
-            ) : (
-              <div className="grid gap-4">
-                {pendingUsers.map(user => (
-                  <div key={user.id} className="bg-titan-bg-card border border-white/5 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 hover:border-white/10 transition-all">
-                    <div className="flex items-center gap-4 w-full md:w-auto">
-                      <div className="w-16 h-16 rounded-full bg-white/5 p-1">
-                        <img src={user.imageUrl || 'https://via.placeholder.com/150'} alt="" className="w-full h-full rounded-full object-cover" />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-white text-lg">{user.fullName}</h3>
-                        <p className="text-white/40 text-sm">{user.email}</p>
-                        <div className="flex gap-2 mt-2">
-                          <span className="bg-white/5 text-white/60 px-2 py-1 rounded text-xs">Player</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-4 w-full md:w-auto justify-end">
-                      <button
-                        onClick={() => handleReject(user.id)}
-                        disabled={buttonLoadingId === user.id}
-                        className="px-6 py-2 rounded-xl border border-red-500/30 text-red-500 hover:bg-red-500/10 transition-colors flex items-center gap-2"
-                      >
-                        {buttonLoadingId === user.id ? '...' : <><XCircle size={18} /> Reject</>}
-                      </button>
-                      <button
-                        onClick={() => handleApprove(user.id)}
-                        disabled={buttonLoadingId === user.id}
-                        className="px-6 py-2 rounded-xl bg-titan-purple hover:bg-titan-purple-dark text-white shadow-neon-sm transition-all flex items-center gap-2"
-                      >
-                        {buttonLoadingId === user.id ? 'Processing...' : <><CheckCircle size={18} /> Approve</>}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {pendingSectionContent}
           </section>
 
           {/* Active Players */}
@@ -199,12 +218,12 @@ const ManageUsersPage = () => {
                       </td>
                       <td className="px-6 py-4">
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-green-500/10 text-green-500 text-xs font-bold">
-                          <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>{' '}
                           Verified
                         </span>
                       </td>
                       <td className="px-6 py-4 text-sm text-white/60">
-                        {new Date().toLocaleDateString()}
+                        {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '-'}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <button className="text-white/40 hover:text-white transition-colors">
