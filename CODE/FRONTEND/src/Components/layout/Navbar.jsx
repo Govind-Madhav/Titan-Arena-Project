@@ -114,6 +114,9 @@ export default function Navbar() {
     const { isAuthenticated, user, logout } = useAuthStore()
     const location = useLocation()
     const navigate = useNavigate()
+    const isAdminUser = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN' || user?.isAdmin
+    const isHostUser = user?.role === 'HOST'
+    const showPlayerDashboard = isAuthenticated && !isAdminUser && !isHostUser
 
     const handleLogout = () => {
         logout()
@@ -213,8 +216,6 @@ export default function Navbar() {
                                     <span className="font-heading font-semibold text-sm">₹0</span>
                                 </Link>
 
-                                {/* Dashboard removed (merged into profile) */}
-
                                 {/* User Menu */}
                                 <div className="relative group">
                                     <button className="flex items-center gap-2 p-2 rounded-lg hover:bg-white/5 transition-all">
@@ -231,6 +232,16 @@ export default function Navbar() {
                                     </button>
 
                                     <div className="absolute right-0 top-full mt-2 w-48 py-2 bg-titan-bg-card border border-white/10 rounded-xl shadow-glass opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                                        {showPlayerDashboard && (
+                                            <Link
+                                                to="/dashboard"
+                                                className="flex items-center gap-3 px-4 py-2 text-white/70 hover:text-white hover:bg-white/5 transition-all"
+                                            >
+                                                <LayoutDashboard size={16} />
+                                                Player Dashboard
+                                            </Link>
+                                        )}
+
                                         {(user?.role === 'ADMIN' || user?.role === 'SUPERADMIN') && (
                                             <Link
                                                 to="/admin"
@@ -241,7 +252,7 @@ export default function Navbar() {
                                             </Link>
                                         )}
 
-                                        {(user?.role === 'HOST' || user?.role === 'ADMIN' || user?.role === 'SUPERADMIN') && (
+                                        {user?.role === 'HOST' && (
                                             <Link
                                                 to="/host"
                                                 className="flex items-center gap-3 px-4 py-2 text-white/70 hover:text-white hover:bg-white/5 transition-all"
@@ -308,6 +319,18 @@ export default function Navbar() {
                             </Link>
                         ))}
                         {isAuthenticated && (
+                            <>
+                                {showPlayerDashboard && (
+                                    <Link
+                                        to="/dashboard"
+                                        onClick={() => setMobileMenuOpen(false)}
+                                        className="flex items-center gap-3 px-4 py-3 rounded-lg font-heading font-semibold text-white/60 hover:text-white hover:bg-white/5 transition-all"
+                                    >
+                                        <LayoutDashboard size={20} />
+                                        Player Dashboard
+                                    </Link>
+                                )}
+
                             <Link
                                 to="/wallet"
                                 onClick={() => setMobileMenuOpen(false)}
@@ -316,6 +339,7 @@ export default function Navbar() {
                                 <Wallet size={20} />
                                 Wallet
                             </Link>
+                            </>
                         )}
                     </div>
                 </motion.div>
