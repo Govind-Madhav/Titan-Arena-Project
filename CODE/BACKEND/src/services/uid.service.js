@@ -22,11 +22,16 @@ class UidService {
 
         // Ensure region is number
         const regionNum = Number(region);
-        if (isNaN(regionNum) || regionNum < 1 || regionNum > 6) {
+        if (Number.isNaN(regionNum) || regionNum < 1 || regionNum > 6) {
             throw new Error(`Invalid region for UID generation: ${region}`);
         }
 
         try {
+            // Ensure counter row exists for this region before incrementing.
+            await tx.insert(uidCounters)
+                .values({ region: regionNum, lastValue: 0 })
+                .onConflictDoNothing();
+
             // 1. Atomic Increment: Update the counter directly
             // This implicitly locks the row until transaction commit
             await tx.update(uidCounters)
