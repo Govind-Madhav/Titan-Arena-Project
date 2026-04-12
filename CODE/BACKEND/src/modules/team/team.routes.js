@@ -21,5 +21,6 @@ router.delete('/:id', teamController.deleteTeam);
 // Member management
 router.post('/:id/members', teamController.addMember);
 router.delete('/:id/members/:userId', teamController.removeMember);
+router.patch('/:id/members/:userId/role', teamController.updateMemberRole);
 
 module.exports = router;
