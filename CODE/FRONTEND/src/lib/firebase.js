@@ -17,11 +17,22 @@ const firebaseConfig = {
     appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+const isFirebaseConfigured = [
+    firebaseConfig.apiKey,
+    firebaseConfig.projectId,
+    firebaseConfig.messagingSenderId,
+    firebaseConfig.appId,
+].every(Boolean);
 
-// Initialize Firebase Auth
-export const auth = getAuth(app);
-auth.useDeviceLanguage(); // Set to browser language for OTP SMS
+const app = isFirebaseConfigured ? initializeApp(firebaseConfig) : null;
+const auth = app ? getAuth(app) : null;
+
+if (auth) {
+    auth.useDeviceLanguage(); // Set to browser language for OTP SMS
+} else {
+    console.warn('Firebase is not configured. Set VITE_FIREBASE_* env vars to enable auth.');
+}
+
+export { auth, isFirebaseConfigured };
 
 export default app;
