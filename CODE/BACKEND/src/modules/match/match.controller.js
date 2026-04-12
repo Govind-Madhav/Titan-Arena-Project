@@ -13,6 +13,54 @@ const mmrService = require('../../services/mmr.service');
 const achievementService = require('../../services/achievement.service');
 const { broadcastMatchCompleted, broadcastScoreUpdate, emitToTournament } = require('../../config/socket.config');
 
+const ACTIVE_STREAM_STATUSES = new Set(['ONGOING', 'IN_PROGRESS', 'LIVE']);
+
+const parseStreamMeta = (url) => {
+    if (!url || typeof url !== 'string') {
+        return { platform: 'OTHER', streamId: null };
+    }
+
+    const normalized = url.trim();
+
+    const twitchRegex = /twitch\.tv\/(?:videos\/(\d+)|([^/?#]+))/i;
+    const twitchMatch = twitchRegex.exec(normalized);
+    if (twitchMatch) {
+        return {
+            platform: 'TWITCH',
+            streamId: twitchMatch[1] || twitchMatch[2] || null
+        };
+    }
+
+    const youtubePatterns = [
+        /youtu\.be\/([^?#&]+)/i,
+        /youtube\.com\/watch\?v=([^&]+)/i,
+        /youtube\.com\/live\/([^?#&]+)/i,
+        /youtube\.com\/embed\/([^?#&]+)/i
+    ];
+
+    for (const pattern of youtubePatterns) {
+        const youtubeMatch = pattern.exec(normalized);
+        if (youtubeMatch) {
+            return {
+                platform: 'YOUTUBE',
+                streamId: youtubeMatch[1] || null
+            };
+        }
+    }
+
+    return { platform: 'OTHER', streamId: null };
+};
+
+const mapStreamRow = (row, streamScope = 'MATCH') => {
+    const meta = parseStreamMeta(row.streamUrl);
+    return {
+        ...row,
+        streamScope,
+        platform: meta.platform,
+        streamId: meta.streamId
+    };
+};
+
 // Get matches for tournament
 exports.getMatches = async (req, res) => {
     try {
@@ -153,7 +201,7 @@ exports.generateBracket = async (req, res) => {
         const JAVA_ENGINE_URL = process.env.JAVA_ENGINE_URL || 'http://localhost:8080';
 
         const engineRes = await fetch(
-            `${JAVA_ENGINE_URL}/api/brackets/${tournamentId}/generate?format=${encodeURIComponent(format)}`,
+            `${JAVA_ENGINE_URL}/api/brackets/${encodeURIComponent(tournamentId)}/generate?format=${encodeURIComponent(format)}`,
             { method: 'POST', headers: { 'Content-Type': 'application/json' } }
         );
 
@@ -478,7 +526,7 @@ function getOrdinal(n) {
  */
 exports.updateStream = async (req, res) => {
     try {
-        const { streamUrl, vodUrl, spectatorCode } = req.body;
+        const { streamUrl, vodUrl, spectatorCode, isLive } = req.body;
         const matchRows = await db.select().from(matches).where(eq(matches.id, req.params.id));
         if (!matchRows.length) return res.status(404).json({ success: false, message: 'Match not found' });
 
@@ -498,11 +546,24 @@ exports.updateStream = async (req, res) => {
         if (streamUrl !== undefined) updateData.streamUrl = streamUrl || null;
         if (vodUrl !== undefined) updateData.vodUrl = vodUrl || null;
         if (spectatorCode !== undefined) updateData.spectatorCode = spectatorCode || null;
+        if (typeof isLive === 'boolean') {
+            updateData.status = isLive ? 'LIVE' : 'SCHEDULED';
+        }
 
         const [updated] = await db.update(matches).set(updateData).where(eq(matches.id, req.params.id)).returning();
 
+        const updatedMeta = parseStreamMeta(updated.streamUrl);
+
         // Broadcast stream update over socket (use emitToTournament; broadcastScoreUpdate is for scores only)
-        emitToTournament(match.tournamentId, 'stream:update', { matchId: match.id, streamUrl: updated.streamUrl });
+        emitToTournament(match.tournamentId, 'stream:update', {
+            tournamentId: match.tournamentId,
+            matchId: match.id,
+            streamUrl: updated.streamUrl,
+            streamScope: 'MATCH',
+            platform: updatedMeta.platform,
+            streamId: updatedMeta.streamId,
+            isLive: ACTIVE_STREAM_STATUSES.has(updated.status)
+        });
 
         res.json({ success: true, message: 'Stream info updated', data: updated });
     } catch (error) {
@@ -518,19 +579,23 @@ exports.updateStream = async (req, res) => {
  */
 exports.getLiveStreams = async (req, res) => {
     try {
-        const rows = await db.select({
+        const { scope = 'all' } = req.query;
+
+        const includeMatchScope = scope === 'all' || scope === 'match';
+        const includeTournamentScope = scope === 'all' || scope === 'tournament';
+
+        const rows = includeMatchScope ? await db.select({
             matchId: matches.id,
             tournamentId: matches.tournamentId,
             round: matches.round,
             matchNumber: matches.matchNumber,
             status: matches.status,
             streamUrl: matches.streamUrl,
-            spectatorCode: matches.spectatorCode,
             bracketSection: matches.bracketSection,
             startTime: matches.startTime,
             tournamentName: tournaments.name,
             game: tournaments.game,
-            gameBanner: tournaments.bannerUrl,
+                gameBanner: tournaments.highlightUrl,
         })
             .from(matches)
             .leftJoin(tournaments, eq(matches.tournamentId, tournaments.id))
@@ -540,17 +605,55 @@ exports.getLiveStreams = async (req, res) => {
                     or(
                         eq(matches.status, 'ONGOING'),
                         eq(matches.status, 'IN_PROGRESS'),
-                        eq(matches.status, 'LIVE'),
-                        eq(matches.status, 'SCHEDULED'),
-                        eq(matches.status, 'PENDING'),
-                        eq(matches.status, 'UPCOMING')
+                        eq(matches.status, 'LIVE')
                     )
                 )
             )
             .orderBy(desc(matches.startTime))
-            .limit(50);
+            .limit(50) : [];
 
-        res.json({ success: true, data: rows });
+        const mappedMatchStreams = rows.map((row) => mapStreamRow(row, 'MATCH'));
+
+        let tournamentStreams = [];
+        if (includeTournamentScope) {
+            const tournamentRows = await db.select({
+                tournamentId: tournaments.id,
+                status: tournaments.status,
+                streamUrl: tournaments.streamUrl,
+                streamPlatform: tournaments.streamPlatform,
+                streamId: tournaments.streamId,
+                streamScope: tournaments.streamScope,
+                streamIsLive: tournaments.streamIsLive,
+                startTime: tournaments.startTime,
+                tournamentName: tournaments.name,
+                game: tournaments.game,
+                gameBanner: tournaments.highlightUrl,
+            })
+                .from(tournaments)
+                .where(and(
+                    isNotNull(tournaments.streamUrl),
+                    eq(tournaments.streamIsLive, true),
+                    eq(tournaments.streamScope, 'TOURNAMENT')
+                ))
+                .orderBy(desc(tournaments.startTime))
+                .limit(20);
+
+            tournamentStreams = tournamentRows
+                .map((row) => ({
+                    ...row,
+                    matchId: `tournament:${row.tournamentId}`,
+                    round: null,
+                    matchNumber: null,
+                    bracketSection: 'TOURNAMENT',
+                    streamScope: 'TOURNAMENT',
+                    platform: row.streamPlatform || 'OTHER'
+                }))
+                .filter((row) => row.platform !== 'OTHER');
+        }
+
+        const data = [...mappedMatchStreams, ...tournamentStreams];
+
+        res.json({ success: true, data });
     } catch (error) {
         console.error('Get live streams error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch live streams' });
@@ -573,7 +676,44 @@ exports.getMatchStream = async (req, res) => {
         }).from(matches).where(eq(matches.id, req.params.id));
 
         if (!rows.length) return res.status(404).json({ success: false, message: 'Match not found' });
-        res.json({ success: true, data: rows[0] });
+
+        const stream = rows[0];
+        const tournamentRows = await db.select({ hostId: tournaments.hostId })
+            .from(tournaments)
+            .where(eq(tournaments.id, stream.tournamentId))
+            .limit(1);
+
+        const hostId = tournamentRows[0]?.hostId;
+        const userId = req.user?.id;
+        const isAdminUser = Boolean(req.user?.isAdmin || ['ADMIN', 'SUPERADMIN'].includes(req.user?.role));
+        const isHost = Boolean(userId && hostId && userId === hostId);
+
+        let isParticipant = false;
+        if (userId) {
+            const participantRows = await db.select({ id: registrations.id })
+                .from(registrations)
+                .where(and(
+                    eq(registrations.tournamentId, stream.tournamentId),
+                    eq(registrations.userId, userId)
+                ))
+                .limit(1);
+            isParticipant = participantRows.length > 0;
+        }
+
+        const canViewSpectatorCode = isAdminUser || isHost || isParticipant;
+        const streamMeta = parseStreamMeta(stream.streamUrl);
+
+        res.json({
+            success: true,
+            data: {
+                ...stream,
+                spectatorCode: canViewSpectatorCode ? stream.spectatorCode : null,
+                streamScope: 'MATCH',
+                platform: streamMeta.platform,
+                streamId: streamMeta.streamId,
+                isLive: ACTIVE_STREAM_STATUSES.has(stream.status)
+            }
+        });
     } catch (error) {
         console.error('Get match stream error:', error);
         res.status(500).json({ success: false, message: 'Failed to fetch stream info' });
