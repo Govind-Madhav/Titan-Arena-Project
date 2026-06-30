@@ -1,4 +1,4 @@
-# 🌌 Titan Arena 
+# 🌌 Titan Arena
 
 Titan Arena is a premium, high-fidelity esports tournament management platform engineered for low-latency tournament orchestration, secure financial transactions, and high-engagement user experiences.
 
@@ -71,30 +71,30 @@ graph TD
 
 ### Event Bus — Kafka Topics
 
-| Topic | Publisher | Consumer(s) |
-|---|---|---|
-| `user.registered` | Node.js (`userSync.service`) | *(future: welcome emails)* |
-| `tournament.created` | Node.js (`tournament.controller`) | Java Engine (bracket gen) |
-| `tournament.started` | Node.js (`tournament.controller`) | Node.js Notification Consumer |
-| `tournament.ended` | Node.js (`tournament.controller`) | Node.js Notification + Stats |
-| `match.completed` | Node.js (`match.controller`) | Java Engine + Notification + Stats |
-| `match.scheduled` | Java Engine | Node.js Notification Consumer |
-| `wallet.credited` | Node.js (`wallet.service`) | *(future: analytics)* |
-| `wallet.debited` | Node.js (`wallet.service`) | *(future: analytics)* |
-| `kyc.approved` | Node.js (`kyc.controller`) | *(future: role promotion)* |
-| `kyc.rejected` | Node.js (`kyc.controller`) | *(future: user notification)* |
-| `dispute.resolved` | Node.js (`dispute.controller`) | *(future: auto-refund)* |
+| Topic                  | Publisher                           | Consumer(s)                        |
+| ---------------------- | ----------------------------------- | ---------------------------------- |
+| `user.registered`    | Node.js (`userSync.service`)      | *(future: welcome emails)*       |
+| `tournament.created` | Node.js (`tournament.controller`) | Java Engine (bracket gen)          |
+| `tournament.started` | Node.js (`tournament.controller`) | Node.js Notification Consumer      |
+| `tournament.ended`   | Node.js (`tournament.controller`) | Node.js Notification + Stats       |
+| `match.completed`    | Node.js (`match.controller`)      | Java Engine + Notification + Stats |
+| `match.scheduled`    | Java Engine                         | Node.js Notification Consumer      |
+| `wallet.credited`    | Node.js (`wallet.service`)        | *(future: analytics)*            |
+| `wallet.debited`     | Node.js (`wallet.service`)        | *(future: analytics)*            |
+| `kyc.approved`       | Node.js (`kyc.controller`)        | *(future: role promotion)*       |
+| `kyc.rejected`       | Node.js (`kyc.controller`)        | *(future: user notification)*    |
+| `dispute.resolved`   | Node.js (`dispute.controller`)    | *(future: auto-refund)*          |
 
 ---
 
 ## 👥 Role Matrix
 
-| Role | Primary Scope | Key Capabilities |
-|---|---|---|
-| Player | Personal account and participation | Join tournaments, manage profile, wallet, teams/clans, stats, disputes, notifications |
-| Host | Own tournament operations | Create and manage own tournaments, handle participants, payments, stream setup, declare winners |
-| Admin | Platform operations and moderation | Manage tournaments, users, hosts, applications, disputes, and revenue reporting |
-| SuperAdmin | Full platform control | Everything an Admin can do, plus role and policy control, elevated governance, and top-level system administration |
+| Role       | Primary Scope                      | Key Capabilities                                                                                                   |
+| ---------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Player     | Personal account and participation | Join tournaments, manage profile, wallet, teams/clans, stats, disputes, notifications                              |
+| Host       | Own tournament operations          | Create and manage own tournaments, handle participants, payments, stream setup, declare winners                    |
+| Admin      | Platform operations and moderation | Manage tournaments, users, hosts, applications, disputes, and revenue reporting                                    |
+| SuperAdmin | Full platform control              | Everything an Admin can do, plus role and policy control, elevated governance, and top-level system administration |
 
 ---
 
@@ -146,7 +146,7 @@ Esports Tournament Website/
     │       │   │   └── kyc.controller.js    ← publishes kyc events
     │       │   ├── admin/
     │       │   │   ├── admin.controller.js
-    │       │   │   └── audit.service.js      
+    │       │   │   └── audit.service.js    
     │       │   ├── clans/
     │       │   ├── game/
     │       │   ├── host/
@@ -217,32 +217,36 @@ Esports Tournament Website/
 ## 🚀 Running the Full Stack
 
 ### Prerequisites
+
 - Docker Desktop
 - `.env` file configured (see `.env.example`)
 
 ### Email Deliverability
+
 - Set `SMTP_USER`, `SMTP_PASS`, and preferably `SMTP_FROM` to a mailbox on a domain you control.
 - Publish SPF, DKIM, and DMARC records for that sending domain before relying on verification mail in production.
 - If messages still land in spam, check the provider's SMTP reputation, the sender domain alignment, and whether the `From` address matches the authenticated mailbox.
 
 ### Start All Services
+
 ```bash
 docker-compose up -d
 ```
 
 This launches **7 containers**:
 
-| Container | Port | Description |
-|---|---|---|
-| `esports-frontend` | 80 | React SPA (Nginx) |
-| `esports-backend` | 5000 | Node.js API |
+| Container                     | Port | Description         |
+| ----------------------------- | ---- | ------------------- |
+| `esports-frontend`          | 80   | React SPA (Nginx)   |
+| `esports-backend`           | 5000 | Node.js API         |
 | `esports-tournament-engine` | 8080 | Java Bracket Engine |
-| `esports-postgres` | 5432 | PostgreSQL 16 |
-| `esports-redis` | 6379 | Redis 7 |
-| `esports-kafka` | 9092 | Apache Kafka |
-| `esports-zookeeper` | — | Kafka coordination |
+| `esports-postgres`          | 5432 | PostgreSQL 16       |
+| `esports-redis`             | 6379 | Redis 7             |
+| `esports-kafka`             | 9092 | Apache Kafka        |
+| `esports-zookeeper`         | —   | Kafka coordination  |
 
 ### Development (without Docker)
+
 ```bash
 # Backend
 cd CODE/BACKEND && npm run dev
@@ -255,6 +259,7 @@ cd CODE/FRONTEND && npm run dev
 ```
 
 ### Database Migrations
+
 ```bash
 cd CODE/BACKEND
 npm run db:push    # Push Drizzle schema to PostgreSQL
@@ -264,4 +269,5 @@ npm run db:studio  # Drizzle Studio UI
 ---
 
 ## 🛡️ License & Legal
+
 **Proprietary Software**. Copyright © 2025 Titan E-sports. All rights reserved. Access to this source code does not grant rights for reproduction or redistribution.
