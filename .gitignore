@@ -51,3 +51,6 @@ lerna-debug.log*
 CODE/BACKEND/Firebase/*.json
 
 
+
+*.pdf
+Titan arena/*.pdf
