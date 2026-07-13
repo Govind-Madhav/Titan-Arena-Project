@@ -21,6 +21,7 @@ const archiveDir = path.join(scriptsDir, 'archive');
 const scriptCategories = {
     production: [
         'init_uid_counters.js',
+        'backfill_role_uids.js',
         'migrate_region_system.js',
         'promote_superadmin.js'
     ],

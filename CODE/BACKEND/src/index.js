@@ -87,7 +87,12 @@ app.use(cors({
 app.use(require('cookie-parser')());
 
 // ✅ FIX: Explicit JSON size limit to prevent memory abuse
-app.use(express.json({ limit: '100kb' })); // Reduced to 100kb as per recommendation
+app.use(express.json({
+  limit: '100kb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
 // ✅ FIX: Preventing HTTP Parameter Pollution (HPP)
 app.use(security.hpp);

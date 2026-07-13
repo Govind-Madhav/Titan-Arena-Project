@@ -11,8 +11,10 @@
  *   to the terminal (dev mode). We patch console.log to intercept it.
  */
 
+/* eslint-disable sonarjs/no-nested-ternary, no-negated-condition, sonarjs/no-nested-functions */
+
 require('dotenv').config();
-const http = require('http');
+const http = require('node:http');
 
 const BASE = `http://localhost:${process.env.PORT || 5001}`;
 const STAMP = Date.now();
@@ -33,7 +35,8 @@ let capturedOtp = null;
 const _origLog = console.log.bind(console);
 console.log = (...args) => {
     const msg = args.join(' ');
-    const m = msg.match(/OTP for .+?: (\d{6})/);
+    const otpRegex = /OTP for .+?: (\d{6})/;
+    const m = otpRegex.exec(msg);
     if (m) capturedOtp = m[1];
     _origLog(...args);
 };
@@ -61,7 +64,10 @@ function request(method, path, body = null) {
             res.on('data', c => data += c);
             res.on('end', () => {
                 const sc = res.headers['set-cookie'];
-                if (sc) cookieJar = sc.map(c => c.split(';')[0]).join('; ');
+                if (sc) {
+                    const cookies = sc.map((cookie) => cookie.split(';')[0]);
+                    cookieJar = cookies.join('; ');
+                }
                 try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
                 catch { resolve({ status: res.statusCode, body: data }); }
             });
@@ -73,7 +79,12 @@ function request(method, path, body = null) {
 }
 
 function log(label, status, detail = '') {
-    const icon = status === 'PASS' ? '✅' : status === 'SKIP' ? '⏭️ ' : '❌';
+    let icon = '❌';
+    if (status === 'PASS') {
+        icon = '✅';
+    } else if (status === 'SKIP') {
+        icon = '⏭️ ';
+    }
     if (status === 'PASS') passed++;
     if (status === 'FAIL') failed++;
     _origLog(`${icon} [${status}] ${label}${detail ? ' — ' + detail : ''}`);

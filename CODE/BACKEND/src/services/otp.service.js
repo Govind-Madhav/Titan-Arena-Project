@@ -52,6 +52,12 @@ class OtpService {
         return otp; // Return plaintext to controller to send via email
     }
 
+    async clearRateLimit(email, scope = 'register') {
+        const redisClient = getRedisClient();
+        const rateKey = `rate:otp:${scope}:${email}`;
+        await redisClient.del(rateKey);
+    }
+
     /**
      * Verifies the OTP.
      * Enforces strict attempt limits.

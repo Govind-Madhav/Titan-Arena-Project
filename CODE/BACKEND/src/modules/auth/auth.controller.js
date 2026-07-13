@@ -5,7 +5,7 @@
 
 const { db } = require('../../db');
 const { users, wallets, refreshTokens, playerProfiles, hostProfiles } = require('../../db/schema');
-const { eq, or, and, gt } = require('drizzle-orm');
+const { eq, or, and, gt, sql } = require('drizzle-orm');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('node:crypto');
@@ -19,7 +19,7 @@ const { getHostTrustProfile } = require('../../services/hostTrust.service');
 const { validateSubRegion } = require('../../config/regions.config');
 const { admin } = require('../../config/firebase.config');
 const { getRedisClient } = require('../../config/redis.config');
-const { authenticator } = require('otplib');
+const { generateSecret, generateURI, verifySync } = require('otplib');
 const QRCode = require('qrcode');
 
 // Validation schemas
@@ -67,8 +67,191 @@ const metadataSchema = z.object({
 });
 
 const MFA_PENDING_TTL_SECONDS = 10 * 60;
+const MFA_TOTP_PERIOD_SECONDS = 30;
+const MFA_TOTP_TOLERANCE_SECONDS = 60;
 const getMfaPendingKey = (userId) => `mfa:pending:${userId}`;
 const getMfaSecretKey = (userId) => `mfa:secret:${userId}`;
+
+const resolveFirebaseLinkedUser = async (firebaseUser) => {
+    const firebaseUid = firebaseUser?.uid;
+    const email = firebaseUser?.email;
+
+    if (!firebaseUid && !email) {
+        return null;
+    }
+
+    if (firebaseUid) {
+        const [user] = await db.select({
+            id: users.id,
+            mfaEnabled: users.mfaEnabled,
+            mfaSecret: users.mfaSecret,
+            firebaseUid: users.firebaseUid,
+            email: users.email
+        })
+        .from(users)
+        .where(eq(users.firebaseUid, firebaseUid))
+        .limit(1);
+
+        if (user) return user;
+    }
+
+    if (email) {
+        const [user] = await db.select({
+            id: users.id,
+            mfaEnabled: users.mfaEnabled,
+            mfaSecret: users.mfaSecret,
+            firebaseUid: users.firebaseUid,
+            email: users.email
+        })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+        if (user) return user;
+    }
+
+    return null;
+};
+
+const createHttpError = (status, message) => {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+};
+
+const roleUidFieldMap = {
+    HOST: 'hostUid',
+    ADMIN: 'adminUid',
+    SUPERADMIN: 'superAdminUid'
+};
+
+const getRoleUidAssignment = async (role, tx) => {
+    const field = roleUidFieldMap[String(role || '').toUpperCase()];
+    if (!field) return {};
+
+    const { uid } = await uidService.generateRoleUid(role, tx);
+    return { [field]: uid };
+};
+
+const quoteIdent = (value) => `"${String(value).split('"').join('""')}"`;
+
+const getUserForeignKeys = async (tx) => {
+    const foreignKeys = await tx.execute(sql`
+        SELECT tc.table_name, kcu.column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+            ON tc.constraint_name = kcu.constraint_name
+           AND tc.table_schema = kcu.table_schema
+        JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+           AND ccu.table_schema = tc.table_schema
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = 'public'
+          AND ccu.table_name = 'users'
+          AND ccu.column_name = 'id'
+        ORDER BY tc.table_name
+    `);
+
+    return foreignKeys.rows;
+};
+
+const deleteForeignKeyRows = async (tx, foreignKeys, userId) => {
+    const tables = foreignKeys.filter((foreignKey) => foreignKey.table_name !== 'users');
+
+    await Promise.all(tables.map((foreignKey) => tx.execute(sql`
+        DELETE FROM ${sql.raw(quoteIdent(foreignKey.table_name))}
+        WHERE ${sql.raw(quoteIdent(foreignKey.column_name))}::text = ${userId}
+    `)));
+};
+
+const ensureSignupEmailIsAvailable = async (email) => {
+    const existingUsers = await db.select()
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+    if (existingUsers[0]) {
+        throw createHttpError(400, 'Email already registered');
+    }
+};
+
+const resetPendingSignupOtp = async (redis, email) => {
+    const pendingKey = `pending_registration:${email}`;
+    const existing = await redis.get(pendingKey);
+
+    if (existing) {
+        console.log(`📧 Resending OTP for pending registration: ${email}`);
+        await redis.del(`otp:register:${email}`);
+        await otpService.clearRateLimit(email);
+    }
+
+    return pendingKey;
+};
+
+const assertValidSignupSubRegion = (region, subRegion) => {
+    if (subRegion && !validateSubRegion(region, subRegion)) {
+        throw createHttpError(400, 'Invalid sub-region for selected region');
+    }
+};
+
+const sendSignupVerificationEmail = async ({
+    email,
+    ign,
+    otp,
+    pendingKey,
+    redis,
+    smtpConfigured,
+    isProduction,
+    allowOtpFallback
+}) => {
+    if (!smtpConfigured) {
+        if (!allowOtpFallback) {
+            await redis.del(pendingKey);
+            throw createHttpError(503, 'Email service is not configured on the server. Please contact support.');
+        }
+
+        return {
+            success: true,
+            message: 'SMTP is not configured. Development fallback enabled; use OTP from response to verify.',
+            devOtp: otp,
+            devMode: true
+        };
+    }
+
+    try {
+        await emailService.sendVerificationEmail(email, otp, ign);
+        return {
+            success: true,
+            message: 'Verification code sent to email. Please verify within 24 hours to complete registration.'
+        };
+    } catch (emailError) {
+        console.error('Failed to send verification email:', {
+            message: emailError?.message,
+            code: emailError?.code,
+            responseCode: emailError?.responseCode,
+            command: emailError?.command
+        });
+
+        if (isProduction && !allowOtpFallback) {
+            await redis.del(pendingKey);
+            throw createHttpError(500, 'Failed to send verification email. Please try again.');
+        }
+
+        return {
+            success: true,
+            message: 'Email delivery failed in development. Use OTP from response to verify.',
+            devOtp: otp,
+            devMode: true
+        };
+    }
+};
+
+const deleteUserAndReferences = async (tx, userId) => {
+    const foreignKeys = await getUserForeignKeys(tx);
+    await deleteForeignKeyRows(tx, foreignKeys, userId);
+
+    await tx.execute(sql`DELETE FROM "users" WHERE id = ${userId}`);
+};
 
 
 // Generate tokens
@@ -91,14 +274,14 @@ const generateRefreshToken = (userId) => {
 // Check IGN availability (dedicated endpoint)
 exports.checkIgnAvailability = async (req, res) => {
     try {
-        const { ign } = req.body;
+        const ign = String(req.body?.ign || '').trim();
 
-        if (!ign || ign.length < 3) {
+        if (ign.length < 3) {
             return res.json({ available: null });
         }
 
         // Check IGN (case-insensitive)
-        const normalizedIgn = ign.trim().toLowerCase();
+        const normalizedIgn = ign.toLowerCase();
         const { sql } = require('drizzle-orm');
         const existingIgn = await db.select()
             .from(playerProfiles)
@@ -139,45 +322,20 @@ exports.signup = async (req, res) => {
     try {
         const data = signupSchema.parse(req.body);
         const smtpConfigured = Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
-
-        // Check existing user in database
-        const existingUsers = await db.select()
-            .from(users)
-            .where(or(
-                eq(users.email, data.email)
-            ))
-            .limit(1);
-
-        if (existingUsers[0]) {
-            return res.status(400).json({
-                success: false,
-                message: 'Email already registered'
-            });
-        }
+        const isProduction = process.env.NODE_ENV === 'production';
+        const allowOtpFallback = process.env.ALLOW_OTP_FALLBACK === 'true' || !isProduction;
+        await ensureSignupEmailIsAvailable(data.email);
 
         // Check if there's already a pending registration for this email
         const { getRedisClient } = require('../../config/redis.config');
         const redis = getRedisClient();
-        const pendingKey = `pending_registration:${data.email}`;
-        const existing = await redis.get(pendingKey);
-
-        if (existing) {
-            // User is trying to register again - allow them to get a new OTP
-            console.log(`📧 Resending OTP for pending registration: ${data.email}`);
-            // Delete old OTP and continue with new registration
-            await redis.del(`otp:register:${data.email}`);
-        }
+        const pendingKey = await resetPendingSignupOtp(redis, data.email);
 
         // Normalize IGN (trim)
         const ign = data.ign.trim();
 
         // Validate sub-region belongs to region
-        if (data.subRegion && !validateSubRegion(data.region, data.subRegion)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Invalid sub-region for selected region'
-            });
-        }
+        assertValidSignupSubRegion(data.region, data.subRegion);
 
         // Hash password before storing
         const passwordHash = await bcrypt.hash(data.password, 12);
@@ -207,36 +365,29 @@ exports.signup = async (req, res) => {
         });
 
 
-        // Generate OTP and send verification email
-        try {
-            const otp = await otpService.generateOtp(data.email);
-            console.log(`🔐 OTP for ${data.email}: ${otp}`); // DEV: Show OTP in terminal
+        const otp = await otpService.generateOtp(data.email);
+        console.log(`🔐 OTP for ${data.email}: ${otp}`); // DEV: Show OTP in terminal
+        const signupResponse = await sendSignupVerificationEmail({
+            email: data.email,
+            ign,
+            otp,
+            pendingKey,
+            redis,
+            smtpConfigured,
+            isProduction,
+            allowOtpFallback
+        });
 
-            if (!smtpConfigured) {
-                await redis.del(pendingKey);
-                return res.status(503).json({
-                    success: false,
-                    message: 'Email service is not configured on the server. Please contact support.'
-                });
-            }
+        return res.status(201).json(signupResponse);
 
-            await emailService.sendVerificationEmail(data.email, otp, ign);
-        } catch (emailError) {
-            console.error('Failed to send verification email:', emailError);
-            // Clean up pending registration if email fails
-            await redis.del(pendingKey);
-            return res.status(500).json({
+    } catch (error) {
+        if (error?.status) {
+            return res.status(error.status).json({
                 success: false,
-                message: 'Failed to send verification email. Please try again.'
+                message: error.message
             });
         }
 
-        res.status(201).json({
-            success: true,
-            message: 'Verification code sent to email. Please verify within 24 hours to complete registration.',
-        });
-
-    } catch (error) {
         if (error instanceof z.ZodError) {
             return res.status(400).json({
                 success: false,
@@ -264,6 +415,9 @@ exports.login = async (req, res) => {
             passwordHash: users.passwordHash,
             username: users.username,
             platformUid: users.platformUid,
+            hostUid: users.hostUid,
+            adminUid: users.adminUid,
+            superAdminUid: users.superAdminUid,
             playerCode: users.playerCode,
             isAdmin: users.isAdmin, // New
             role: users.role,
@@ -440,6 +594,9 @@ exports.refresh = async (req, res) => {
         const userResult = await db.select({
             id: users.id,
             platformUid: users.platformUid,
+            hostUid: users.hostUid,
+            adminUid: users.adminUid,
+            superAdminUid: users.superAdminUid,
             isBanned: users.isBanned,
             deactivatedAt: users.deactivatedAt, // Check status
             emailVerified: users.emailVerified,
@@ -669,6 +826,9 @@ exports.getMe = async (req, res) => {
                 email: users.email,
                 username: users.username,
                 platformUid: users.platformUid, // Added Public UID
+                hostUid: users.hostUid,
+                adminUid: users.adminUid,
+                superAdminUid: users.superAdminUid,
                 role: users.role,
                 isAdmin: users.isAdmin,
                 hostStatus: users.hostStatus,
@@ -717,8 +877,14 @@ exports.getMe = async (req, res) => {
 
 // Resend verification email
 exports.resendVerification = async (req, res) => {
+    let email;
+
     try {
-        const { email } = req.body;
+        email = req.body?.email;
+        const smtpConfigured = Boolean(process.env.SMTP_USER && process.env.SMTP_PASS);
+        const isProduction = process.env.NODE_ENV === 'production';
+        const allowOtpFallback = process.env.ALLOW_OTP_FALLBACK === 'true' || !isProduction;
+        let otp;
 
         if (!email) {
             return res.status(400).json({
@@ -742,9 +908,29 @@ exports.resendVerification = async (req, res) => {
 
         const data = JSON.parse(pendingDataStr);
 
+        await redis.del(`otp:register:${email}`);
+        await otpService.clearRateLimit(email);
+
         // Generate & Send new OTP
-        const otp = await otpService.generateOtp(email);
+        otp = await otpService.generateOtp(email);
         console.log(`🔐 RE-SENT OTP for ${email}: ${otp}`); // DEV
+
+        if (!smtpConfigured) {
+            if (!allowOtpFallback) {
+                return res.status(503).json({
+                    success: false,
+                    message: 'Email service is not configured on the server. Please contact support.'
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: 'SMTP is not configured. Development fallback enabled; use OTP from response to verify.',
+                devOtp: otp,
+                devMode: true
+            });
+        }
+
         await emailService.sendVerificationEmail(email, otp, data.ign);
 
         res.json({
@@ -753,7 +939,27 @@ exports.resendVerification = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Resend verification error:', error);
+        const isProduction = process.env.NODE_ENV === 'production';
+
+        console.error('Resend verification error:', {
+            message: error?.message,
+            code: error?.code,
+            responseCode: error?.responseCode,
+            command: error?.command
+        });
+
+        if (!isProduction || process.env.ALLOW_OTP_FALLBACK === 'true') {
+            if (email && otp) {
+                console.log(`🔐 DEV FALLBACK OTP for ${email}: ${otp}`);
+                return res.json({
+                    success: true,
+                    message: 'Email delivery failed in development. Use OTP from response to verify.',
+                    devOtp: otp,
+                    devMode: true
+                });
+            }
+        }
+
         res.status(400).json({
             success: false,
             message: error.message || 'Failed to resend verification code'
@@ -767,11 +973,14 @@ const createVerifiedUserInTransaction = async (data) => {
 
     await db.transaction(async (tx) => {
         const { uid: platformUid } = await Promise.resolve(uidService.generatePlatformUid(data.region, tx));
+        const role = data.role || 'PLAYER';
+        const roleUidValues = await getRoleUidAssignment(role, tx);
         userId = crypto.randomUUID();
 
         await tx.insert(users).values({
             id: userId,
             platformUid,
+            firebaseUid: userId,
             username: data.username,
             email: data.email,
             passwordHash: data.passwordHash,
@@ -784,12 +993,13 @@ const createVerifiedUserInTransaction = async (data) => {
             city: data.city,
             regionCode: data.region,
             subRegionCode: data.subRegion,
-            role: data.role || 'PLAYER',
+            role,
             hostStatus: 'NOT_VERIFIED',
             emailVerified: true,
             isBanned: false,
             registrationCompleted: true,
             termsAccepted: data.termsAccepted,
+            ...roleUidValues,
             passwordUpdatedAt: new Date(),
             lastLoginAt: new Date(),
             createdAt: new Date(),
@@ -933,8 +1143,24 @@ exports.verifyEmail = async (req, res) => {
             });
             console.log(`🔥 Firebase user created for: ${data.email}`);
         } catch (firebaseError) {
-            // Non-critical: user can still log in via custom backend if Firebase fails
-            console.error('⚠️ Firebase user creation failed (non-critical):', firebaseError.message);
+            console.error('❌ Firebase user creation failed — attempting DB rollback:', firebaseError.message || firebaseError);
+            // Attempt to rollback DB entries created for this user
+            try {
+                await db.transaction(async (tx) => {
+                    await tx.delete(playerProfiles).where(eq(playerProfiles.userId, userId));
+                    await tx.delete(wallets).where(eq(wallets.userId, userId));
+                    await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+                    await tx.delete(users).where(eq(users.id, userId));
+                });
+                console.log('🧹 DB rollback successful for user:', userId);
+            } catch (cleanupError) {
+                console.error('⚠️ Failed to rollback DB after Firebase error:', cleanupError.message || cleanupError);
+            }
+
+            return res.status(500).json({
+                success: false,
+                message: 'Failed to create authentication provider. Please try registering again.'
+            });
         }
 
         res.json({
@@ -1077,6 +1303,20 @@ exports.updateProfile = async (req, res) => {
 
         await upsertPlayerProfile(userId, profileUpdates);
 
+        // Update Firebase display name if IGN changed
+        if (ign) {
+            try {
+                await admin.auth().updateUser(userId, {
+                    displayName: ign.trim()
+                });
+                console.log(`🔥 Updated Firebase user display name to: ${ign}`);
+            } catch (fbErr) {
+                if (fbErr.code !== 'auth/user-not-found') {
+                    console.error('Failed to update display name in Firebase:', fbErr.message);
+                }
+            }
+        }
+
         // Return updated user data
         const updatedUserRaw = await db.select().from(users).where(eq(users.id, userId)).limit(1);
         const updatedProfileRaw = await db.select().from(playerProfiles).where(eq(playerProfiles.userId, userId)).limit(1);
@@ -1159,7 +1399,7 @@ exports.forgotPassword = async (req, res) => {
 exports.checkAvailability = async (req, res) => {
     try {
         const { username, email } = req.body;
-        const usernameRegex = /^\w+$/;
+        const usernameRegex = /^[a-zA-Z0-9_-]+$/;
 
         const result = {
             usernameAvailable: true,
@@ -1320,8 +1560,44 @@ exports.triggerPasswordReset = async (req, res) => {
 
         const username = userResult[0].username;
 
-        // 2. Generate Standard Firebase Link
-        const firebaseLink = await admin.auth().generatePasswordResetLink(email);
+        // 2. Generate Standard Firebase Link (with self-healing fallback if Firebase user is missing or desynchronized)
+        let firebaseLink;
+        try {
+            firebaseLink = await admin.auth().generatePasswordResetLink(email);
+        } catch (linkError) {
+            const isUserNotFound = linkError.code === 'auth/user-not-found' || 
+                                   (linkError.code === 'auth/internal-error' && linkError.message && linkError.message.includes('Unable to create the email action link'));
+            
+            if (isUserNotFound) {
+                console.log(`ℹ️ Firebase Auth user for ${email} is missing or out of sync. Attempting self-healing...`);
+                try {
+                    // Try to update existing Firebase user with this UID (in case of out-of-sync email)
+                    await admin.auth().updateUser(userResult[0].id, {
+                        email: email,
+                        emailVerified: true
+                    });
+                    console.log(`✅ Updated existing Firebase user UID ${userResult[0].id} email to ${email}`);
+                } catch (updateError) {
+                    if (updateError.code === 'auth/user-not-found') {
+                        // User does not exist at all in Firebase Auth, create them
+                        const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!';
+                        await admin.auth().createUser({
+                            uid: userResult[0].id,
+                            email: email,
+                            password: tempPassword,
+                            emailVerified: true,
+                            displayName: username
+                        });
+                        console.log(`✅ Created new Firebase user for ${email} with UID ${userResult[0].id}`);
+                    } else {
+                        throw updateError;
+                    }
+                }
+                firebaseLink = await admin.auth().generatePasswordResetLink(email);
+            } else {
+                throw linkError;
+            }
+        }
 
         // 3. Extract oobCode
         const urlObj = new URL(firebaseLink);
@@ -1398,7 +1674,7 @@ exports.deactivateAccount = async (req, res) => {
     }
 };
 
-// Delete Account (Hard Anonymization)
+// Delete Account (Hard Delete)
 exports.deleteAccount = async (req, res) => {
     try {
         const userId = req.user.id;
@@ -1428,33 +1704,18 @@ exports.deleteAccount = async (req, res) => {
             }
         }
 
-        // Anonymization Logic
+        // Hard delete the user and directly related rows.
         await db.transaction(async (tx) => {
-            const deletedId = `deleted_${crypto.randomUUID()}`;
-
-            // 1. Anonymize User
-            await tx.update(users).set({
-                email: `${deletedId}@deleted.titanesports.in`,
-                username: deletedId,
-                legalName: 'Deleted User',
-                phone: null,
-                phoneVerified: false,
-                bio: null,
-                avatarUrl: null,
-                isBanned: true, // Prevent login
-                deactivatedAt: new Date()
-            }).where(eq(users.id, userId));
-
-            // 2. Anonymize Profile
-            await tx.update(playerProfiles).set({
-                ign: `Deleted User`,
-                bio: null,
-                avatarUrl: null
-            }).where(eq(playerProfiles.userId, userId));
-
-            // 3. Revoke all sessions
-            await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+            await deleteUserAndReferences(tx, userId);
         });
+
+        try {
+            await admin.auth().deleteUser(userId);
+        } catch (firebaseDeleteError) {
+            if (firebaseDeleteError?.code !== 'auth/user-not-found') {
+                console.warn('⚠️ Firebase user deletion warning:', firebaseDeleteError.message || firebaseDeleteError);
+            }
+        }
 
         res.clearCookie('refreshToken', { path: '/' });
         res.json({ success: true, message: 'Account permanently deleted.' });
@@ -1520,13 +1781,19 @@ exports.changeUsername = async (req, res) => {
             return res.status(403).json({ success: false, message: 'You have already changed your username once.' });
         }
 
-        // Check availability
-        const exists = await db.select().from(users).where(eq(users.username, newUsername)).limit(1);
-        if (exists[0]) {
-            return res.status(400).json({ success: false, message: 'Username taken' });
-        }
-
+        // Check availability (case-insensitive & excluding current user)
         const { sql } = require('drizzle-orm');
+        const exists = await db.select()
+            .from(users)
+            .where(and(
+                sql`LOWER(${users.username}) = ${newUsername.toLowerCase()}`,
+                ne(users.id, userId)
+            ))
+            .limit(1);
+
+        if (exists[0]) {
+            return res.status(400).json({ success: false, message: 'Username already taken' });
+        }
         await db.update(users)
             .set({
                 username: newUsername,
@@ -1590,6 +1857,32 @@ exports.verifyChangeEmail = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid or expired code' });
         }
 
+        // Check if email is already taken in PostgreSQL (case-insensitive)
+        const { sql } = require('drizzle-orm');
+        const emailTaken = await db.select({ id: users.id })
+            .from(users)
+            .where(and(
+                sql`LOWER(${users.email}) = ${newEmail.toLowerCase()}`,
+                ne(users.id, userId)
+            ))
+            .limit(1);
+
+        if (emailTaken[0]) {
+            return res.status(400).json({ success: false, message: 'Email already used by another account' });
+        }
+
+        // Check if email is already taken in Firebase Auth
+        try {
+            const existingFbUser = await admin.auth().getUserByEmail(newEmail);
+            if (existingFbUser && existingFbUser.uid !== userId) {
+                return res.status(400).json({ success: false, message: 'Email already used by another account' });
+            }
+        } catch (fbErr) {
+            if (fbErr.code !== 'auth/user-not-found') {
+                throw fbErr;
+            }
+        }
+
         // Update Email & Revoke other sessions
         const { ne } = require('drizzle-orm');
         const currentToken = req.cookies.refreshToken;
@@ -1612,6 +1905,32 @@ exports.verifyChangeEmail = async (req, res) => {
                 await tx.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
             }
         });
+
+        // Update Firebase Auth user email
+        try {
+            await admin.auth().updateUser(userId, {
+                email: newEmail,
+                emailVerified: true
+            });
+            console.log(`🔥 Updated Firebase user ${userId} email to: ${newEmail}`);
+        } catch (firebaseError) {
+            if (firebaseError.code === 'auth/user-not-found') {
+                console.log(`ℹ️ Firebase Auth user for ${userId} was missing. Creating...`);
+                const tempPassword = crypto.randomBytes(16).toString('hex') + 'A1!';
+                const [usernameResult] = await db.select({ username: users.username }).from(users).where(eq(users.id, userId)).limit(1);
+                await admin.auth().createUser({
+                    uid: userId,
+                    email: newEmail,
+                    password: tempPassword,
+                    emailVerified: true,
+                    displayName: usernameResult?.username || 'Titan Warrior'
+                });
+                console.log(`✅ Created missing Firebase user for ${newEmail}`);
+            } else {
+                console.error('❌ Failed to update email in Firebase Auth:', firebaseError.message);
+                throw firebaseError;
+            }
+        }
 
         res.json({ success: true, message: 'Email updated successfully. Other sessions revoked.' });
 
@@ -1666,9 +1985,14 @@ exports.initMfaSetup = async (req, res) => {
 
         const redis = getRedisClient();
         const appName = process.env.APP_NAME || 'Titan Arena';
-        const secret = authenticator.generateSecret();
+        const secret = generateSecret();
         const accountLabel = user.email || user.username || `user-${userId}`;
-        const otpauthUrl = authenticator.keyuri(accountLabel, appName, secret);
+        const otpauthUrl = generateURI({
+            issuer: appName,
+            label: accountLabel,
+            secret,
+            period: MFA_TOTP_PERIOD_SECONDS
+        });
         const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
 
         await redis.set(getMfaPendingKey(userId), secret, { EX: MFA_PENDING_TTL_SECONDS });
@@ -1706,14 +2030,22 @@ exports.verifyMfaSetup = async (req, res) => {
         }
 
         const token = String(code).replaceAll(/\s+/g, '');
-        const isValid = authenticator.verify({ token, secret: pendingSecret });
+        const isValid = verifySync({
+            token,
+            secret: pendingSecret,
+            period: MFA_TOTP_PERIOD_SECONDS,
+            epochTolerance: MFA_TOTP_TOLERANCE_SECONDS
+        }).valid;
 
         if (!isValid) {
             return res.status(400).json({ success: false, message: 'Invalid authenticator code' });
         }
 
         await db.update(users)
-            .set({ mfaEnabled: true })
+            .set({ 
+                mfaEnabled: true,
+                mfaSecret: pendingSecret
+            })
             .where(eq(users.id, userId));
 
         await redis.set(getMfaSecretKey(userId), pendingSecret);
@@ -1733,7 +2065,10 @@ exports.disableMfa = async (req, res) => {
         const { code } = req.body;
         const redis = getRedisClient();
 
-        const [user] = await db.select({ mfaEnabled: users.mfaEnabled })
+        const [user] = await db.select({ 
+            mfaEnabled: users.mfaEnabled,
+            mfaSecret: users.mfaSecret 
+        })
             .from(users)
             .where(eq(users.id, userId))
             .limit(1);
@@ -1742,7 +2077,7 @@ exports.disableMfa = async (req, res) => {
             return res.status(400).json({ success: false, message: 'MFA is not enabled' });
         }
 
-        const secret = await redis.get(getMfaSecretKey(userId));
+        const secret = user.mfaSecret || await redis.get(getMfaSecretKey(userId));
         if (!secret) {
             return res.status(400).json({ success: false, message: 'MFA secret not found. Contact support.' });
         }
@@ -1752,13 +2087,21 @@ exports.disableMfa = async (req, res) => {
         }
 
         const token = String(code).replaceAll(/\s+/g, '');
-        const isValid = authenticator.verify({ token, secret });
+        const isValid = verifySync({
+            token,
+            secret,
+            period: MFA_TOTP_PERIOD_SECONDS,
+            epochTolerance: MFA_TOTP_TOLERANCE_SECONDS
+        }).valid;
         if (!isValid) {
             return res.status(400).json({ success: false, message: 'Invalid authenticator code' });
         }
 
         await db.update(users)
-            .set({ mfaEnabled: false })
+            .set({ 
+                mfaEnabled: false,
+                mfaSecret: null 
+            })
             .where(eq(users.id, userId));
 
         await redis.del(getMfaSecretKey(userId));
@@ -1768,6 +2111,105 @@ exports.disableMfa = async (req, res) => {
     } catch (error) {
         console.error('Disable MFA error:', error);
         res.status(500).json({ success: false, message: 'Failed to disable MFA' });
+    }
+};
+
+// MFA - Login Status
+exports.getMfaLoginStatus = async (req, res) => {
+    try {
+        const user = await resolveFirebaseLinkedUser(req.firebaseUser);
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        res.json({
+            success: true,
+            data: {
+                requiresMfa: Boolean(user?.mfaEnabled)
+            }
+        });
+    } catch (error) {
+        console.error('Get MFA login status error:', error);
+        res.status(500).json({ success: false, message: 'Failed to check MFA status' });
+    }
+};
+
+// MFA - Verify login code
+exports.verifyMfaLogin = async (req, res) => {
+    try {
+        const user = await resolveFirebaseLinkedUser(req.firebaseUser);
+        const { code } = req.body;
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
+
+        if (!code || String(code).trim().length < 6) {
+            return res.status(400).json({ success: false, message: 'Enter a valid authenticator code' });
+        }
+
+        if (!user?.mfaEnabled) {
+            return res.json({ success: true, data: { verified: true, requiresMfa: false } });
+        }
+
+        const redis = getRedisClient();
+        const secret = user.mfaSecret || await redis.get(getMfaSecretKey(user.id));
+
+        if (!secret) {
+            return res.status(400).json({ success: false, message: 'MFA secret not found. Contact support.' });
+        }
+
+        const token = String(code).replaceAll(/\s+/g, '');
+        const isValid = verifySync({
+            token,
+            secret,
+            period: MFA_TOTP_PERIOD_SECONDS,
+            epochTolerance: MFA_TOTP_TOLERANCE_SECONDS
+        }).valid;
+
+        if (!isValid) {
+            return res.status(400).json({ success: false, message: 'Invalid authenticator code' });
+        }
+
+        res.json({ success: true, data: { verified: true, requiresMfa: true } });
+    } catch (error) {
+        console.error('Verify MFA login error:', error);
+        res.status(500).json({ success: false, message: 'Failed to verify MFA code' });
+    }
+};
+
+exports.detectLocation = async (req, res) => {
+    try {
+        const ip = req.headers['cf-connecting-ip'] || 
+                   req.headers['x-forwarded-for']?.split(',')[0].trim() || 
+                   req.ip || 
+                   req.socket.remoteAddress;
+
+        const geoipService = require('../../services/geoip.service');
+        const countryCode = await geoipService.detectCountryByIp(ip);
+
+        const { COUNTRY_TO_REGION } = require('../../config/regions.config');
+        const regionMapping = COUNTRY_TO_REGION[countryCode];
+
+        if (!regionMapping) {
+            return res.json({
+                success: true,
+                countryCode: 'US',
+                regionCode: 4,
+                subRegionCode: 'NA-E'
+            });
+        }
+
+        res.json({
+            success: true,
+            countryCode,
+            regionCode: regionMapping.region,
+            subRegionCode: regionMapping.subRegion
+        });
+    } catch (error) {
+        console.error('Detect location error:', error);
+        res.status(500).json({ success: false, message: 'Failed to detect location' });
     }
 };
 

@@ -170,7 +170,7 @@ const ManageHostsPage = () => {
               </div>
             </div>
 
-            <div className="bg-titan-bg-card border border-white/5 rounded-2xl overflow-hidden">
+            <div className="bg-titan-bg-card border border-white/5 rounded-2xl overflow-hidden overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-white/5 text-white/40 uppercase text-xs">
                   <tr>

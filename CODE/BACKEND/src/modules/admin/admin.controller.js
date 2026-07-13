@@ -6,16 +6,18 @@
 const { db } = require('../../db');
 const {
     users, wallets, playerProfiles, hostProfiles,
-    tournaments, registrations, refreshTokens, kycRequests, hostApplications
+    tournaments, registrations, refreshTokens, kycRequests, hostApplications,
+    transactions
 } = require('../../db/schema');
 const { eq, desc, count, sql, like, or, and, inArray } = require('drizzle-orm');
+const uidService = require('../../services/uid.service');
 
 // ─────────────────────────────────────────────
 // STATS
 // ─────────────────────────────────────────────
 exports.getStats = async (req, res) => {
     try {
-        const [[totalUsers], [totalTournaments], [activeTournaments], [totalPlayers], [totalHosts], [bannedUsers], [pendingKyc], [walletTotals]] = await Promise.all([
+        const [[totalUsers], [totalTournaments], [activeTournaments], [totalPlayers], [totalHosts], [bannedUsers], [pendingKyc], [walletTotals], [revenueResult]] = await Promise.all([
             db.select({ count: count() }).from(users),
             db.select({ count: count() }).from(tournaments),
             db.select({ count: count() }).from(tournaments).where(or(
@@ -30,7 +32,13 @@ exports.getStats = async (req, res) => {
             )),
             db.select({ count: count() }).from(users).where(eq(users.isBanned, true)),
             db.select({ count: count() }).from(kycRequests).where(eq(kycRequests.status, 'PENDING')),
-            db.select({ totalBalance: sql`SUM(${wallets.balance})`, totalLocked: sql`SUM(${wallets.locked})` }).from(wallets)
+            db.select({ totalBalance: sql`SUM(${wallets.balance})`, totalLocked: sql`SUM(${wallets.locked})` }).from(wallets),
+            db.select({
+                revenue: sql`
+                    COALESCE(SUM(CASE WHEN source IN ('STRIPE_DEPOSIT', 'RAZORPAY_DEPOSIT') THEN amount * 0.025 ELSE 0 END), 0) +
+                    COALESCE(SUM(CASE WHEN source = 'TOURNAMENT_ENTRY' THEN ABS(amount) * 0.10 ELSE 0 END), 0)
+                `
+            }).from(transactions)
         ]);
 
         res.json({
@@ -39,7 +47,11 @@ exports.getStats = async (req, res) => {
                 users: { total: Number(totalUsers.count), players: Number(totalPlayers.count), hosts: Number(totalHosts.count), banned: Number(bannedUsers.count) },
                 tournaments: { total: Number(totalTournaments.count), active: Number(activeTournaments.count) },
                 kyc: { pending: Number(pendingKyc.count) },
-                platform: { totalBalance: Number(walletTotals.totalBalance || 0), totalLocked: Number(walletTotals.totalLocked || 0) }
+                platform: { 
+                    totalBalance: Number(walletTotals.totalBalance || 0), 
+                    totalLocked: Number(walletTotals.totalLocked || 0),
+                    revenue: Number(revenueResult.revenue || 0)
+                }
             }
         });
     } catch (error) {
@@ -232,13 +244,14 @@ exports.getTournaments = async (req, res) => {
                     u.username AS "hostUsername"
                 FROM "tournament" t
                 LEFT JOIN "users" u ON t."hostId" = u.id
+                WHERE t.status != 'CANCELLED'
                 ORDER BY t."createdAt" DESC
                 LIMIT ${parsedLimit} OFFSET ${offset}
             `;
 
         const countQuery = status
             ? sql`SELECT COUNT(*)::int AS total FROM "tournament" WHERE status = ${status}`
-            : sql`SELECT COUNT(*)::int AS total FROM "tournament"`;
+            : sql`SELECT COUNT(*)::int AS total FROM "tournament" WHERE status != 'CANCELLED'`;
 
         const [resultRows, totalRows] = await Promise.all([
             db.execute(listQuery),
@@ -277,6 +290,8 @@ exports.getTournaments = async (req, res) => {
 exports.cancelTournament = async (req, res) => {
     try {
         const { id } = req.params;
+        const { reason = 'Violated platform terms' } = req.body || {};
+
         const result = await db.select().from(tournaments).where(eq(tournaments.id, id)).limit(1);
         const tournament = result[0];
 
@@ -299,8 +314,54 @@ exports.cancelTournament = async (req, res) => {
             }
         }
 
+        // Soft Delete / Cancel the tournament
         await db.update(tournaments).set({ status: 'CANCELLED' }).where(eq(tournaments.id, id));
-        res.json({ success: true, message: `Tournament cancelled. ${participants.length} participants refunded.`, refunded: participants.length });
+
+        // Send cancellation notifications to registered users
+        const registeredUsers = await db.select({
+            email: users.email,
+            username: users.username
+        })
+            .from(registrations)
+            .innerJoin(users, eq(registrations.userId, users.id))
+            .where(eq(registrations.tournamentId, id));
+
+        const emailService = require('../../utils/email.service');
+
+        if (registeredUsers.length > 0) {
+            console.log(`✉️ Sending apology emails to ${registeredUsers.length} registered players...`);
+            for (const user of registeredUsers) {
+                const subject = `Apology: Tournament "${tournament.name}" has been cancelled`;
+                const text = `Hi ${user.username},\n\nWe apologize, but the tournament "${tournament.name}" you registered for has been cancelled by the platform administration.\n\nAny entry fees have been fully refunded to your wallet.\n\nBest regards,\nTitan Arena Team`;
+                const html = `<p>Hi ${user.username},</p><p>We apologize, but the tournament "<strong>${tournament.name}</strong>" you registered for has been cancelled by the platform administration.</p><p>Any entry fees have been fully refunded to your wallet.</p><br/><p>Best regards,<br/>Titan Arena Team</p>`;
+                
+                await emailService.sendGenericEmail(user.email, subject, text, html);
+            }
+        }
+
+        // Send reason email to host
+        const [host] = await db.select({
+            email: users.email,
+            username: users.username
+        })
+            .from(users)
+            .where(eq(users.id, tournament.hostId))
+            .limit(1);
+
+        if (host) {
+            console.log(`✉️ Sending cancellation reason email to host: ${host.email}`);
+            const hostSubject = `Important: Your tournament "${tournament.name}" has been cancelled`;
+            const hostText = `Dear Host ${host.username},\n\nWe regret to inform you that your tournament "${tournament.name}" has been cancelled by the platform administration.\n\nReason for cancellation: ${reason}\n\nIf you have any grievances or questions regarding this decision, you can open a case on the platform support dashboard.\n\nBest regards,\nTitan Arena Team`;
+            const hostHtml = `<p>Dear Host ${host.username},</p><p>We regret to inform you that your tournament "<strong>${tournament.name}</strong>" has been cancelled by the platform administration.</p><p><strong>Reason for cancellation:</strong> ${reason}</p><p>If you have any grievances or questions regarding this decision, you can open a case on the platform support dashboard.</p><br/><p>Best regards,<br/>Titan Arena Team</p>`;
+            
+            await emailService.sendGenericEmail(host.email, hostSubject, hostText, hostHtml);
+        }
+
+        res.json({ 
+            success: true, 
+            message: `Tournament cancelled. ${participants.length} participants refunded, notifications sent.`, 
+            refunded: participants.length 
+        });
     } catch (error) {
         console.error('Admin cancel tournament error:', error);
         res.status(500).json({ success: false, message: 'Failed to cancel tournament' });
@@ -352,10 +413,13 @@ exports.reviewHostApplication = async (req, res) => {
         if (!application) return res.status(404).json({ success: false, message: 'Application not found' });
 
         if (action === 'approve') {
-            await Promise.all([
-                db.update(hostProfiles).set({ status: 'ACTIVE' }).where(eq(hostProfiles.id, id)),
-                db.update(users).set({ hostStatus: 'VERIFIED', role: 'HOST' }).where(eq(users.id, application.userId))
-            ]);
+            await db.transaction(async (tx) => {
+                const [userRow] = await tx.select({ hostUid: users.hostUid }).from(users).where(eq(users.id, application.userId)).limit(1);
+                const hostUid = userRow?.hostUid || (await uidService.generateRoleUid('HOST', tx)).uid;
+
+                await tx.update(hostProfiles).set({ status: 'ACTIVE' }).where(eq(hostProfiles.id, id));
+                await tx.update(users).set({ hostStatus: 'VERIFIED', role: 'HOST', hostUid }).where(eq(users.id, application.userId));
+            });
             res.json({ success: true, message: 'Host application approved' });
         } else {
             await db.update(hostProfiles).set({ status: 'REVOKED' }).where(eq(hostProfiles.id, id));

@@ -8,7 +8,7 @@
  */
 
 const { sql, eq } = require('drizzle-orm');
-const { uidCounters } = require('../db/schema');
+const { uidCounters, userCounters } = require('../db/schema');
 
 class UidService {
     /**
@@ -60,6 +60,42 @@ class UidService {
 
         } catch (error) {
             console.error('❌ UID Generation Failed:', error);
+            throw error;
+        }
+    }
+
+    async generateRoleUid(role, tx) {
+        if (!tx) throw new Error('Transaction required for UID generation');
+
+        const normalizedRole = String(role || '').toUpperCase();
+        if (!['HOST', 'ADMIN', 'SUPERADMIN'].includes(normalizedRole)) {
+            throw new Error(`Invalid role for UID generation: ${role}`);
+        }
+
+        try {
+            await tx.insert(userCounters)
+                .values({ key: normalizedRole, lastNumber: 0 })
+                .onConflictDoNothing();
+
+            await tx.update(userCounters)
+                .set({ lastNumber: sql`${userCounters.lastNumber} + 1` })
+                .where(eq(userCounters.key, normalizedRole));
+
+            const [row] = await tx.select()
+                .from(userCounters)
+                .where(eq(userCounters.key, normalizedRole));
+
+            if (!row) {
+                throw new Error(`Role UID Counter not found for role ${normalizedRole}`);
+            }
+
+            const currentValue = Number(row.lastNumber);
+            const uid = `${normalizedRole}${currentValue.toString().padStart(9, '0')}`;
+
+            console.log(`✅ Generated Role UID: ${uid} (Role: ${normalizedRole}, Seq: ${currentValue})`);
+            return { uid, role: normalizedRole, sequence: currentValue };
+        } catch (error) {
+            console.error('❌ Role UID Generation Failed:', error);
             throw error;
         }
     }

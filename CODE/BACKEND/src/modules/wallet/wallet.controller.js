@@ -5,16 +5,27 @@
 
 const { db } = require('../../db');
 const { wallets, transactions, users, kycRequests } = require('../../db/schema');
-const { eq, desc, and } = require('drizzle-orm');
+const { eq, desc, and, or, inArray, sql } = require('drizzle-orm');
 const walletService = require('./wallet.service');
 const Razorpay = require('razorpay');
 const crypto = require('node:crypto');
 
-// Initialize Razorpay
-const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+let razorpayClient = null;
+
+const getRazorpayClient = () => {
+    if (razorpayClient) return razorpayClient;
+
+    if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
+        return null;
+    }
+
+    razorpayClient = new Razorpay({
+        key_id: process.env.RAZORPAY_KEY_ID,
+        key_secret: process.env.RAZORPAY_KEY_SECRET
+    });
+
+    return razorpayClient;
+};
 
 // Helper: Check wallet activation status
 const checkWalletActivation = async (userId) => {
@@ -133,6 +144,14 @@ const updateBillingAddress = async (req, res) => {
  */
 const initDeposit = async (req, res) => {
     try {
+        const razorpay = getRazorpayClient();
+        if (!razorpay) {
+            return res.status(503).json({
+                success: false,
+                message: 'Payment service is not configured. Please contact support.'
+            });
+        }
+
         const userId = req.user.id;
 
         // Check wallet activation
@@ -185,6 +204,14 @@ const initDeposit = async (req, res) => {
  */
 const verifyDeposit = async (req, res) => {
     try {
+        const razorpay = getRazorpayClient();
+        if (!razorpay) {
+            return res.status(503).json({
+                success: false,
+                message: 'Payment service is not configured. Please contact support.'
+            });
+        }
+
         const {
             razorpay_order_id,
             razorpay_payment_id,
@@ -264,24 +291,96 @@ const requestWithdraw = async (req, res) => {
             });
         }
 
-        const { amount, upiId } = req.body;
+        const { amount, upiId, bankAccount, ifscCode, accountHolderName } = req.body;
 
         if (!amount || amount < 100) {
             return res.status(400).json({ success: false, message: 'Minimum withdrawal is ₹100' });
         }
-        if (!upiId?.includes('@')) {
-            return res.status(400).json({ success: false, message: 'A valid UPI ID (e.g. name@upi) is required' });
-        }
 
         const amountInPaise = Math.round(amount * 100);
-        await walletService.requestWithdrawal(userId, amountInPaise);
 
-        // Log the UPI ID for admin to process manually / via Razorpay Payouts API
-        console.log(`💸 Withdrawal request: ${userId} → ₹${amount} → UPI: ${upiId}`);
+        let payoutMethod = null;
+        let payoutDetails = {};
+
+        if (amount > 5000) {
+            // Must be bank account
+            if (upiId) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Withdrawals exceeding ₹5,000 cannot be paid via UPI. Please provide bank details (Account Number, IFSC, Account Holder Name).' 
+                });
+            }
+            if (!bankAccount || !ifscCode || !accountHolderName) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Bank account number, IFSC code, and Account Holder Name are required for withdrawals exceeding ₹5,000.' 
+                });
+            }
+            payoutMethod = 'BANK';
+        } else {
+            // Can be UPI or Bank account
+            if (!upiId && (!bankAccount || !ifscCode || !accountHolderName)) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'Either a valid UPI ID or complete bank details are required for withdrawal.' 
+                });
+            }
+            if (upiId) {
+                payoutMethod = 'UPI';
+            } else {
+                payoutMethod = 'BANK';
+            }
+        }
+
+        // Validate formats
+        if (payoutMethod === 'UPI') {
+            if (!upiId.includes('@')) {
+                return res.status(400).json({ success: false, message: 'A valid UPI ID (e.g. name@upi) is required.' });
+            }
+            payoutDetails = { upiId };
+        } else {
+            const cleanAccount = bankAccount.replace(/\s+/g, '');
+            if (!/^\d{9,18}$/.test(cleanAccount)) {
+                return res.status(400).json({ success: false, message: 'Bank account number must be between 9 and 18 digits.' });
+            }
+            const cleanIfsc = ifscCode.trim().toUpperCase();
+            if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(cleanIfsc)) {
+                return res.status(400).json({ success: false, message: 'Invalid IFSC code format (e.g., SBIN0001234).' });
+            }
+            if (accountHolderName.trim().length < 2) {
+                return res.status(400).json({ success: false, message: 'Account Holder Name must be at least 2 characters.' });
+            }
+            payoutDetails = {
+                bankAccount: cleanAccount,
+                ifscCode: cleanIfsc,
+                accountHolderName: accountHolderName.trim()
+            };
+        }
+
+
+
+        const metadata = {
+            payoutMethod,
+            payoutDetails,
+            ...(amount > 5000 && {
+                holdUntil: new Date(Date.now() + 4 * 24 * 60 * 60 * 1000).toISOString(),
+                holdReason: 'Security hold for amount exceeding ₹5,000'
+            })
+        };
+
+        await walletService.requestWithdrawal(userId, amountInPaise, metadata);
+
+        // Log withdrawal details
+        console.log(`💸 Withdrawal request: ${userId} → ₹${amount} via ${payoutMethod}`);
+
+        let responseMessage = `Withdrawal request of ₹${amount} submitted successfully.`;
+        if (amount > 5000) {
+            responseMessage = `Withdrawal request of ₹${amount} submitted successfully. Note: As the amount exceeds ₹5,000, it is subject to a 4-day security hold before processing.`;
+        }
 
         res.json({
             success: true,
-            message: `Withdrawal request of ₹${amount} submitted. Processing time: 24-48 hours.`
+            message: responseMessage
         });
     } catch (error) {
         if (error.message === 'Insufficient available balance') {
@@ -430,6 +529,117 @@ module.exports = {
     },
     initDeposit,
     verifyDeposit,
+    initStripeDeposit: async (req, res) => {
+        try {
+            const { amount } = req.body;
+            if (!amount || amount <= 0) {
+                return res.status(400).json({ success: false, message: 'Valid amount required' });
+            }
+
+            const { getStripeInstance } = require('../../config/stripe.config');
+            const stripe = getStripeInstance();
+
+            const session = await stripe.checkout.sessions.create({
+                payment_method_types: ['card'],
+                line_items: [{
+                    price_data: {
+                        currency: 'inr',
+                        product_data: {
+                            name: 'Wallet Deposit',
+                            description: `Deposit of ₹${amount} into Titan Arena Wallet`
+                        },
+                        unit_amount: Math.round(amount * 100)
+                    },
+                    quantity: 1
+                }],
+                mode: 'payment',
+                success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/wallet?status=success&session_id={CHECKOUT_SESSION_ID}`,
+                cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/wallet?status=cancel`,
+                metadata: {
+                    userId: req.user.id,
+                    amountInPaise: String(Math.round(amount * 100))
+                }
+            });
+
+            res.json({
+                success: true,
+                checkoutUrl: session.url,
+                sessionId: session.id
+            });
+        } catch (error) {
+            console.error('Init Stripe checkout session error:', error);
+            res.status(500).json({ success: false, message: 'Failed to initialize deposit session' });
+        }
+    },
+    handleStripeDepositWebhook: async (req, res) => {
+        const { getStripeInstance } = require('../../config/stripe.config');
+        const stripe = getStripeInstance();
+        const signature = req.headers['stripe-signature'];
+        let event;
+
+        const webhookSecret = process.env.STRIPE_DEPOSIT_WEBHOOK_SECRET || process.env.STRIPE_WEBHOOK_SECRET;
+        if (process.env.NODE_ENV === 'production' && !webhookSecret) {
+            console.error('❌ Production error: Stripe Deposit Webhook Secret is missing.');
+            return res.status(500).json({ success: false, message: 'Webhook configuration error' });
+        }
+
+        try {
+            const rawBody = req.rawBody;
+            if (!rawBody) {
+                return res.status(400).json({ success: false, message: 'Raw body is missing for signature verification' });
+            }
+            event = stripe.webhooks.constructEvent(
+                rawBody,
+                signature,
+                webhookSecret || 'whsec_mock_secret_if_missing'
+            );
+        } catch (err) {
+            console.error('Stripe deposit webhook signature verification failed:', err.message);
+            return res.status(400).send(`Webhook Error: ${err.message}`);
+        }
+
+        if (event.type === 'checkout.session.completed') {
+            const session = event.data.object;
+            const userId = session.metadata?.userId;
+            const amountInPaise = Number(session.metadata?.amountInPaise);
+
+            if (!userId || !amountInPaise) {
+                console.warn(`Stripe checkout completion event missing metadata: userId=${userId}, amount=${amountInPaise}`);
+                return res.json({ received: true });
+            }
+
+            try {
+                const [existingTx] = await db.select().from(transactions)
+                    .where(and(
+                        eq(transactions.userId, userId),
+                        eq(transactions.source, 'STRIPE_DEPOSIT'),
+                        eq(transactions.metadata, JSON.stringify({ stripeSessionId: session.id }))
+                    ))
+                    .limit(1);
+
+                if (existingTx) {
+                    console.log(`Stripe deposit checkout session ${session.id} already processed`);
+                    return res.status(409).json({ success: false, message: 'Payment already credited' });
+                }
+
+                const result = await walletService.credit(
+                    userId,
+                    amountInPaise,
+                    'CREDIT',
+                    'STRIPE_DEPOSIT',
+                    `Stripe deposit — ${session.id}`,
+                    { stripeSessionId: session.id }
+                );
+
+                console.log(`✅ Stripe deposit of ₹${(amountInPaise / 100).toFixed(2)} successfully credited to user ${userId}`);
+            } catch (error) {
+                console.error('Stripe deposit credit processing failed:', error);
+                return res.status(500).json({ success: false, message: 'Internal Server Error' });
+            }
+        }
+
+        res.json({ received: true });
+    },
     requestWithdraw,
     getMyWithdrawals,
     simulateDeposit,

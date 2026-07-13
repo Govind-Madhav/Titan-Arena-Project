@@ -40,6 +40,10 @@ export default function AuthPage() {
     const [resendTimer, setResendTimer] = useState(0)
     const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false)
     const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false) // NEW: Reset Password Modal
+    const [showMfaChallenge, setShowMfaChallenge] = useState(false)
+    const [mfaLoginCode, setMfaLoginCode] = useState('')
+    const [mfaLoginLoading, setMfaLoginLoading] = useState(false)
+    const [pendingFirebaseToken, setPendingFirebaseToken] = useState('')
 
     // Wizard State
     // Wizard State
@@ -79,7 +83,7 @@ export default function AuthPage() {
     const [isCheckingIgn, setIsCheckingIgn] = useState(false); // NEW
 
     // Unified Auth Store (Hybrid)
-    const { syncWithBackend, isLoading } = useAuthStore()
+    const { syncWithBackend, isLoading, clearAuth } = useAuthStore()
     const navigate = useNavigate()
     const location = useLocation()
     const from = location.state?.from?.pathname || '/'
@@ -105,6 +109,33 @@ export default function AuthPage() {
         })
         setCurrentStep(1)
     }, [isLogin])
+
+    // Auto-detect and pre-fill country and region via GeoIP
+    useEffect(() => {
+        if (!isLogin) {
+            const detectLocation = async () => {
+                try {
+                    const response = await api.get('/auth/detect-location');
+                    if (response.data && response.data.success) {
+                        const { countryCode, regionCode, subRegionCode } = response.data;
+                        const selectedCountry = countries.find(c => c.code === countryCode);
+                        const dialingCode = selectedCountry ? selectedCountry.dial_code : '';
+                        
+                        setFormData(prev => ({
+                            ...prev,
+                            country: countryCode || '',
+                            region: regionCode || '',
+                            subRegion: subRegionCode || '',
+                            phone: dialingCode || ''
+                        }));
+                    }
+                } catch (error) {
+                    console.error('Failed to auto-detect location:', error);
+                }
+            };
+            detectLocation();
+        }
+    }, [isLogin]);
 
     // Resend cooldown timer
 
@@ -139,7 +170,9 @@ export default function AuthPage() {
 
     // Debounced IGN Check (NEW)
     useEffect(() => {
-        if (isLogin || !formData.ign || formData.ign.length < 3) {
+        const trimmedIgn = formData.ign.trim();
+
+        if (isLogin || trimmedIgn.length < 3) {
             setIgnAvailable(null);
             return;
         }
@@ -147,7 +180,7 @@ export default function AuthPage() {
         const timer = setTimeout(async () => {
             setIsCheckingIgn(true);
             try {
-                const res = await api.post('/auth/check-ign', { ign: formData.ign });
+                const res = await api.post('/auth/check-ign', { ign: trimmedIgn });
                 setIgnAvailable(res.data.available);
             } catch (error) {
                 console.error('IGN check failed', error);
@@ -224,7 +257,7 @@ export default function AuthPage() {
             return false
         }
 
-        if (ignAvailable === false) {
+        if (formData.ign.trim().length >= 3 && ignAvailable === false) {
             toast.error('Gamertag is already taken')
             return false
         }
@@ -294,6 +327,8 @@ export default function AuthPage() {
     }
 
     const completeLoginFlow = async () => {
+        clearAuth()
+
         const { auth } = await import('../lib/firebase')
         const { signInWithEmailAndPassword, setPersistence, browserLocalPersistence, browserSessionPersistence } = await import('firebase/auth')
 
@@ -302,21 +337,73 @@ export default function AuthPage() {
 
         const userCredential = await signInWithEmailAndPassword(auth, loginEmail, formData.password)
         const user = userCredential.user
+        const firebaseIdToken = await user.getIdToken(true)
+        setPendingFirebaseToken(firebaseIdToken)
 
         if (!user.emailVerified) {
             toast.error('Email verification required.')
             return
         }
 
+        const mfaStatusRes = await api.get('/auth/mfa/login/status', {
+            headers: { Authorization: `Bearer ${firebaseIdToken}` }
+        })
+        const requiresMfa = Boolean(mfaStatusRes.data.data?.requiresMfa)
+
+        if (requiresMfa) {
+            setShowMfaChallenge(true)
+            toast.success('MFA required. Enter your authenticator code.')
+            return
+        }
+
         toast.success('Identity Verified. Syncing profile...')
-        const syncResult = await syncWithBackend()
+        const syncResult = await syncWithBackend({}, false, { authToken: firebaseIdToken })
         if (syncResult.success) {
             toast.success('Welcome to Titan Arena! 🎮')
+            setPendingFirebaseToken('')
             navigate(from, { replace: true })
             return
         }
 
         toast.error(syncResult.message)
+    }
+
+    const handleVerifyMfaLogin = async () => {
+        if (!mfaLoginCode || mfaLoginCode.trim().length < 6) {
+            toast.error('Enter the 6-digit MFA code')
+            return
+        }
+
+        if (!pendingFirebaseToken) {
+            toast.error('Login session expired. Please sign in again.')
+            return
+        }
+
+        setMfaLoginLoading(true)
+        try {
+            const res = await api.post('/auth/mfa/login/verify', { code: mfaLoginCode.trim() }, {
+                headers: { Authorization: `Bearer ${pendingFirebaseToken}` }
+            })
+            if (res.data.success) {
+                setShowMfaChallenge(false)
+                setMfaLoginCode('')
+                toast.success('MFA verified. Syncing profile...')
+
+                const syncResult = await syncWithBackend({}, false, { authToken: pendingFirebaseToken })
+                if (syncResult.success) {
+                    toast.success('Welcome to Titan Arena! 🎮')
+                    setPendingFirebaseToken('')
+                    navigate(from, { replace: true })
+                    return
+                }
+
+                toast.error(syncResult.message)
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to verify MFA code')
+        } finally {
+            setMfaLoginLoading(false)
+        }
     }
 
     // Validation before advancing to next step
@@ -357,6 +444,7 @@ export default function AuthPage() {
                     ign: '',
                     username: '',
                     email: '',
+                    identifier: '',
                     password: '',
                     confirmPassword: '',
                     legalName: '',
@@ -647,7 +735,10 @@ export default function AuthPage() {
                                                             name="ign"
                                                             placeholder="Gamertag (how others will see you)"
                                                             value={formData.ign}
-                                                            onChange={(e) => setFormData({ ...formData, ign: e.target.value })}
+                                                            onChange={(e) => {
+                                                                setFormData({ ...formData, ign: e.target.value })
+                                                                setIgnAvailable(null)
+                                                            }}
                                                             minLength={3}
                                                             maxLength={20}
                                                             className={`w-full bg-white/10 border ${getAvailabilityBorderClass(ignAvailable)} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
@@ -664,7 +755,10 @@ export default function AuthPage() {
                                                             name="username"
                                                             placeholder="Username (for login)"
                                                             value={formData.username}
-                                                            onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                                                            onChange={(e) => {
+                                                                setFormData({ ...formData, username: e.target.value })
+                                                                setUsernameAvailable(null)
+                                                            }}
                                                             className={`w-full bg-white/10 border ${getAvailabilityBorderClass(usernameAvailable)} rounded-lg py-2.5 pl-10 pr-10 text-white placeholder-white/30 focus:outline-none focus:bg-white/15 transition-all font-sans text-sm tracking-wide shadow-inner`}
                                                             required
                                                         />
@@ -952,6 +1046,58 @@ export default function AuthPage() {
 
             {/* --- FORGOT PASSWORD MODAL --- */}
             <AnimatePresence>
+
+            {/* --- MFA LOGIN MODAL --- */}
+            <AnimatePresence>
+                {showMfaChallenge && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            exit={{ scale: 0.95, y: 20 }}
+                            className="bg-[#0a0a0a] border border-white/10 rounded-xl max-w-md w-full p-6 relative shadow-2xl shadow-titan-cyan/20"
+                        >
+                            <button
+                                onClick={() => {
+                                    setShowMfaChallenge(false)
+                                    setMfaLoginCode('')
+                                }}
+                                className="absolute right-4 top-4 text-white/30 hover:text-white transition-colors"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+
+                            <h3 className="text-xl font-bold font-display text-white mb-2">MFA Verification</h3>
+                            <p className="text-white/50 text-sm mb-6">Enter the 6-digit code from your authenticator app to finish signing in.</p>
+
+                            <div className="space-y-4">
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={mfaLoginCode}
+                                    onChange={(e) => setMfaLoginCode(e.target.value)}
+                                    placeholder="123456"
+                                    className="w-full bg-white/5 border border-white/10 rounded-lg py-3 px-4 text-white placeholder-white/30 focus:outline-none focus:border-titan-cyan/50 transition-all font-sans text-sm tracking-[0.35em] text-center"
+                                    maxLength={6}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleVerifyMfaLogin}
+                                    disabled={mfaLoginLoading}
+                                    className="w-full bg-titan-cyan hover:bg-titan-cyan/80 text-black font-bold py-3 rounded-lg transition-all"
+                                >
+                                    {mfaLoginLoading ? 'Verifying...' : 'Verify MFA'}
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
                 {isForgotPasswordOpen && (
                     <motion.div
                         initial={{ opacity: 0 }}

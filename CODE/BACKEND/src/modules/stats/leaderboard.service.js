@@ -46,7 +46,7 @@ const getLeaderboardFromPostgres = async (limit = DEFAULT_LIMIT) => {
         SELECT winner_id AS "userId",
                COUNT(*)::int AS wins,
                COUNT(*) * 3 AS score
-        FROM matches
+        FROM "match"
         WHERE winner_id IS NOT NULL
           AND status = 'COMPLETED'
         GROUP BY winner_id
@@ -61,7 +61,7 @@ const getTournamentLeaderboardFromPostgres = async (tournamentId, limit = DEFAUL
         SELECT winner_id AS "userId",
                COUNT(*)::int AS wins,
                COUNT(*) * 3 AS score
-        FROM matches
+        FROM "match"
         WHERE tournament_id = ${tournamentId}
           AND winner_id IS NOT NULL
           AND status = 'COMPLETED'

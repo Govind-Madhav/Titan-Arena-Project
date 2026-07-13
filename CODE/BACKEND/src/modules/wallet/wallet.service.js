@@ -59,7 +59,7 @@ const credit = async (userId, amount, type, source, message = null, metadata = n
         status: 'COMPLETED'
     };
 
-    const [transactionResult] = await client.insert(transactions).values(newTransaction).$returningId();
+    const [transactionResult] = await client.insert(transactions).values(newTransaction).returning({ id: transactions.id });
 
     // 🔔 KAFKA: Publish wallet.credited event
     await publishEvent('wallet.credited', {
@@ -123,7 +123,7 @@ const debit = async (userId, amount, type, source, message = null, metadata = nu
         status: 'COMPLETED'
     };
 
-    const [transactionResult] = await client.insert(transactions).values(newTransaction).$returningId();
+    const [transactionResult] = await client.insert(transactions).values(newTransaction).returning({ id: transactions.id });
 
     // 🔔 KAFKA: Publish wallet.debited event
     await publishEvent('wallet.debited', {
@@ -221,7 +221,7 @@ const distributeTournamentPrizes = async (tournamentId) => {
 /**
  * Request withdrawal
  */
-const requestWithdrawal = async (userId, amount) => {
+const requestWithdrawal = async (userId, amount, metadata = null) => {
     return db.transaction(async (tx) => {
         const [wallet] = await tx.select().from(wallets).where(eq(wallets.userId, userId));
         if (!wallet) throw new Error('Wallet not found');
@@ -243,7 +243,8 @@ const requestWithdrawal = async (userId, amount) => {
             amount: -amount,
             balanceAfter: wallet.balance,
             message: 'Withdrawal Request',
-            status: 'PENDING'
+            status: 'PENDING',
+            metadata: metadata ? JSON.stringify(metadata) : null
         };
 
         return tx.insert(transactions).values(newTransaction);
@@ -257,6 +258,18 @@ const approveWithdrawal = async (transactionId, adminId) => {
     return db.transaction(async (tx) => {
         const [transaction] = await tx.select().from(transactions).where(eq(transactions.id, transactionId));
         if (!transaction || transaction.status !== 'PENDING') throw new Error('Invalid transaction');
+
+        // 4-day security hold for withdrawals > ₹5,000 (500,000 paise)
+        const absoluteAmount = Math.abs(Number(transaction.amount));
+        if (absoluteAmount > 500000) {
+            const holdPeriod = 4 * 24 * 60 * 60 * 1000; // 4 days
+            const elapsed = Date.now() - new Date(transaction.createdAt).getTime();
+            if (elapsed < holdPeriod) {
+                const remainingTime = holdPeriod - elapsed;
+                const remainingDays = Math.ceil(remainingTime / (24 * 60 * 60 * 1000));
+                throw new Error(`This withdrawal is under a 4-day security hold. Please wait ${remainingDays} more day(s) before approving.`);
+            }
+        }
 
         // Decrease actual balance and unlock
         await tx.update(wallets)
@@ -274,7 +287,7 @@ const approveWithdrawal = async (transactionId, adminId) => {
             .set({
                 status: 'COMPLETED',
                 balanceAfter: updatedWallet.balance,
-                metadata: JSON.stringify({ approvedBy: adminId })
+                metadata: JSON.stringify({ approvedBy: adminId, approvedAt: new Date().toISOString() })
             })
             .where(eq(transactions.id, transactionId));
 

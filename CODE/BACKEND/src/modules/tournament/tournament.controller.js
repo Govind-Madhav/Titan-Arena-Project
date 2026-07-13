@@ -172,10 +172,25 @@ const createTournament = async (req, res) => {
 
         // 2. Strict Date Parsing (Expects ISO 8601 with Timezone from Frontend)
         const startTime = new Date(validatedData.startTime);
+        if (Number.isNaN(startTime.getTime())) {
+            return res.status(400).json({ success: false, message: 'Invalid start time format' });
+        }
+
+        if (startTime <= new Date()) {
+            return res.status(400).json({ success: false, message: 'Start time must be in the future' });
+        }
 
         const registrationEnd = validatedData.registrationEnd
             ? new Date(validatedData.registrationEnd)
             : new Date(startTime.getTime() - (60 * 60 * 1000));
+
+        if (Number.isNaN(registrationEnd.getTime())) {
+            return res.status(400).json({ success: false, message: 'Invalid registration end time format' });
+        }
+
+        if (registrationEnd >= startTime) {
+            return res.status(400).json({ success: false, message: 'Registration must end before the tournament starts' });
+        }
 
         // 3. Insert with Whitelisted Data
         const newId = crypto.randomUUID();
@@ -241,6 +256,7 @@ const getAllTournaments = async (req, res) => {
         // PRO FIX: Filter only public visible statuses
         const result = await db.select({
             id: tournaments.id,
+            hostId: tournaments.hostId,
             name: tournaments.name,
             game: tournaments.game,
             description: tournaments.description,
@@ -248,7 +264,8 @@ const getAllTournaments = async (req, res) => {
             prizePool: tournaments.prizePool,
             entryFee: tournaments.entryFee,
             status: tournaments.status,
-            type: tournaments.type
+            type: tournaments.type,
+            bannerUrl: tournaments.bannerUrl
         })
             .from(tournaments)
             .where(inArray(tournaments.status, PUBLIC_STATUSES))
@@ -266,6 +283,7 @@ const getTournamentById = async (req, res) => {
     try {
         const result = await db.select({
             id: tournaments.id,
+            hostId: tournaments.hostId,
             name: tournaments.name,
             game: tournaments.game,
             description: tournaments.description,
@@ -277,6 +295,7 @@ const getTournamentById = async (req, res) => {
             status: tournaments.status,
             rules: tournaments.rules,
             maxParticipants: tournaments.maxParticipants,
+            bannerUrl: tournaments.bannerUrl,
             streamUrl: tournaments.streamUrl,
             streamScope: tournaments.streamScope,
             streamPlatform: tournaments.streamPlatform,
@@ -303,6 +322,7 @@ const getTournamentsByHost = async (req, res) => {
         const tournamentRows = await db.execute(sql`
             SELECT
                 t.id,
+                t."hostId" AS "hostId",
                 t.name,
                 t.description,
                 t.game,
@@ -314,6 +334,7 @@ const getTournamentsByHost = async (req, res) => {
                 COALESCE(t."maxParticipants", t."minTeamsRequired") AS "maxParticipants",
                 t."startTime" AS "startTime",
                 t."createdAt" AS "createdAt",
+                t."bannerUrl" AS "bannerUrl",
                 t."highlightUrl" AS "imageUrl",
                 t."streamUrl" AS "streamUrl",
                 t."streamScope" AS "streamScope",
@@ -321,14 +342,11 @@ const getTournamentsByHost = async (req, res) => {
                 t."streamId" AS "streamId",
                 t."streamIsLive" AS "streamIsLive"
             FROM "tournament" t
-            WHERE t."hostId" = ${hostId}
+            WHERE t."hostId" = ${hostId} AND t.status != 'CANCELLED'
             ORDER BY t."createdAt" DESC
         `);
 
-        const myTournaments = (tournamentRows.rows || []).map((row) => ({
-            ...row,
-            bannerUrl: null
-        }));
+        const myTournaments = tournamentRows.rows || [];
 
         const tournamentIds = myTournaments.map((tournament) => tournament.id);
         const participantRows = tournamentIds.length
@@ -668,7 +686,8 @@ const joinTournament = async (req, res) => {
             entryFee: tournaments.entryFee,
             maxParticipants: tournaments.maxParticipants,
             startTime: tournaments.startTime,
-            name: tournaments.name
+            name: tournaments.name,
+            hostId: tournaments.hostId
         })
             .from(tournaments)
             .where(eq(tournaments.id, tournamentId))
@@ -677,7 +696,15 @@ const joinTournament = async (req, res) => {
         if (!tournament.length) return res.status(404).json({ success: false, message: 'Tournament not found' });
 
         const t = tournament[0];
-        if (![TOURNAMENT_STATUS.REGISTRATION, TOURNAMENT_STATUS.CREATED].includes(t.status)) {
+        
+        if (t.hostId === userId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Hosts cannot participate in their own tournaments'
+            });
+        }
+
+        if (![TOURNAMENT_STATUS.UPCOMING, TOURNAMENT_STATUS.REGISTRATION, TOURNAMENT_STATUS.CREATED].includes(t.status)) {
             return res.status(400).json({
                 success: false,
                 message: `Registration is currently ${t.status.toLowerCase()}`
@@ -814,7 +841,7 @@ const leaveTournament = async (req, res) => {
         if (!tournament.length) return res.status(404).json({ success: false, message: 'Tournament not found' });
 
         const t = tournament[0];
-        if (t.status !== TOURNAMENT_STATUS.REGISTRATION) {
+        if (![TOURNAMENT_STATUS.UPCOMING, TOURNAMENT_STATUS.REGISTRATION].includes(t.status)) {
             return res.status(403).json({
                 success: false,
                 message: 'Cannot leave tournament after registration has closed'

@@ -33,13 +33,13 @@ router.put('/:id/participants/:participantId/status', authenticate, requireNotBa
 router.post('/:id/cancel', authenticate, requireNotBanned, requireVerifiedHost, globalLimiter, tournamentController.cancelTournament);
 
 // Check-in System
-router.post('/:id/checkin', authenticate, authorize('PLAYER'), checkinController.checkIn);
-router.delete('/:id/checkin', authenticate, authorize('PLAYER'), checkinController.withdrawCheckin);
+router.post('/:id/checkin', authenticate, authorize('PLAYER', 'HOST'), checkinController.checkIn);
+router.delete('/:id/checkin', authenticate, authorize('PLAYER', 'HOST'), checkinController.withdrawCheckin);
 router.get('/:id/checkins', authenticate, requireNotBanned, requireVerifiedHost, checkinController.getCheckins);
 
 // Player routes
-router.post('/:id/join', authenticate, authorize('PLAYER'), tournamentController.joinTournament);
-router.delete('/:id/leave', authenticate, authorize('PLAYER'), tournamentController.leaveTournament);
+router.post('/:id/join', authenticate, authorize('PLAYER', 'HOST'), tournamentController.joinTournament);
+router.delete('/:id/leave', authenticate, authorize('PLAYER', 'HOST'), tournamentController.leaveTournament);
 
 // Host - Declare winners (Legacy/Manual)
 router.post('/:id/winners', authenticate, requireNotBanned, requireVerifiedHost, tournamentController.declareWinners);

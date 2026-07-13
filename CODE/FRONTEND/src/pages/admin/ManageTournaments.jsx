@@ -118,7 +118,7 @@ const ManageTournaments = () => {
                         <div className="space-y-3 mb-6 flex-1">
                             <div className="flex items-center justify-between text-sm">
                                 <span className="text-white/40 flex items-center gap-2"><DollarSign size={14} /> Entry Fee</span>
-                                <span className="text-white font-medium">₹{tournament.entryFee}</span>
+                                <span className="text-white font-medium">₹{tournament.entryFee / 100}</span>
                             </div>
                             <div className="flex items-center justify-between text-sm">
                                 <span className="text-white/40 flex items-center gap-2"><Calendar size={14} /> Start Date</span>
@@ -126,7 +126,7 @@ const ManageTournaments = () => {
                             </div>
                             <div className="flex items-center justify-between text-sm">
                                 <span className="text-white/40 flex items-center gap-2"><Trophy size={14} /> Prize Pool</span>
-                                <span className="text-titan-purple font-bold">₹{tournament.prizePool}</span>
+                                <span className="text-titan-purple font-bold">₹{tournament.prizePool / 100}</span>
                             </div>
                         </div>
 

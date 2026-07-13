@@ -510,14 +510,11 @@ const ManageKycPanel = () => {
     let previewModal = null
     if (previewImage) {
         previewModal = (
-            <div
+            <dialog
+                open
                 className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-                role="dialog"
-                aria-modal="true"
-                tabIndex={0}
-                onClick={() => setPreviewImage(null)}
-                onKeyDown={(event) => {
-                    if (event.key === 'Escape' || event.key === 'Enter') {
+                onClick={(event) => {
+                    if (event.target === event.currentTarget) {
                         setPreviewImage(null)
                     }
                 }}
@@ -534,20 +531,9 @@ const ManageKycPanel = () => {
                         <img src={previewImage} alt="KYC preview" className="max-h-[75vh] w-auto object-contain rounded-2xl" />
                     </div>
                 </div>
-            </div>
+            </dialog>
         )
     }
-
-    const detailRows = [
-        { label: 'User ID', value: detail.user?.id },
-        { label: 'Full Name', value: detail.user?.legalName || detail.user?.username || 'Not provided' },
-        { label: 'Date of Birth', value: formatDateOnly(detail.user?.dateOfBirth) },
-        { label: 'Phone', value: detail.user?.phone || 'Not provided', verified: detail.user?.phoneVerified },
-        { label: 'Email', value: detail.user?.email || 'Not provided', verified: detail.user?.emailVerified },
-        { label: 'Country', value: detail.user?.countryCode || 'Not provided' },
-        { label: 'Billing', value: formatBillingSummary(detail.user?.billingAddress) },
-        { label: 'Host Status', value: detail.user?.hostStatus || 'Not set' }
-    ]
 
     return (
         <Layout userRole="ADMIN">
@@ -801,12 +787,6 @@ const BadgePill = ({ icon: Icon, label, tone = 'default' }) => {
             <Icon size={12} /> {label}
         </span>
     )
-
-    BadgePill.propTypes = {
-        icon: PropTypes.elementType.isRequired,
-        label: PropTypes.string.isRequired,
-        tone: PropTypes.oneOf(['default', 'emerald', 'rose', 'amber']),
-    }
 }
 
 const SmartFlag = ({ label, ok, inverse = false }) => {
@@ -819,12 +799,6 @@ const SmartFlag = ({ label, ok, inverse = false }) => {
             </span>
         </div>
     )
-
-    SmartFlag.propTypes = {
-        label: PropTypes.string.isRequired,
-        ok: PropTypes.bool.isRequired,
-        inverse: PropTypes.bool,
-    }
 }
 
 export default ManageKycPanel

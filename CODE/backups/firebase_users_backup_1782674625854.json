@@ -1,0 +1,41 @@
+[
+  {
+    "uid": "62c0e3c5-fe14-4cdd-9ff1-59cc443cc3c4",
+    "email": "titanarenaesports@gmail.com",
+    "displayName": "Titan",
+    "providerData": [
+      {
+        "uid": "titanarenaesports@gmail.com",
+        "displayName": "Titan",
+        "email": "titanarenaesports@gmail.com",
+        "providerId": "password"
+      }
+    ]
+  },
+  {
+    "uid": "9ed36364-391a-4628-8103-b13d9a72693d",
+    "email": "adrish098765@gmail.com",
+    "displayName": "Wowwwww",
+    "providerData": [
+      {
+        "uid": "adrish098765@gmail.com",
+        "displayName": "Wowwwww",
+        "email": "adrish098765@gmail.com",
+        "providerId": "password"
+      }
+    ]
+  },
+  {
+    "uid": "cde4fd0f-90cb-438c-aa81-b6676bd9c317",
+    "email": "govindmadhav609@gmail.com",
+    "displayName": "Hawkeye-OG",
+    "providerData": [
+      {
+        "uid": "govindmadhav609@gmail.com",
+        "displayName": "Hawkeye-OG",
+        "email": "govindmadhav609@gmail.com",
+        "providerId": "password"
+      }
+    ]
+  }
+]

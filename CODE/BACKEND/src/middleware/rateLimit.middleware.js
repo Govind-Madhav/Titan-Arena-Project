@@ -60,7 +60,7 @@ const createRateLimiter = (keyPrefix, windowSecs, maxReqs) => {
     };
 };
 
-// 3 forget-password requests per 15 min per IP
-exports.forgotPasswordLimiter = createRateLimiter('forgot-pass', 15 * 60, 3);
-// 10 reset-password attempts per hour per IP
-exports.resetPasswordLimiter = createRateLimiter('reset-pass', 60 * 60, 10);
+// 3 forget-password requests per 15 min per IP (increased in development to 100)
+exports.forgotPasswordLimiter = createRateLimiter('forgot-pass', 15 * 60, process.env.NODE_ENV === 'production' ? 3 : 100);
+// 10 reset-password attempts per hour per IP (increased in development to 100)
+exports.resetPasswordLimiter = createRateLimiter('reset-pass', 60 * 60, process.env.NODE_ENV === 'production' ? 10 : 100);

@@ -6,7 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('./auth.controller');
-const { authRequired } = require('../../middleware/auth.middleware');
+const { authRequired, firebaseAuth } = require('../../middleware/auth.middleware');
 
 const { authLimiter, availabilityCheckLimiter } = require('../../middleware/security.middleware');
 const { forgotPasswordLimiter, resetPasswordLimiter } = require('../../middleware/rateLimit.middleware');
@@ -14,6 +14,7 @@ const { forgotPasswordLimiter, resetPasswordLimiter } = require('../../middlewar
 // Public routes
 router.post('/register', authLimiter, authController.signup); // Alias for compatibility
 router.post('/signup', authLimiter, authController.signup);
+router.get('/detect-location', authController.detectLocation);
 router.post('/check-availability', availabilityCheckLimiter, authController.checkAvailability); // Real-time validation route
 router.post('/check-ign', availabilityCheckLimiter, authController.checkIgnAvailability); // IGN availability check
 router.post('/login', authLimiter, authController.login);
@@ -28,8 +29,6 @@ router.post('/reset-password', resetPasswordLimiter, authController.resetPasswor
 router.post('/verify-email', authController.verifyEmail);
 router.post('/resend-verification', authController.resendVerification);
 router.post('/trigger-verification', authLimiter, authController.triggerVerificationEmail);
-
-const { firebaseAuth } = require('../../middleware/auth.middleware');
 
 // ... (existing routes)
 
@@ -48,6 +47,8 @@ router.get('/mfa/status', authRequired, authController.getMfaStatus);
 router.post('/mfa/setup/init', authLimiter, authRequired, authController.initMfaSetup);
 router.post('/mfa/setup/verify', authLimiter, authRequired, authController.verifyMfaSetup);
 router.post('/mfa/disable', authLimiter, authRequired, authController.disableMfa);
+router.get('/mfa/login/status', firebaseAuth, authController.getMfaLoginStatus);
+router.post('/mfa/login/verify', authLimiter, firebaseAuth, authController.verifyMfaLogin);
 router.post('/deactivate', authLimiter, authRequired, authController.deactivateAccount);
 router.post('/delete', authLimiter, authRequired, authController.deleteAccount);
 

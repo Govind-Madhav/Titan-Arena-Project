@@ -15,6 +15,13 @@
       "when": 1772139694154,
       "tag": "0001_skinny_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783428491634,
+      "tag": "0002_supreme_celestials",
+      "breakpoints": true
     }
   ]
 }

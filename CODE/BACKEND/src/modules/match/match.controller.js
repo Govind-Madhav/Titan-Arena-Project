@@ -221,7 +221,7 @@ exports.generateBracket = async (req, res) => {
 
         return res.json({
             success: true,
-            message: `${format.replace(/_/g, ' ')} bracket generated (${engineData.data?.matchesCreated ?? allMatches.length} matches)`,
+            message: `${format.replaceAll('_', ' ')} bracket generated (${engineData.data?.matchesCreated ?? allMatches.length} matches)`,
             data: allMatches
         });
     } catch (error) {
@@ -385,6 +385,7 @@ exports.uploadProof = async (req, res) => {
 
 
 // Complete tournament and distribute prizes
+// eslint-disable-next-line sonarjs/cognitive-complexity
 exports.completeTournament = async (req, res) => {
     try {
         const tournamentId = req.params.tournamentId;
@@ -446,9 +447,9 @@ exports.completeTournament = async (req, res) => {
         // Prize split: 50% / 30% / top-3 20%
         const prizePool = tournament.prizePool;
         const podiumPlans = [
-            { position: 1, participantId: firstPlaceId, share: 0.50 },
-            { position: 2, participantId: secondPlaceId, share: 0.30 },
-            ...thirdPlaceCandidates.map(id => ({ position: 3, participantId: id, share: 0.20 / Math.max(thirdPlaceCandidates.length, 1) })),
+            { position: 1, participantId: firstPlaceId, share: 0.5 },
+            { position: 2, participantId: secondPlaceId, share: 0.3 },
+            ...thirdPlaceCandidates.map(id => ({ position: 3, participantId: id, share: 0.2 / Math.max(thirdPlaceCandidates.length, 1) })),
         ].filter(p => p.participantId);
 
         const payoutRows = [];

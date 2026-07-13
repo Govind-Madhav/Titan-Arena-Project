@@ -25,6 +25,7 @@ import {
     ChevronDown // Added for dropdown
 } from 'lucide-react'
 import useAuthStore from '../../store/authStore'
+import api from '../../lib/api'
 
 const NotificationDropdown = () => {
     const [isOpen, setIsOpen] = useState(false);
@@ -92,7 +93,7 @@ const NotificationDropdown = () => {
                             <div className="p-4 text-center text-white/40 text-sm">No new notifications</div>
                         ) : (
                             notifications.map(n => (
-                                <div key={n.id} className={`p-3 border-b border-white/5 hover:bg-white/5 transition-colors ${!n.isRead ? 'bg-white/[0.02]' : ''}`}>
+                                <div key={n.id} className={`p-3 border-b border-white/5 hover:bg-white/5 transition-colors ${n.isRead ? '' : 'bg-white/[0.02]'}`}>
                                     <p className="text-sm text-white font-medium mb-1">{n.title}</p>
                                     <p className="text-xs text-white/60">{n.message}</p>
                                     <span className="text-[10px] text-white/30 mt-2 block">{new Date(n.createdAt).toLocaleTimeString()}</span>
@@ -122,6 +123,19 @@ export default function Navbar() {
         logout()
         navigate('/')
     }
+
+    const [walletBalance, setWalletBalance] = useState(0)
+
+    useEffect(() => {
+        if (isAuthenticated) {
+            api.get('/wallet')
+                .then(res => {
+                    const bal = res.data?.data?.balance || 0
+                    setWalletBalance(bal / 100)
+                })
+                .catch(() => {})
+        }
+    }, [isAuthenticated])
 
     const navLinks = [
         { name: 'Tournaments', path: '/tournaments', icon: Trophy },
@@ -213,7 +227,13 @@ export default function Navbar() {
                                     className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg bg-titan-bg-light border border-white/10 hover:border-titan-purple/30 transition-all"
                                 >
                                     <Wallet size={16} className="text-titan-purple" />
-                                    <span className="font-heading font-semibold text-sm">₹0</span>
+                                    <span className="font-heading font-semibold text-sm">
+                                        {new Intl.NumberFormat('en-IN', {
+                                            style: 'currency',
+                                            currency: 'INR',
+                                            maximumFractionDigits: 0
+                                        }).format(walletBalance)}
+                                    </span>
                                 </Link>
 
                                 {/* User Menu */}

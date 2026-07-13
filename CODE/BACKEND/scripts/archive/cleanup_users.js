@@ -1,5 +1,5 @@
 require('dotenv').config({ override: true });
-const path = require('path');
+const path = require('node:path');
 const { db } = require(path.join(__dirname, '../src/db'));
 const { users } = require(path.join(__dirname, '../src/db/schema'));
 

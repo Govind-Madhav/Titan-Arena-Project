@@ -1,25 +1,4 @@
 services:
-  # PostgreSQL Database
-  database:
-    image: postgres:16-alpine
-    container_name: esports-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-esports_tournament}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    networks:
-      - esports-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-esports_tournament}"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   # Redis Cache
   redis:
     image: redis:7-alpine
@@ -75,88 +54,10 @@ services:
       retries: 5
       start_period: 30s
 
-  # Java Tournament Engine (bracket generation + match orchestration)
-  tournament-engine:
-    build:
-      context: ./CODE/JAVA-TOURNAMENT-ENGINE
-      dockerfile: Dockerfile
-    container_name: esports-tournament-engine
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      - DB_HOST=${JAVA_DB_HOST:-database}
-      - DB_PORT=${JAVA_DB_PORT:-5432}
-      - DB_NAME=${JAVA_DB_NAME:-esports_tournament}
-      - DB_USER=${JAVA_DB_USER:-postgres}
-      - DB_PASS=${JAVA_DB_PASS:-postgres}
-      - KAFKA_BROKER=kafka:9092
-      - SPRING_PROFILES_ACTIVE=production
-    depends_on:
-      database:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    networks:
-      - esports-network
-    healthcheck:
-      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/actuator/health" ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
-
-  # Node.js Backend API
-  backend:
-    build:
-      context: ./CODE/BACKEND
-      dockerfile: Dockerfile
-    container_name: esports-backend
-    restart: unless-stopped
-    ports:
-      - "5000:5000"
-    environment:
-      - NODE_ENV=production
-      - PORT=5000
-      - DB_HOST=database
-      - DB_PORT=5432
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - KAFKA_BROKER=kafka:9092
-      - JAVA_ENGINE_URL=http://tournament-engine:8080
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@database:5432/${POSTGRES_DB:-esports_tournament}
-    depends_on:
-      database:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      tournament-engine:
-        condition: service_healthy
-    networks:
-      - esports-network
-
-  # React Frontend
-  frontend:
-    build:
-      context: ./CODE/FRONTEND
-      dockerfile: Dockerfile
-    container_name: esports-frontend
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    networks:
-      - esports-network
-
 networks:
   esports-network:
     driver: bridge
 
 volumes:
   redis-data:
-    driver: local
-  postgres-data:
     driver: local

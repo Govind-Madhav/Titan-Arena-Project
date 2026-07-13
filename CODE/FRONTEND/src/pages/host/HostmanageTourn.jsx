@@ -62,6 +62,7 @@ const getApprovalModeLabel = (mode) => {
 const ManageTournamentsPage = () => {
   const { user } = useAuthStore();
   const isAdminUser = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN' || user?.isAdmin;
+  const canModifyTournament = (tournament) => isAdminUser || tournament?.hostId === user?.id;
   const [tournaments, setTournaments] = useState([]);
   const [games, setGames] = useState([]);
   const [formData, setFormData] = useState(initialFormState);
@@ -218,6 +219,11 @@ const ManageTournamentsPage = () => {
       return;
     }
 
+    if (!canModifyTournament(tournament)) {
+      toast.error('You can only edit tournaments you own or manage as an admin.');
+      return;
+    }
+
     setEditing(true);
     setEditId(tournamentId);
     setFormData({
@@ -242,6 +248,12 @@ const ManageTournamentsPage = () => {
   };
 
   const handleDelete = async (tournamentId) => {
+    const tournament = tournaments.find(item => item.id === tournamentId);
+    if (!tournament || !canModifyTournament(tournament)) {
+      toast.error('You can only delete tournaments you own or manage as an admin.');
+      return;
+    }
+
     if (!globalThis.confirm('Delete this tournament?')) {
       return;
     }
@@ -313,11 +325,11 @@ const ManageTournamentsPage = () => {
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-white/40 flex items-center gap-2"><DollarSign size={14} /> Entry</span>
-            <span className="text-titan-purple font-bold">₹{tournament.entryFee}</span>
+            <span className="text-titan-purple font-bold">₹{tournament.entryFee / 100}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-white/40 flex items-center gap-2"><Trophy size={14} /> Prize</span>
-            <span className="text-green-400 font-bold">₹{tournament.prizePool}</span>
+            <span className="text-green-400 font-bold">₹{tournament.prizePool / 100}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-white/40 flex items-center gap-2"><Users size={14} /> Joined</span>
@@ -327,14 +339,16 @@ const ManageTournamentsPage = () => {
           </div>
         </div>
 
-        <div className="flex gap-2 pt-4 border-t border-white/5 mt-auto">
-          <button onClick={() => handleEdit(tournament.id)} className="flex-1 py-2 rounded-lg bg-white/5 hover:bg-blue-500/20 text-white/60 hover:text-blue-400 font-medium text-sm transition-all flex items-center justify-center gap-2">
-            <Pen size={14} /> Edit
-          </button>
-          <button onClick={() => handleDelete(tournament.id)} className="flex-1 py-2 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-400 font-medium text-sm transition-all flex items-center justify-center gap-2">
-            <Trash2 size={14} /> Delete
-          </button>
-        </div>
+        {canModifyTournament(tournament) && (
+          <div className="flex gap-2 pt-4 border-t border-white/5 mt-auto">
+            <button onClick={() => handleEdit(tournament.id)} className="flex-1 py-2 rounded-lg bg-white/5 hover:bg-blue-500/20 text-white/60 hover:text-blue-400 font-medium text-sm transition-all flex items-center justify-center gap-2">
+              <Pen size={14} /> Edit
+            </button>
+            <button onClick={() => handleDelete(tournament.id)} className="flex-1 py-2 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-400 font-medium text-sm transition-all flex items-center justify-center gap-2">
+              <Trash2 size={14} /> Delete
+            </button>
+          </div>
+        )}
       </SpotlightCard>
     ));
   }

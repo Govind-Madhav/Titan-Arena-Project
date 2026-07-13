@@ -3,8 +3,8 @@
  * This code is proprietary and confidential.
  */
 
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
     Trophy,
@@ -24,7 +24,7 @@ import { SpotlightCard, GlowBorder } from '../../Components/effects/ReactBits'
 import api from '../../lib/api'
 
 const getTournamentStatusLabel = (status) => {
-    if (status === 'REGISTRATION' || status === 'UPCOMING') return 'REGISTRATION OPEN'
+    if (status === 'REGISTRATION' || status === 'CREATED') return 'REGISTRATION OPEN'
     if (status === 'ONGOING') return 'LIVE'
     if (status === 'PENDING_APPROVAL') return 'PENDING APPROVAL'
     return status
@@ -46,18 +46,15 @@ const getPayoutClass = (position) => {
 export default function TournamentDetailPage() {
     const { id } = useParams()
     const navigate = useNavigate()
-    const { isAuthenticated } = useAuthStore()
+    const location = useLocation()
+    const { isAuthenticated, isInitialized, isLoading: isAuthLoading, user, syncWithBackend } = useAuthStore()
     const [tournament, setTournament] = useState(null)
     const [loading, setLoading] = useState(true)
     const [registering, setRegistering] = useState(false)
     const [collisionData, setCollisionData] = useState(null)
     const [showCollisionModal, setShowCollisionModal] = useState(false)
 
-    useEffect(() => {
-        fetchTournament()
-    }, [id])
-
-    const fetchTournament = async () => {
+    const fetchTournament = useCallback(async () => {
         try {
             const res = await api.get(`/tournaments/${id}`)
             setTournament(res.data.data)
@@ -68,17 +65,56 @@ export default function TournamentDetailPage() {
         } finally {
             setLoading(false)
         }
-    }
+    }, [id])
+
+    useEffect(() => {
+        fetchTournament()
+    }, [fetchTournament])
+
+    useEffect(() => {
+        if (isAuthenticated && isInitialized && !isAuthLoading && !user?.role) {
+            syncWithBackend()
+        }
+    }, [isAuthenticated, isInitialized, isAuthLoading, user, syncWithBackend])
 
     const handleRegister = async (force = false) => {
+        // Guard: ensure `force` is always a boolean (prevents React SyntheticEvent leaking in via onClick)
+        const shouldForce = typeof force === 'boolean' ? force : false
+
         if (!isAuthenticated) {
             navigate('/auth', { state: { from: location.pathname } })
             return
         }
 
+        const syncResult = await syncWithBackend()
+        let freshUser = useAuthStore.getState().user
+        let role = freshUser?.role || user?.role
+
+        // If sync fails but we already have a local authenticated player session,
+        // allow register flow to proceed instead of hard-blocking the action.
+        if (!syncResult?.success && !(isAuthenticated && ['PLAYER', 'HOST'].includes(role))) {
+            toast.error(syncResult?.message || 'Session sync failed. Please login again.')
+            navigate('/auth', { state: { from: location.pathname } })
+            return
+        }
+
+        // Re-read latest state after potential sync retry/fallback path.
+        freshUser = useAuthStore.getState().user
+        role = freshUser?.role || user?.role
+
+        if (role !== 'PLAYER' && role !== 'HOST') {
+            toast.error('Only player and host accounts can participate in tournaments')
+            return
+        }
+
+        if (tournament.hostId === user?.id) {
+            toast.error('Hosts cannot participate in their own tournaments')
+            return
+        }
+
         setRegistering(true)
         try {
-            await api.post(`/tournaments/${id}/join`, { force })
+            await api.post(`/tournaments/${id}/join`, { force: shouldForce })
             toast.success('Registered successfully!')
             fetchTournament()
             setShowCollisionModal(false)
@@ -86,8 +122,19 @@ export default function TournamentDetailPage() {
             if (error.response?.status === 409 && error.response?.data?.code === 'COLLISION_WARNING') {
                 setCollisionData(error.response.data.collisionData)
                 setShowCollisionModal(true)
-            } else {
+            } else if (error.response?.status === 401) {
+                toast.error('Session expired. Please login again.')
+                navigate('/auth', { state: { from: location.pathname } })
+            } else if (error.response?.status === 403) {
+                toast.error(error.response?.data?.message || 'Only player accounts can participate in tournaments')
+            } else if (error.response?.data?.message === 'Already registered for this tournament') {
+                toast.success('You are already registered for this tournament')
+                fetchTournament()
+                setShowCollisionModal(false)
+            } else if (error.response) {
                 toast.error(error.response?.data?.message || 'Registration failed')
+            } else {
+                toast.error('Unable to reach backend API. Check backend server and API URL configuration.')
             }
         } finally {
             setRegistering(false)
@@ -136,11 +183,22 @@ export default function TournamentDetailPage() {
         )
     }
 
-    const isRegistrationOpen = ['REGISTRATION', 'UPCOMING'].includes(tournament.status)
+    const isRegistrationOpen = ['UPCOMING', 'REGISTRATION', 'CREATED'].includes(tournament.status)
+    const roleKnown = Boolean(user?.role)
+    const isMyTournament = tournament.hostId === user?.id
+    const explicitlyNonPlayer = roleKnown && user?.role !== 'PLAYER' && user?.role !== 'HOST'
     const statusLabel = getTournamentStatusLabel(tournament.status)
     let registerButtonLabel = 'Registration Closed'
     if (registering) {
         registerButtonLabel = 'Registering...'
+    } else if (!isInitialized || isAuthLoading) {
+        registerButtonLabel = 'Checking Session...'
+    } else if (!isAuthenticated) {
+        registerButtonLabel = 'Login to Register'
+    } else if (isMyTournament) {
+        registerButtonLabel = 'You are the Host'
+    } else if (explicitlyNonPlayer) {
+        registerButtonLabel = 'Only Players/Hosts Can Join'
     } else if (isRegistrationOpen) {
         registerButtonLabel = 'Register Now'
     }
@@ -287,8 +345,8 @@ export default function TournamentDetailPage() {
                                         </div>
                                     </div>
                                     <button
-                                        onClick={handleRegister}
-                                        disabled={registering || !isRegistrationOpen}
+                                        onClick={() => handleRegister()}
+                                        disabled={registering || !isRegistrationOpen || explicitlyNonPlayer || isMyTournament || !isInitialized || isAuthLoading}
                                         className="btn-neon w-full py-4 text-lg font-bold tracking-wide disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {registerButtonLabel}

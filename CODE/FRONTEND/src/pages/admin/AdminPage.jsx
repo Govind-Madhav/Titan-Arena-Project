@@ -54,7 +54,7 @@ const AdminDashboard = () => {
                     totalUsers: data.users?.total || 0,
                     totalTournaments: data.tournaments?.total || 0,
                     activeHosts: data.users?.hosts || 0,
-                    revenue: data.platform?.totalBalance || 0,
+                    revenue: data.platform?.revenue || 0,
                     pendingKYC: data.kyc?.pending || 0
                 });
             } catch (error) {
@@ -118,7 +118,7 @@ const AdminDashboard = () => {
             style: 'currency',
             currency: 'INR',
             maximumFractionDigits: 0,
-        }).format(amount)
+        }).format(amount / 100)
     }
 
     return (

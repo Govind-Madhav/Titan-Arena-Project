@@ -3,6 +3,7 @@ require('dotenv').config();
 const { db } = require('../src/db');
 const { users } = require('../src/db/schema');
 const { eq } = require('drizzle-orm');
+const uidService = require('../src/services/uid.service');
 
 async function promoteToSuperAdmin(email) {
     if (!email) {
@@ -29,9 +30,13 @@ async function promoteToSuperAdmin(email) {
         }
 
         console.log('Promoting to SUPERADMIN...');
-        await db.update(users)
-            .set({ role: 'SUPERADMIN' })
-            .where(eq(users.id, user.id));
+        await db.transaction(async (tx) => {
+            const superAdminUid = user.superAdminUid || (await uidService.generateRoleUid('SUPERADMIN', tx)).uid;
+
+            await tx.update(users)
+                .set({ role: 'SUPERADMIN', superAdminUid })
+                .where(eq(users.id, user.id));
+        });
 
         console.log('Successfully promoted user to SUPERADMIN!');
         process.exit(0);

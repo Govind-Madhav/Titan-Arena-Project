@@ -9,7 +9,7 @@ const paymentController = require('./payment.controller');
 const { authRequired: authenticate, authorize } = require('../../middleware/auth.middleware');
 
 // Player routes
-router.post('/', authenticate, authorize('PLAYER'), paymentController.createPayment);
+router.post('/', authenticate, authorize('PLAYER', 'HOST'), paymentController.createPayment);
 router.get('/my-payments', authenticate, paymentController.getMyPayments);
 
 // Host routes

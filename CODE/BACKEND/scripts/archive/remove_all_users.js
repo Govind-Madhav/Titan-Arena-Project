@@ -3,6 +3,8 @@
  * Removes all users and their related data from both MySQL and Firebase Auth
  */
 
+/* eslint-disable sonarjs/cognitive-complexity, no-console, sonarjs/no-nested-functions */
+
 require('dotenv').config();
 const { db, pool } = require('../../src/db');
 const { admin } = require('../../src/config/firebase.config');
@@ -36,7 +38,7 @@ async function removeAllUsers() {
         );
         const firebaseUids = firebaseUidsResult[0]
             .map(row => row.firebase_uid)
-            .filter(uid => uid);
+            .filter(Boolean);
         console.log(`   Found ${firebaseUids.length} Firebase Auth users\n`);
 
         // Step 3: Disable foreign key checks for MySQL cleanup
@@ -91,7 +93,7 @@ async function removeAllUsers() {
         for (const tableName of tablesToClean) {
             try {
                 console.log(`   Deleting from ${tableName}...`);
-                const result = await db.execute(sql.raw(`DELETE FROM \`${tableName}\``));
+                await db.execute(sql.raw(`DELETE FROM \`${tableName}\``));
                 console.log(`   ✅ Cleared ${tableName}`);
             } catch (error) {
                 if (error.code === 'ER_NO_SUCH_TABLE') {
@@ -156,7 +158,7 @@ async function removeAllUsers() {
         try {
             await db.execute(sql`SET FOREIGN_KEY_CHECKS = 1`);
         } catch (e) {
-            // Ignore
+            console.warn('⚠️  Could not re-enable foreign keys after cleanup:', e.message);
         }
 
         process.exit(1);

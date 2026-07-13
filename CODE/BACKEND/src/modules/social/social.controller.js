@@ -26,9 +26,9 @@ const createPost = async (req, res) => {
             isDeleted: false
         };
 
-        const result = await db.insert(posts).values(newPost);
+        const result = await db.insert(posts).values(newPost).returning({ id: posts.id });
 
-        res.status(201).json({ success: true, message: 'Post created', postId: result[0].insertId || 'created' }); // insertId might differ based on driver/uuid, but standardizing response
+        res.status(201).json({ success: true, message: 'Post created', postId: result[0]?.id || 'created' });
     } catch (error) {
         console.error('Create post error:', error);
         res.status(500).json({ success: false, message: 'Failed to create post' });
@@ -102,8 +102,11 @@ const deletePost = async (req, res) => {
         const post = await db.select().from(posts).where(eq(posts.id, postId)).limit(1);
         if (!post[0]) return res.status(404).json({ success: false, message: 'Post not found' });
 
-        // Allow Admin or Owner
-        if (post[0].userId !== userId && req.user.role !== 'ADMIN') {
+        // Allow Owner, Admin, or Super Admin
+        const isOwner = post[0].userId === userId;
+        const isAdminOrSuperAdmin = req.user.role === 'ADMIN' || req.user.role === 'SUPERADMIN';
+
+        if (!isOwner && !isAdminOrSuperAdmin) {
             return res.status(403).json({ success: false, message: 'Unauthorized' });
         }
 

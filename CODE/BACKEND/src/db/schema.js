@@ -23,6 +23,7 @@ const users = pgTable('users', {
     passwordHash: varchar('password_hash', { length: 255 }),
     recoveryEmail: varchar('recovery_email', { length: 191 }),
     mfaEnabled: boolean('mfa_enabled').default(false),
+    mfaSecret: varchar('mfa_secret', { length: 255 }),
 
     // Firebase Auth Bridge (Hardened Identity)
     firebaseUid: varchar('firebase_uid', { length: 128 }).unique(),
@@ -63,6 +64,9 @@ const users = pgTable('users', {
     role: varchar('role', { length: 50 }).notNull().default('PLAYER'),
     hostStatus: varchar('hostStatus', { length: 50 }).notNull().default('NOT_VERIFIED'),
     platformUid: varchar('platformUid', { length: 20 }).unique(),
+    hostUid: varchar('hostUid', { length: 20 }).unique(),
+    adminUid: varchar('adminUid', { length: 20 }).unique(),
+    superAdminUid: varchar('superAdminUid', { length: 20 }).unique(),
 
     isBanned: boolean('isBanned').notNull().default(false),
     emailVerified: boolean('emailVerified').notNull().default(false),
@@ -82,6 +86,9 @@ const users = pgTable('users', {
     updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 }, (table) => ({
     platformUidIdx: uniqueIndex('user_platformUid_idx').on(table.platformUid),
+    hostUidIdx: uniqueIndex('user_hostUid_idx').on(table.hostUid),
+    adminUidIdx: uniqueIndex('user_adminUid_idx').on(table.adminUid),
+    superAdminUidIdx: uniqueIndex('user_superAdminUid_idx').on(table.superAdminUid),
     usernameIdx: uniqueIndex('user_username_idx').on(table.username),
     emailIdx: uniqueIndex('user_email_idx').on(table.email),
     regionCodeIdx: index('user_regionCode_idx').on(table.regionCode),

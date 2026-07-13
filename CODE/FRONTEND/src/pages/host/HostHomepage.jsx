@@ -16,7 +16,8 @@ import {
   TrendingUp,
   Target,
   Activity,
-  Gamepad
+  Gamepad,
+  Plus
 } from 'lucide-react';
 import Layout from '../../Components/layout/Layout';
 import useAuthStore from '../../store/authStore';
@@ -69,17 +70,28 @@ const HostDashboard = () => {
 
         <div className="max-w-7xl mx-auto relative z-10">
           {/* Header */}
-          <div className="mb-12">
+          <div className="mb-12 flex flex-col sm:flex-row justify-between sm:items-center gap-6 border-b border-white/5 pb-8">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
             >
-              <h1 className="font-display text-4xl md:text-5xl font-bold mb-4">
+              <h1 className="font-display text-4xl md:text-5xl font-bold mb-3">
                 Host <GradientText>Control Panel</GradientText>
               </h1>
               <p className="text-white/40 text-lg max-w-2xl">
                 Welcome back, {user?.username || 'Organizer'}. Manage your tournaments and engage with the community.
               </p>
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.1 }}
+              className="flex-shrink-0"
+            >
+              <Link to="/hostTourn" className="btn-neon inline-flex items-center gap-2 px-6 py-3 font-heading font-bold text-sm tracking-wide shadow-neon-sm">
+                <Plus size={18} />
+                Create Tournament
+              </Link>
             </motion.div>
           </div>
 

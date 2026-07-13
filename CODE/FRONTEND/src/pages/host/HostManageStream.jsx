@@ -7,6 +7,8 @@
  * Route: /host/tournaments/:tournamentId/streams
  */
 
+/* eslint-disable react/prop-types, sonarjs/no-nested-ternary, no-irregular-whitespace */
+
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
@@ -38,6 +40,24 @@ function MatchRow({ match, index }) {
     })
     const [saving, setSaving] = useState(false)
     const [saved, setSaved] = useState(false)
+
+    let saveButtonClass = 'opacity-30 cursor-not-allowed bg-white/5 border border-white/10 text-white/30'
+    if (saved) {
+        saveButtonClass = 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+    } else if (form.streamUrl !== (match.streamUrl || '') ||
+        form.vodUrl !== (match.vodUrl || '') ||
+        form.spectatorCode !== (match.spectatorCode || '') ||
+        form.isLive !== ['LIVE', 'IN_PROGRESS', 'ONGOING'].includes(match.status)) {
+        saveButtonClass = 'btn-neon'
+    }
+
+    let saveLabel = <><Save size={12} />Save</>
+    if (saved) {
+        saveLabel = <><Check size={12} />Saved</>
+    }
+    if (saving) {
+        saveLabel = <><Loader2 size={12} className="animate-spin" />Saving…</>
+    }
 
     const handleSave = async () => {
         setSaving(true)
@@ -130,15 +150,14 @@ function MatchRow({ match, index }) {
             </div>
 
             <div className="mt-3">
-                <label className="inline-flex items-center gap-2 text-xs text-white/70 cursor-pointer">
-                    <input
-                        type="checkbox"
-                        checked={form.isLive}
-                        onChange={(e) => setForm(f => ({ ...f, isLive: e.target.checked }))}
-                        className="rounded border-white/20 bg-black/30 text-titan-purple focus:ring-titan-purple"
-                    />
+                <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, isLive: !f.isLive }))}
+                    className="inline-flex items-center gap-2 text-xs text-white/70 cursor-pointer"
+                >
+                    {form.isLive ? '✓' : '□'}
                     Mark stream as live now
-                </label>
+                </button>
             </div>
 
             {/* Save */}
@@ -147,19 +166,9 @@ function MatchRow({ match, index }) {
                     onClick={handleSave}
                     disabled={saving || !isDirty}
                     className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all
-                        ${saved
-                            ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                            : isDirty
-                                ? 'btn-neon'
-                                : 'opacity-30 cursor-not-allowed bg-white/5 border border-white/10 text-white/30'
-                        }`}
+                        ${saveButtonClass}`}
                 >
-                    {saving
-                        ? <><Loader2 size={12} className="animate-spin" />Saving…</>
-                        : saved
-                            ? <><Check size={12} />Saved</>
-                            : <><Save size={12} />Save</>
-                    }
+                    {saveLabel}
                 </button>
             </div>
         </motion.div>
@@ -200,6 +209,7 @@ export default function HostManageStream() {
                 streamScope: tournamentData?.streamScope || 'TOURNAMENT',
             })
         } catch (err) {
+            console.error('Failed to load tournament matches:', err);
             toast.error('Failed to load tournament matches')
         } finally {
             setLoading(false)
@@ -292,15 +302,14 @@ export default function HostManageStream() {
                     </div>
                 </div>
                 <div className="flex items-center justify-between mt-3">
-                    <label className="inline-flex items-center gap-2 text-xs text-white/70 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={tournamentStreamForm.streamIsLive}
-                            onChange={(e) => setTournamentStreamForm((prev) => ({ ...prev, streamIsLive: e.target.checked }))}
-                            className="rounded border-white/20 bg-black/30 text-titan-purple focus:ring-titan-purple"
-                        />
+                    <button
+                        type="button"
+                        onClick={() => setTournamentStreamForm((prev) => ({ ...prev, streamIsLive: !prev.streamIsLive }))}
+                        className="inline-flex items-center gap-2 text-xs text-white/70 cursor-pointer"
+                    >
+                        {tournamentStreamForm.streamIsLive ? '✓' : '□'}
                         Mark tournament stream as live
-                    </label>
+                    </button>
                     <button
                         onClick={saveTournamentStream}
                         disabled={savingTournamentStream}
@@ -316,12 +325,14 @@ export default function HostManageStream() {
                     <Loader2 size={22} className="animate-spin" />
                     <span className="font-heading">Loading matches…</span>
                 </div>
-            ) : matches.length === 0 ? (
-                <div className="text-center py-20 border border-dashed border-white/10 rounded-3xl">
-                    <Trophy size={40} className="mx-auto text-white/10 mb-3" />
-                    <p className="text-white/30">No matches found. Generate the bracket first.</p>
-                </div>
             ) : (
+                <>
+                    {matches.length === 0 ? (
+                        <div className="text-center py-20 border border-dashed border-white/10 rounded-3xl">
+                            <Trophy size={40} className="mx-auto text-white/10 mb-3" />
+                            <p className="text-white/30">No matches found. Generate the bracket first.</p>
+                        </div>
+                    ) : (
                 Object.entries(rounds)
                     .sort(([a], [b]) => Number(a) - Number(b))
                     .map(([round, roundMatches]) => (
@@ -338,6 +349,8 @@ export default function HostManageStream() {
                             </div>
                         </div>
                     ))
+                    )}
+                </>
             )}
         </div>
     )

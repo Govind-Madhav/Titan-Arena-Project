@@ -6,8 +6,12 @@
 import axios from 'axios'
 import useAuthStore from '../store/authStore'
 
+const envApiUrl = import.meta.env.VITE_API_URL || '/api'
+// In dev, always use same-origin Vite proxy to avoid cross-origin ERR_NETWORK issues.
+const API_BASE_URL = (import.meta.env.DEV ? '/api' : envApiUrl).replace(/\/$/, '')
+
 const api = axios.create({
-    baseURL: '/api',
+    baseURL: API_BASE_URL,
     withCredentials: true,
 })
 
@@ -20,7 +24,6 @@ api.interceptors.request.use(
         const { accessToken } = useAuthStore.getState()
 
         if (accessToken) {
-            console.log('🔐 API: Using accessToken from store for', config.url)
             config.headers.Authorization = `Bearer ${accessToken}`
             return config
         }
@@ -30,7 +33,6 @@ api.interceptors.request.use(
         if (firebaseUser) {
             try {
                 const token = await firebaseUser.getIdToken()
-                console.log('🔐 API: Using Firebase token for', config.url)
                 config.headers.Authorization = `Bearer ${token}`
             } catch (error) {
                 console.error('🔐 API: Failed to fetch Firebase ID token', error)

@@ -7,9 +7,13 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import axios from 'axios'
 
+const envApiUrl = import.meta.env.VITE_API_URL || '/api'
+// In dev, always use same-origin Vite proxy to avoid cross-origin ERR_NETWORK issues.
+const API_BASE_URL = (import.meta.env.DEV ? '/api' : envApiUrl).replace(/\/$/, '')
+
 // Dedicated auth client to avoid circular dependency with api.js
 const authApi = axios.create({
-    baseURL: '/api',
+    baseURL: API_BASE_URL,
     withCredentials: true,
     headers: {
         'Content-Type': 'application/json',
@@ -42,6 +46,43 @@ authApi.interceptors.request.use(async (config) => {
 })
 
 const TOKEN_REFRESH_INTERVAL = 14 * 60 * 1000 // Refresh 1 minute before expiry (14 min)
+
+const buildAuthHeaders = (authToken) => (authToken ? { Authorization: `Bearer ${authToken}` } : null)
+
+const performAuthSyncRequest = async (endpoint, metadata, authToken) => {
+    const authHeaders = buildAuthHeaders(authToken)
+
+    if (endpoint.includes('sync')) {
+        const requestConfig = authHeaders ? { headers: authHeaders } : undefined
+        return authApi.post(endpoint, metadata, requestConfig)
+    }
+
+    const headers = {
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache'
+    }
+
+    if (authHeaders) {
+        headers.Authorization = authHeaders.Authorization
+    }
+
+    return authApi.get(endpoint, {
+        headers
+    })
+}
+
+const mergeSyncedUser = (previousUser, responseData) => {
+    const incomingUser = responseData.accessToken ? responseData.user : responseData
+
+    return {
+        ...previousUser,
+        ...incomingUser,
+        role: incomingUser?.role || previousUser?.role || 'PLAYER',
+        isAdmin: typeof incomingUser?.isAdmin === 'boolean'
+            ? incomingUser.isAdmin
+            : Boolean(previousUser?.isAdmin)
+    }
+}
 
 // BroadcastChannel for multi-tab sync
 const authChannel = typeof BroadcastChannel === 'undefined'
@@ -162,33 +203,25 @@ const useAuthStore = create(
             },
 
             // NEW: Sync with Backend after Firebase Auth
-            syncWithBackend: async (metadata = {}) => {
+            syncWithBackend: async (metadata = {}, hasRetried = false, options = {}) => {
                 set({ isLoading: true })
                 try {
                     // ⚡ Use /auth/sync if providing metadata OR if we need to exchange Firebase session (no access token yet)
                     const hasMetadata = Object.keys(metadata).length > 0
                     const isSessionExchange = !get().accessToken
                     const endpoint = (hasMetadata || isSessionExchange) ? '/auth/sync' : '/auth/me'
+                    const res = await performAuthSyncRequest(endpoint, metadata, options.authToken)
 
-                    const res = endpoint.includes('sync')
-                        ? await authApi.post(endpoint, metadata)
-                        : await authApi.get(endpoint)
-
-                    const responseData = res.data.data
+                    const responseData = res?.data?.data
+                    if (!responseData) {
+                        throw new Error('Empty auth response from server')
+                    }
 
                     // Handle different response structures
                     // Sync/Login returns: { user, accessToken, expiresAt }
                     // Me returns: { ...user }
                     const previousUser = get().user || {}
-                    const incomingUser = responseData.accessToken ? responseData.user : responseData
-                    const user = {
-                        ...previousUser,
-                        ...incomingUser,
-                        role: incomingUser?.role || previousUser?.role || 'PLAYER',
-                        isAdmin: typeof incomingUser?.isAdmin === 'boolean'
-                            ? incomingUser.isAdmin
-                            : Boolean(previousUser?.isAdmin)
-                    }
+                    const user = mergeSyncedUser(previousUser, responseData)
 
                     if (responseData.accessToken) {
                         set({
@@ -204,7 +237,30 @@ const useAuthStore = create(
                     })
                     return { success: true }
                 } catch (error) {
-                    console.error('Backend Sync Failed:', error.response?.data || error.message)
+                    // Recover from stale access token once by refreshing session and retrying.
+                    if (!hasRetried && error.response?.status === 401) {
+                        const refreshed = await get().refreshAuth()
+                        if (refreshed) {
+                            return get().syncWithBackend(metadata, true, options)
+                        }
+                    }
+
+                    // Browser cache revalidation may return 304 for /auth/me with no body.
+                    // If we already have a user snapshot, keep session valid and avoid hard failure.
+                    if (error.response?.status === 304 && get().user) {
+                        set({ isLoading: false, isAuthenticated: true })
+                        return { success: true }
+                    }
+
+                    console.error('Backend Sync Failed:', {
+                        message: error.message,
+                        code: error.code,
+                        url: error.config?.url,
+                        baseURL: error.config?.baseURL,
+                        method: error.config?.method,
+                        status: error.response?.status,
+                        data: error.response?.data
+                    })
                     set({ isLoading: false, isAuthenticated: false, user: null })
                     return {
                         success: false,

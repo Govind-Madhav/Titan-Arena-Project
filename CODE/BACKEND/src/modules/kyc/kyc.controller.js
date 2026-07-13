@@ -9,6 +9,7 @@ const { eq, and, asc, desc, count, sql, inArray } = require('drizzle-orm');
 const { z } = require('zod');
 const { publishEvent } = require('../../config/kafka.config');
 const { getHostTrustProfile } = require('../../services/hostTrust.service');
+const uidService = require('../../services/uid.service');
 const notificationController = require('../notification/notification.controller');
 const emailService = require('../../services/email.service');
 
@@ -471,8 +472,11 @@ exports.approveKYC = async (req, res) => {
                 .set({ status: 'VERIFIED' })
                 .where(eq(kycRequests.id, id));
 
+            const [userRow] = await tx.select({ hostUid: users.hostUid }).from(users).where(eq(users.id, detail.user.id)).limit(1);
+            const hostUid = userRow?.hostUid || (await uidService.generateRoleUid('HOST', tx)).uid;
+
             await tx.update(users)
-                .set({ hostStatus: 'VERIFIED', role: 'HOST' })
+                .set({ hostStatus: 'VERIFIED', role: 'HOST', hostUid })
                 .where(eq(users.id, detail.user.id));
 
             // Create audit log
@@ -647,4 +651,188 @@ exports.flagKYCAsSuspicious = async (req, res) => {
             message: 'Failed to flag KYC'
         });
     }
+};
+
+exports.createStripeVerificationSession = async (req, res) => {
+    try {
+        const { getStripeInstance } = require('../../config/stripe.config');
+        const stripe = getStripeInstance();
+
+        if (req.user.hostStatus === 'VERIFIED') {
+            return res.status(400).json({
+                success: false,
+                message: 'You are already a verified host'
+            });
+        }
+
+        const session = await stripe.identity.verificationSessions.create({
+            type: 'document',
+            metadata: {
+                userId: req.user.id
+            },
+            options: {
+                document: {
+                    require_matching_selfie: true
+                }
+            }
+        });
+
+        await db.transaction(async (tx) => {
+            const now = new Date();
+            const [existing] = await tx.select().from(kycRequests).where(eq(kycRequests.userId, req.user.id)).limit(1);
+
+            if (existing) {
+                await tx.update(kycRequests)
+                    .set({
+                        documentType: 'STRIPE_IDENTITY',
+                        proofUrl: `stripe_session:${session.id}`,
+                        selfieUrl: `stripe_session:${session.id}`,
+                        status: 'PENDING',
+                        adminNotes: `Stripe Session created: ${session.id}`,
+                        updatedAt: now
+                    })
+                    .where(eq(kycRequests.userId, req.user.id));
+            } else {
+                await tx.insert(kycRequests).values({
+                    userId: req.user.id,
+                    documentType: 'STRIPE_IDENTITY',
+                    proofUrl: `stripe_session:${session.id}`,
+                    selfieUrl: `stripe_session:${session.id}`,
+                    status: 'PENDING',
+                    adminNotes: `Stripe Session created: ${session.id}`,
+                    createdAt: now,
+                    updatedAt: now
+                });
+            }
+
+            await tx.update(users)
+                .set({ hostStatus: 'PENDING_REVIEW' })
+                .where(eq(users.id, req.user.id));
+        });
+
+        res.json({
+            success: true,
+            sessionId: session.id,
+            clientSecret: session.client_secret
+        });
+    } catch (error) {
+        console.error('Create Stripe identity session error:', error);
+        res.status(500).json({ success: false, message: 'Failed to create verification session' });
+    }
+};
+
+exports.handleStripeWebhook = async (req, res) => {
+    const { getStripeInstance } = require('../../config/stripe.config');
+    const stripe = getStripeInstance();
+    const signature = req.headers['stripe-signature'];
+    let event;
+
+    const webhookSecret = process.env.STRIPE_IDENTITY_WEBHOOK_SECRET || process.env.STRIPE_WEBHOOK_SECRET;
+    if (process.env.NODE_ENV === 'production' && !webhookSecret) {
+        console.error('❌ Production error: Stripe Identity Webhook Secret is missing.');
+        return res.status(500).json({ success: false, message: 'Webhook configuration error' });
+    }
+
+    try {
+        const rawBody = req.rawBody;
+        if (!rawBody) {
+            return res.status(400).json({ success: false, message: 'Raw body is missing for signature verification' });
+        }
+        event = stripe.webhooks.constructEvent(
+            rawBody,
+            signature,
+            webhookSecret || 'whsec_mock_secret_if_missing'
+        );
+    } catch (err) {
+        console.error('Stripe webhook signature verification failed:', err.message);
+        return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === 'identity.verification_session.verified') {
+        const session = event.data.object;
+        const userId = session.metadata?.userId;
+
+        if (!userId) {
+            console.warn(`Stripe verification session ${session.id} is missing userId in metadata`);
+            return res.json({ received: true });
+        }
+
+        try {
+            const verifiedSession = await stripe.identity.verificationSessions.retrieve(session.id, {
+                expand: ['last_verification_report']
+            });
+
+            const report = verifiedSession.last_verification_report;
+            if (!report || !report.document) {
+                console.warn(`Stripe verification report missing document data for session ${session.id}`);
+                return res.json({ received: true });
+            }
+
+            const verifiedCountry = report.document.issuing_country?.toUpperCase();
+
+            const { COUNTRY_TO_REGION } = require('../../config/regions.config');
+            const regionMapping = COUNTRY_TO_REGION[verifiedCountry];
+
+            if (!regionMapping) {
+                console.error(`Verified country ${verifiedCountry} is not mapped in regions.config.js`);
+                return res.status(400).json({ success: false, message: 'Unmapped country code' });
+            }
+
+            await db.transaction(async (tx) => {
+                const [kycRow] = await tx.select({ id: kycRequests.id }).from(kycRequests).where(eq(kycRequests.userId, userId)).limit(1);
+                const kycId = kycRow?.id;
+
+                if (kycId) {
+                    await tx.update(kycRequests)
+                        .set({
+                            status: 'VERIFIED',
+                            adminNotes: `Verified via Stripe Identity. Country verified as: ${verifiedCountry}`,
+                            updatedAt: new Date()
+                        })
+                        .where(eq(kycRequests.id, kycId));
+                }
+
+                const [userRow] = await tx.select({ hostUid: users.hostUid }).from(users).where(eq(users.id, userId)).limit(1);
+                const hostUid = userRow?.hostUid || (await uidService.generateRoleUid('HOST', tx)).uid;
+
+                await tx.update(users)
+                    .set({
+                        countryCode: verifiedCountry,
+                        regionCode: regionMapping.region,
+                        subRegionCode: regionMapping.subRegion,
+                        hostStatus: 'VERIFIED',
+                        role: 'HOST',
+                        hostUid,
+                        updatedAt: new Date()
+                    })
+                    .where(eq(users.id, userId));
+
+                await tx.insert(auditLogs).values({
+                    adminId: userId,
+                    userId: userId,
+                    action: 'KYC_APPROVED',
+                    targetId: kycId || userId,
+                    details: JSON.stringify({ userId, verifiedCountry, stripeSessionId: session.id })
+                });
+            });
+
+            await publishEvent('kyc.approved', {
+                eventType: 'KYC_APPROVED',
+                userId,
+                timestamp: new Date().toISOString()
+            });
+
+            const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+            if (user) {
+                await sendKycOutcome({ user, decision: 'APPROVED' });
+            }
+
+            console.log(`✅ Stripe identity webhook successfully aligned user ${userId} to ${verifiedCountry}`);
+        } catch (error) {
+            console.error('Stripe KYC approval processing failed:', error);
+            return res.status(500).json({ success: false, message: 'Internal Server Error' });
+        }
+    }
+
+    res.json({ received: true });
 };

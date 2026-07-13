@@ -69,6 +69,8 @@ export default function DashboardPage() {
         wins: 0,
         teams: 0
     })
+    const [upcomingMatches, setUpcomingMatches] = useState([])
+    const [dashboardNotifications, setDashboardNotifications] = useState([])
 
     useEffect(() => {
         // Fetch wallet
@@ -76,14 +78,61 @@ export default function DashboardPage() {
             .then(res => setWallet(res.data.data || { balance: 0, locked: 0 }))
             .catch(() => { })
 
-        // Fetch stats (would come from API)
-        setStats({
-            rank: '#128',
-            tournaments: 12,
-            wins: 3,
-            teams: 2
-        })
+        // Fetch stats
+        api.get('/stats/my')
+            .then(res => {
+                if (res.data?.success && res.data?.data) {
+                    const s = res.data.data;
+                    setStats({
+                        rank: s.globalRank && s.globalRank !== 'N/A' ? `#${s.globalRank}` : '#-',
+                        tournaments: s.tournamentsJoined || 0,
+                        wins: s.matchesWon || 0,
+                        teams: s.winRate ? `${Math.round(s.winRate)}%` : '0%'
+                    });
+                }
+            })
+            .catch(err => console.error('Failed to fetch player stats', err));
+
+        // Fetch matches
+        api.get('/matches/my')
+            .then(res => {
+                const allMatches = res.data?.data || [];
+                const upcoming = allMatches
+                    .filter(m => m.status !== 'COMPLETED')
+                    .slice(0, 3);
+                setUpcomingMatches(upcoming);
+            })
+            .catch(err => console.error('Failed to fetch user matches', err));
+
+        // Fetch notifications
+        api.get('/notifications')
+            .then(res => {
+                setDashboardNotifications((res.data?.data || []).slice(0, 3));
+            })
+            .catch(err => console.error('Failed to fetch notifications', err));
     }, [])
+
+    const formatDate = (dateString) => {
+        if (!dateString) return 'TBD';
+        return new Date(dateString).toLocaleDateString('en-IN', {
+            day: 'numeric',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
+    };
+
+    const formatTimeAgo = (dateString) => {
+        if (!dateString) return '';
+        const seconds = Math.floor((new Date() - new Date(dateString)) / 1000);
+        if (seconds < 60) return 'Just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        const days = Math.floor(hours / 24);
+        return `${days}d ago`;
+    };
 
     const formatCurrency = (paise) => {
         return new Intl.NumberFormat('en-IN', {
@@ -189,22 +238,24 @@ export default function DashboardPage() {
                             </Link>
                         </div>
                         <div className="glass-card divide-y divide-white/5">
-                            {[
-                                { game: 'BGMI Pro League', time: 'Today, 8:00 PM', vs: 'Team Alpha' },
-                                { game: 'Valorant Cup', time: 'Tomorrow, 6:00 PM', vs: 'Phoenix Squad' },
-                                { game: 'Free Fire Weekly', time: 'Dec 15, 4:00 PM', vs: 'FireLords' },
-                            ].map((match, i) => (
-                                <div key={i} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
-                                    <div>
-                                        <p className="font-heading font-semibold">{match.game}</p>
-                                        <p className="text-sm text-white/40">vs {match.vs}</p>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className="text-sm text-titan-purple">{match.time}</p>
-                                        <Calendar size={14} className="inline text-white/40" />
-                                    </div>
+                            {upcomingMatches.length === 0 ? (
+                                <div className="p-8 text-center text-white/40">
+                                    No upcoming matches scheduled.
                                 </div>
-                            ))}
+                            ) : (
+                                upcomingMatches.map((match, i) => (
+                                    <div key={match.id || i} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
+                                        <div>
+                                            <p className="font-heading font-semibold">{match.tournamentName || match.tournamentGame || 'Tournament Match'}</p>
+                                            <p className="text-sm text-white/40">{match.roundName || `Round ${match.round || 1}`}</p>
+                                        </div>
+                                        <div className="text-right flex items-center gap-2">
+                                            <span className="text-sm text-titan-purple">{formatDate(match.startTime)}</span>
+                                            <Calendar size={14} className="text-white/40" />
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </motion.div>
 
@@ -216,34 +267,31 @@ export default function DashboardPage() {
                     >
                         <div className="flex items-center justify-between mb-4">
                             <h2 className="font-heading text-xl font-semibold">Notifications</h2>
-                            <span className="px-2 py-1 rounded-full bg-titan-purple/20 text-titan-purple text-xs font-semibold">
-                                3 new
-                            </span>
+                            {dashboardNotifications.filter(n => !n.isRead).length > 0 && (
+                                <span className="px-2 py-1 rounded-full bg-titan-purple/20 text-titan-purple text-xs font-semibold">
+                                    {dashboardNotifications.filter(n => !n.isRead).length} new
+                                </span>
+                            )}
                         </div>
                         <div className="glass-card divide-y divide-white/5">
-                            {[
-                                { title: 'Team invite received', desc: 'Phoenix Squad wants you to join', time: '2h ago', type: 'info' },
-                                { title: 'Tournament starting soon', desc: 'BGMI Pro League begins in 4 hours', time: '4h ago', type: 'warning' },
-                                { title: 'Prize credited!', desc: '₹500 added to wallet', time: '1d ago', type: 'success' },
-                            ].map((notif, i) => (
-                                <div key={i} className="p-4 flex items-start gap-3 hover:bg-white/5 transition-colors cursor-pointer">
-                                    <div className={`p-2 rounded-lg ${notif.type === 'success' ? 'bg-titan-success/20' :
-                                        notif.type === 'warning' ? 'bg-titan-warning/20' :
-                                            'bg-titan-purple/20'
-                                        }`}>
-                                        <Bell size={16} className={
-                                            notif.type === 'success' ? 'text-titan-success' :
-                                                notif.type === 'warning' ? 'text-titan-warning' :
-                                                    'text-titan-purple'
-                                        } />
-                                    </div>
-                                    <div className="flex-1">
-                                        <p className="font-heading font-semibold text-sm">{notif.title}</p>
-                                        <p className="text-sm text-white/40">{notif.desc}</p>
-                                    </div>
-                                    <span className="text-xs text-white/30">{notif.time}</span>
+                            {dashboardNotifications.length === 0 ? (
+                                <div className="p-8 text-center text-white/40">
+                                    No new notifications.
                                 </div>
-                            ))}
+                            ) : (
+                                dashboardNotifications.map((notif, i) => (
+                                    <div key={notif.id || i} className="p-4 flex items-start gap-3 hover:bg-white/5 transition-colors cursor-pointer">
+                                        <div className="p-2 rounded-lg bg-titan-purple/20">
+                                            <Bell size={16} className="text-titan-purple" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-heading font-semibold text-sm">{notif.title}</p>
+                                            <p className="text-sm text-white/40">{notif.message}</p>
+                                        </div>
+                                        <span className="text-xs text-white/30 whitespace-nowrap">{formatTimeAgo(notif.createdAt)}</span>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </motion.div>
                 </div>

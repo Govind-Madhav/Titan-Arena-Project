@@ -1,4 +1,6 @@
+/* eslint-disable react/prop-types, jsx-a11y/label-has-associated-control, jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions, sonarjs/no-nested-ternary, jsx-a11y/no-autofocus,jsx-a11y/no-noninteractive-tabindex */
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { User, Shield, Link as LinkIcon, Lock, Eye, Wallet, Save, Trash2, LogOut, Mail, Phone, Calendar, AlertCircle } from 'lucide-react';
 import useAuthStore from '../../store/authStore';
 import toast from 'react-hot-toast';
@@ -15,10 +17,11 @@ const SETTINGS_SECTIONS = [
 ];
 
 export default function SettingsPage() {
-    const { user, getProfile, updateProfile, uploadAvatar } = useAuthStore();
+    const { user, getProfile, updateProfile, uploadAvatar, clearAuth } = useAuthStore();
     const [activeSection, setActiveSection] = useState('account');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const navigate = useNavigate();
 
     // Combined State
     const [formData, setFormData] = useState({
@@ -86,6 +89,52 @@ export default function SettingsPage() {
         }
     };
 
+    const handleDeactivateAccount = async () => {
+        const password = globalThis.prompt('Enter your password to deactivate your account');
+        if (!password) return;
+
+        if (!globalThis.confirm('Deactivate your account? You can log back in later to reactivate it.')) {
+            return;
+        }
+
+        try {
+            const res = await api.post('/auth/deactivate', { password });
+            if (res.data.success) {
+                toast.success(res.data.message || 'Account deactivated');
+                clearAuth();
+                navigate('/auth', { replace: true });
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to deactivate account');
+        }
+    };
+
+    const handleDeleteAccount = async () => {
+        const confirmation = globalThis.prompt('Type DELETE PERMANENTLY to confirm account deletion');
+        if (confirmation !== 'DELETE PERMANENTLY') {
+            if (confirmation !== null) toast.error('Confirmation text did not match');
+            return;
+        }
+
+        const password = globalThis.prompt('Enter your password to permanently delete your account');
+        if (!password) return;
+
+        if (!globalThis.confirm('This will permanently delete your account. Continue?')) {
+            return;
+        }
+
+        try {
+            const res = await api.post('/auth/delete', { password, confirmation });
+            if (res.data.success) {
+                toast.success(res.data.message || 'Account deleted');
+                clearAuth();
+                navigate('/auth', { replace: true });
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to delete account');
+        }
+    };
+
     if (loading) return <div className="min-h-screen pt-24 flex justify-center text-white">Loading...</div>;
 
     return (
@@ -121,7 +170,7 @@ export default function SettingsPage() {
                     {/* Main Content */}
                     <div className="lg:col-span-9">
                         <div className="bg-titan-bg-card border border-white/5 rounded-2xl p-6 sm:p-8">
-                            {activeSection === 'account' && <AccountSection formData={formData} handleChange={handleChange} handleAvatarUpload={handleAvatarUpload} user={user} />}
+                            {activeSection === 'account' && <AccountSection formData={formData} handleChange={handleChange} handleAvatarUpload={handleAvatarUpload} user={user} onDeactivateAccount={handleDeactivateAccount} onDeleteAccount={handleDeleteAccount} />}
                             {activeSection === 'security' && <SecuritySection user={user} refreshData={loadProfile} />}
                             {activeSection === 'connected' && <ConnectedAccountsSection gameProfiles={gameProfiles} refreshData={loadProfile} user={user} />}
                             {activeSection === 'privacy' && <PrivacySection formData={formData} handleChange={handleChange} />}
@@ -144,7 +193,7 @@ export default function SettingsPage() {
 }
 
 // 👤 My Account Section
-const AccountSection = ({ formData, handleChange, handleAvatarUpload, user }) => (
+const AccountSection = ({ formData, handleChange, handleAvatarUpload, user, onDeactivateAccount, onDeleteAccount }) => (
     <div className="space-y-8">
         <div>
             <h2 className="text-2xl font-bold text-white mb-6">👤 My Account</h2>
@@ -220,14 +269,14 @@ const AccountSection = ({ formData, handleChange, handleAvatarUpload, user }) =>
         <div className="border-t border-white/10 pt-8 space-y-4">
             <h3 className="text-lg font-bold text-red-400">Danger Zone</h3>
             <div className="space-y-3">
-                <button className="w-full flex items-center justify-between p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl hover:bg-yellow-500/20 transition-colors">
+                <button onClick={onDeactivateAccount} className="w-full flex items-center justify-between p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl hover:bg-yellow-500/20 transition-colors">
                     <div className="text-left">
                         <p className="font-medium text-yellow-400">Deactivate Account</p>
                         <p className="text-sm text-white/60">Temporarily disable your account</p>
                     </div>
                     <AlertCircle size={20} className="text-yellow-400" />
                 </button>
-                <button className="w-full flex items-center justify-between p-4 bg-red-500/10 border border-red-500/30 rounded-xl hover:bg-red-500/20 transition-colors">
+                <button onClick={onDeleteAccount} className="w-full flex items-center justify-between p-4 bg-red-500/10 border border-red-500/30 rounded-xl hover:bg-red-500/20 transition-colors">
                     <div className="text-left">
                         <p className="font-medium text-red-400">Delete Account</p>
                         <p className="text-sm text-white/60">Permanent and irreversible</p>
@@ -250,6 +299,7 @@ const SecuritySection = ({ user, refreshData }) => {
     const [mfaSetupData, setMfaSetupData] = useState(null);
     const [mfaCode, setMfaCode] = useState('');
     const [disableMfaCode, setDisableMfaCode] = useState('');
+    const [showDisableMfaDropdown, setShowDisableMfaDropdown] = useState(false);
 
     const [showEmailModal, setShowEmailModal] = useState(false);
     const [emailForm, setEmailForm] = useState({ newEmail: '', otp: '', password: '' });
@@ -338,6 +388,7 @@ const SecuritySection = ({ user, refreshData }) => {
             if (res.data.success) {
                 setMfaEnabled(false);
                 setDisableMfaCode('');
+                setShowDisableMfaDropdown(false);
                 toast.success('MFA disabled');
                 refreshData();
             }
@@ -464,44 +515,44 @@ const SecuritySection = ({ user, refreshData }) => {
                     action="Change"
                     onAction={() => setShowEmailModal(true)}
                 />
-                <ActionCard
-                    icon={Shield}
-                    title={mfaEnabled ? 'MFA Enabled' : 'Enable MFA'}
-                    description={mfaDescription}
-                    action={mfaEnabled ? 'Manage' : 'Setup'}
-                    badge={mfaEnabled ? 'ON' : undefined}
-                    onAction={() => {
-                        if (mfaEnabled) {
-                            const el = document.getElementById('disable-mfa-box');
-                            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        } else {
-                            handleInitMfa();
-                        }
-                    }}
-                    disabled={mfaLoading}
-                />
+                <div>
+                    <ActionCard
+                        icon={Shield}
+                        title={mfaEnabled ? 'MFA Enabled' : 'Enable MFA'}
+                        description={mfaDescription}
+                        action={mfaEnabled ? (showDisableMfaDropdown ? 'Close' : 'Manage') : 'Setup'}
+                        badge={mfaEnabled ? 'ON' : undefined}
+                        onAction={() => {
+                            if (mfaEnabled) {
+                                setShowDisableMfaDropdown(!showDisableMfaDropdown);
+                            } else {
+                                handleInitMfa();
+                            }
+                        }}
+                        disabled={mfaLoading}
+                    />
+                    {mfaEnabled && showDisableMfaDropdown && (
+                        <div className="mt-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl space-y-3">
+                            <h3 className="text-lg font-semibold text-red-300">Disable MFA</h3>
+                            <p className="text-sm text-white/70">Enter your current authenticator code to disable MFA.</p>
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <input
+                                    type="text"
+                                    value={disableMfaCode}
+                                    onChange={(e) => setDisableMfaCode(e.target.value)}
+                                    placeholder="6-digit code"
+                                    className="w-full sm:w-60 bg-black/20 border border-white/10 rounded-lg px-4 py-2.5 text-white outline-none"
+                                />
+                                <button onClick={handleDisableMfa} className="btn-ghost px-4 py-2" disabled={mfaLoading}>
+                                    {mfaLoading ? 'Please wait...' : 'Disable MFA'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
                 <ActionCard icon={Phone} title="Phone Number" description={user?.phone || 'Add phone number'} action="Soon" badge={user?.phoneVerified ? 'Verified' : undefined} disabled />
                 <ActionCard icon={Mail} title="Recovery Email" description={user?.recoveryEmail || 'Add backup email'} action="Soon" disabled />
             </div>
-
-            {mfaEnabled && (
-                <div id="disable-mfa-box" className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl space-y-3">
-                    <h3 className="text-lg font-semibold text-red-300">Disable MFA</h3>
-                    <p className="text-sm text-white/70">Enter your current authenticator code to disable MFA.</p>
-                    <div className="flex flex-col sm:flex-row gap-3">
-                        <input
-                            type="text"
-                            value={disableMfaCode}
-                            onChange={(e) => setDisableMfaCode(e.target.value)}
-                            placeholder="6-digit code"
-                            className="w-full sm:w-60 bg-black/20 border border-white/10 rounded-lg px-4 py-2.5 text-white outline-none"
-                        />
-                        <button onClick={handleDisableMfa} className="btn-ghost px-4 py-2" disabled={mfaLoading}>
-                            {mfaLoading ? 'Please wait...' : 'Disable MFA'}
-                        </button>
-                    </div>
-                </div>
-            )}
 
             <div className="border-t border-white/10 pt-6">
                 <h3 className="text-lg font-bold text-white mb-4">Active Sessions</h3>
@@ -514,19 +565,14 @@ const SecuritySection = ({ user, refreshData }) => {
             </div>
 
             {showMfaSetup && mfaSetupData && (
-                <div
+                <dialog
+                    open
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setShowMfaSetup(false)}
-                    onKeyDown={(e) => { if (e.key === 'Escape') setShowMfaSetup(false); }}
+                    onClick={(e) => {
+                        if (e.target === e.currentTarget) setShowMfaSetup(false)
+                    }}
                 >
-                    <div
-                        className="w-full max-w-lg bg-titan-bg-card border border-white/10 rounded-2xl p-6"
-                        role="dialog"
-                        aria-modal="true"
-                        onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="w-full max-w-lg bg-titan-bg-card border border-white/10 rounded-2xl p-6">
                         <h3 className="text-xl font-bold text-white mb-2">Set up Authenticator App</h3>
                         <p className="text-sm text-white/70 mb-4">Scan this QR in Google Authenticator/Authy, then enter the 6-digit code.</p>
 
@@ -550,23 +596,18 @@ const SecuritySection = ({ user, refreshData }) => {
                             </button>
                         </div>
                     </div>
-                </div>
+                </dialog>
             )}
 
             {showEmailModal && (
-                <div
+                <dialog
+                    open
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setShowEmailModal(false)}
-                    onKeyDown={(e) => { if (e.key === 'Escape') setShowEmailModal(false); }}
+                    onClick={(e) => {
+                        if (e.target === e.currentTarget) setShowEmailModal(false)
+                    }}
                 >
-                    <div
-                        className="w-full max-w-lg bg-titan-bg-card border border-white/10 rounded-2xl p-6 space-y-4"
-                        role="dialog"
-                        aria-modal="true"
-                        onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="w-full max-w-lg bg-titan-bg-card border border-white/10 rounded-2xl p-6 space-y-4">
                         <h3 className="text-xl font-bold text-white">Change Email Address</h3>
                         <input
                             type="email"
@@ -602,7 +643,7 @@ const SecuritySection = ({ user, refreshData }) => {
                             </button>
                         )}
                     </div>
-                </div>
+                </dialog>
             )}
         </div>
     );
@@ -943,15 +984,19 @@ const WalletSection = ({ user }) => {
                             </button>
                         </div>
                     </div>
-                ) : wallet?.billingAddress ? (
-                    <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
-                        <p className="text-white">{wallet.billingAddress.street}</p>
-                        <p className="text-white">{wallet.billingAddress.city}, {wallet.billingAddress.state} {wallet.billingAddress.postalCode}</p>
-                        <p className="text-white">{wallet.billingAddress.country}</p>
-                        <p className="text-sm text-white/60 mt-2">Invoice Email: {wallet.invoiceEmail}</p>
-                    </div>
                 ) : (
-                    <p className="text-white/40 text-sm mb-4 p-4 bg-white/5 border border-white/10 rounded-xl">No billing address yet. Add one to activate your wallet.</p>
+                    <>
+                        {wallet?.billingAddress ? (
+                            <div className="p-4 bg-white/5 border border-white/10 rounded-xl">
+                                <p className="text-white">{wallet.billingAddress.street}</p>
+                                <p className="text-white">{wallet.billingAddress.city}, {wallet.billingAddress.state} {wallet.billingAddress.postalCode}</p>
+                                <p className="text-white">{wallet.billingAddress.country}</p>
+                                <p className="text-sm text-white/60 mt-2">Invoice Email: {wallet.invoiceEmail}</p>
+                            </div>
+                        ) : (
+                            <p className="text-white/40 text-sm mb-4 p-4 bg-white/5 border border-white/10 rounded-xl">No billing address yet. Add one to activate your wallet.</p>
+                        )}
+                    </>
                 )}
             </div>
 

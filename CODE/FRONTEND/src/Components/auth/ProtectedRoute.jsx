@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 /**
  * Copyright (c) 2025 Titan E-sports. All rights reserved.
  * This code is proprietary and confidential.

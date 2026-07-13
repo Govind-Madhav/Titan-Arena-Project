@@ -7,6 +7,88 @@ const redis = require('redis');
 
 let redisClient = null;
 let isConnected = false;
+const memoryStore = new Map();
+
+const now = () => Date.now();
+
+const setMemoryEntry = (key, value, ttlSeconds) => {
+    const expiresAt = Number.isFinite(ttlSeconds) && ttlSeconds > 0
+        ? now() + (ttlSeconds * 1000)
+        : null;
+
+    memoryStore.set(key, {
+        value,
+        expiresAt
+    });
+};
+
+const getMemoryEntry = (key) => {
+    const entry = memoryStore.get(key);
+    if (!entry) return null;
+
+    if (entry.expiresAt && entry.expiresAt <= now()) {
+        memoryStore.delete(key);
+        return null;
+    }
+
+    return entry;
+};
+
+const createMemoryClient = () => ({
+    isMock: true,
+    async get(key) {
+        const entry = getMemoryEntry(key);
+        return entry ? entry.value : null;
+    },
+    async set(key, value, options = {}) {
+        const ttl = Number.isFinite(options.EX) ? Number(options.EX) : null;
+        setMemoryEntry(key, value, ttl);
+        return 'OK';
+    },
+    async setEx(key, ttlSeconds, value) {
+        setMemoryEntry(key, value, ttlSeconds);
+        return 'OK';
+    },
+    async del(keys) {
+        const keyList = Array.isArray(keys) ? keys : [keys];
+        let removed = 0;
+        for (const key of keyList) {
+            if (memoryStore.delete(key)) removed += 1;
+        }
+        return removed;
+    },
+    async keys(pattern) {
+        const regex = new RegExp(`^${String(pattern).replaceAll('*', '.*')}$`);
+        const matches = [];
+        for (const key of memoryStore.keys()) {
+            if (getMemoryEntry(key) && regex.test(key)) {
+                matches.push(key);
+            }
+        }
+        return matches;
+    },
+    async ttl(key) {
+        const entry = getMemoryEntry(key);
+        if (!entry) return -2;
+        if (!entry.expiresAt) return -1;
+        return Math.max(0, Math.ceil((entry.expiresAt - now()) / 1000));
+    },
+    async ping() {
+        return 'PONG';
+    },
+    async quit() {
+        return 'OK';
+    },
+    async disconnect() {
+        return 'OK';
+    },
+    async subscribe() {
+        return undefined;
+    },
+    async unsubscribe() {
+        return undefined;
+    }
+});
 
 /**
  * Create and configure Redis client
@@ -21,16 +103,8 @@ const createRedisClient = async () => {
         const client = redis.createClient({
             socket: {
                 host: process.env.REDIS_HOST || 'localhost',
-                port: parseInt(process.env.REDIS_PORT || '6379'),
-                reconnectStrategy: (retries) => {
-                    if (retries > 10) {
-                        console.error('❌ Redis: Max reconnection attempts reached');
-                        return new Error('Max reconnection attempts reached');
-                    }
-                    const delay = Math.min(retries * 100, 3000);
-                    console.log(`🔄 Redis: Reconnecting in ${delay}ms...`);
-                    return delay;
-                }
+                port: Number.parseInt(process.env.REDIS_PORT || '6379', 10),
+                reconnectStrategy: () => new Error('Redis unavailable')
             },
             // No password for local development
             password: process.env.REDIS_PASSWORD || undefined
@@ -69,7 +143,7 @@ const createRedisClient = async () => {
     } catch (error) {
         if (process.env.NODE_ENV !== 'production') {
             console.warn('⚠️ Redis: Connection failed. Falling back to Memory Mode for development.');
-            redisClient = { isMock: true };
+            redisClient = createMemoryClient();
             isConnected = true; // Set to true so getRedisClient doesn't throw
             return redisClient;
         }

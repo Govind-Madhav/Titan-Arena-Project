@@ -153,7 +153,7 @@ export default function TournamentsPage() {
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
-                            className="lg:hidden mt-4 pt-4 border-t border-white/10 grid grid-cols-3 gap-4"
+                            className="lg:hidden mt-4 pt-4 border-t border-white/10 grid grid-cols-1 sm:grid-cols-3 gap-4"
                         >
                             <select
                                 value={filters.game}

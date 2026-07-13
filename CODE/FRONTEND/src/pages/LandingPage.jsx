@@ -13,7 +13,8 @@ import {
     Gamepad2,
     Crown,
     Target,
-    Flame
+    Flame,
+    Play
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import useAuthStore from '../store/authStore'
@@ -342,6 +343,27 @@ function FeaturedTournaments() {
 
 // Live Highlights Section
 function HighlightsSection() {
+    const highlights = [
+        {
+            title: "Mortal 1v3 Clutch | Titan Cup",
+            game: "VALORANT",
+            views: "14.5K views",
+            mediaUrl: "https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=600&auto=format&fit=crop"
+        },
+        {
+            title: "JONATHAN's Squad Wipe | BGMI",
+            game: "BGMI",
+            views: "32.0K views",
+            mediaUrl: "https://images.unsplash.com/photo-1553481187-be93c21490a9?q=80&w=600&auto=format&fit=crop"
+        },
+        {
+            title: "CS2 Grand Finals Winning Moment",
+            game: "COUNTER-STRIKE 2",
+            views: "45.2K views",
+            mediaUrl: "https://images.unsplash.com/photo-1560253023-3ec5d502959f?q=80&w=600&auto=format&fit=crop"
+        }
+    ];
+
     return (
         <section className="py-20 px-4 relative z-10 bg-black/10">
             <div className="max-w-6xl mx-auto">
@@ -360,8 +382,35 @@ function HighlightsSection() {
                     <p className="text-white/40">Epic moments from recent matches</p>
                 </motion.div>
 
-                <div className="glass-card rounded-2xl p-10 text-center text-white/60 border border-dashed border-white/10">
-                    No live highlights available yet.
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {highlights.map((item, i) => (
+                        <motion.div
+                            key={i}
+                            initial={{ opacity: 0, y: 20 }}
+                            whileInView={{ opacity: 1, y: 0 }}
+                            viewport={{ once: true }}
+                            transition={{ delay: i * 0.1 }}
+                            className="group relative cursor-pointer overflow-hidden rounded-2xl border border-white/10 bg-black/40 h-56"
+                        >
+                            <img 
+                                src={item.mediaUrl} 
+                                className="absolute inset-0 w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-500" 
+                                alt={item.title} 
+                            />
+                            {/* Play Overlay */}
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors duration-300">
+                                <div className="w-12 h-12 rounded-full bg-titan-purple/90 group-hover:bg-titan-purple flex items-center justify-center text-white scale-90 group-hover:scale-100 transition-all duration-300 shadow-lg shadow-titan-purple/30">
+                                    <Play size={20} fill="white" className="ml-1" />
+                                </div>
+                            </div>
+                            {/* Content Info */}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent p-5 flex flex-col justify-end">
+                                <span className="text-titan-purple text-xs font-bold tracking-widest uppercase mb-1">{item.game}</span>
+                                <h3 className="text-white font-bold text-base line-clamp-1 mb-1">{item.title}</h3>
+                                <span className="text-white/40 text-xs">{item.views}</span>
+                            </div>
+                        </motion.div>
+                    ))}
                 </div>
             </div>
         </section>

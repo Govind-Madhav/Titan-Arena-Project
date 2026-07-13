@@ -24,6 +24,8 @@ router.put('/billing', walletController.updateBillingAddress);
 // Deposit flow
 router.post('/deposit/init', walletController.initDeposit);
 router.post('/deposit/verify', walletController.verifyDeposit);
+router.post('/deposit/stripe/init', walletController.initStripeDeposit);
+router.post('/deposit/stripe/webhook', walletController.handleStripeDepositWebhook);
 
 // Withdrawal
 router.post('/withdraw', walletController.requestWithdraw);

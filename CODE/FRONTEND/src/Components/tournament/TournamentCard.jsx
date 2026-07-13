@@ -85,6 +85,7 @@ export default function TournamentCard({ tournament }) {
     };
 
     const target = getCountdownTarget();
+    const bannerSrc = tournament.bannerUrl || tournament.imageUrl || '/card1.avif';
 
     return (
         <motion.div
@@ -97,9 +98,21 @@ export default function TournamentCard({ tournament }) {
             >
                 {/* Image/Banner Section */}
                 <div className={`relative h-40 bg-gradient-to-br ${getGameColor()}`}>
+                    <img
+                        src={bannerSrc}
+                        alt={name}
+                        className="absolute inset-0 h-full w-full object-cover"
+                        onError={(event) => {
+                            if (event.currentTarget.src !== `${window.location.origin}/card1.avif`) {
+                                event.currentTarget.src = '/card1.avif'
+                            }
+                        }}
+                    />
+
                     {/* Game Overlay Pattern */}
+                    <div className="absolute inset-0 bg-black/35" />
                     <div
-                        className="absolute inset-0 opacity-20"
+                        className="absolute inset-0 opacity-25"
                         style={{
                             backgroundImage: `radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.4) 0%, transparent 50%)`,
                         }}

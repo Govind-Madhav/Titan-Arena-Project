@@ -13,6 +13,10 @@ const { requireNotBanned, requireAdmin } = require('../../middleware/role.middle
 router.post('/apply', authRequired, requireNotBanned, kycController.applyForHost);
 router.get('/status', authRequired, kycController.getHostStatus);
 
+// Stripe KYC routes
+router.post('/stripe/session', authRequired, requireNotBanned, kycController.createStripeVerificationSession);
+router.post('/stripe/webhook', kycController.handleStripeWebhook);
+
 // Admin routes
 router.get('/admin/kyc', authRequired, requireAdmin(), kycController.listKYCRequests);
 router.get('/admin/kyc/:id', authRequired, requireAdmin(), kycController.getKYCRequestById);

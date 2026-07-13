@@ -26,7 +26,7 @@ const getTransporter = () => {
 
     transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
-        port: parseInt(process.env.SMTP_PORT) || 587,
+        port: Number.parseInt(process.env.SMTP_PORT, 10) || 587,
         secure: process.env.SMTP_SECURE === 'true',
         auth: {
             user: process.env.SMTP_USER,
@@ -56,6 +56,7 @@ const sanitize = (str) => {
 exports.sendVerificationEmail = async (email, token, username) => {
     const transport = getTransporter();
     const cleanUsername = sanitize(username);
+    const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
 
     // For OTP, we display the code directly. The argument 'token' is actually the OTP.
     const otp = token;
@@ -64,58 +65,27 @@ exports.sendVerificationEmail = async (email, token, username) => {
     console.log(`📧 Sending verification email to ${email}`);
 
     const mailOptions = {
-        from: `"TITAN ARENA" <${process.env.SMTP_USER}>`,
+        from: { name: 'TITAN ARENA', address: fromAddress },
         to: email,
-        replyTo: 'no-reply@titanarena.com',
-        subject: '🎮 Verify Your TITAN ARENA Account',
-        text: `Welcome, ${cleanUsername}! Your verification code is: ${otp}`,
+        replyTo: fromAddress,
+        subject: 'Titan Arena verification code',
+        headers: {
+            'X-Priority': '1',
+            Importance: 'high'
+        },
+        text: `Hi ${cleanUsername || 'there'},\n\nYour Titan Arena verification code is: ${otp}\n\nThis code expires in 15 minutes. If you did not request it, you can ignore this message.`,
         html: `
             <!DOCTYPE html>
             <html>
             <head>
-                <style>
-                    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0D0D0D; color: #ffffff; margin: 0; padding: 0; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
-                    .logo { text-align: center; margin-bottom: 30px; }
-                    .logo h1 { font-size: 32px; margin: 0; }
-                    .logo span { color: #8B5CF6; }
-                    .card { background: linear-gradient(145deg, #1a1a2e, #16162a); border-radius: 16px; padding: 40px; border: 1px solid rgba(139, 92, 246, 0.2); }
-                    h2 { color: #ffffff; margin-top: 0; }
-                    p { color: #a0a0a0; line-height: 1.6; }
-                    .code-container { background: rgba(139, 92, 246, 0.1); border: 1px dashed rgba(139, 92, 246, 0.5); padding: 20px; text-align: center; margin: 25px 0; border-radius: 8px; }
-                    .code { font-size: 32px; font-weight: 800; color: #8B5CF6; letter-spacing: 8px; font-family: 'Courier New', monospace; mso-line-height-rule: exactly; line-height: 1; display: inline-block;}
-                    .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
-                    .highlight { color: #8B5CF6; }
-                    .warning { font-size: 12px; color: #ff6b6b; margin-top: 15px; }
-                </style>
+                <meta charset="UTF-8">
             </head>
             <body>
-                <div class="container">
-                    <div class="logo">
-                        <h1>TITAN <span>ARENA</span></h1>
-                    </div>
-                    <div class="card">
-                        <h2>Welcome, ${cleanUsername}! 🎮</h2>
-                        <p>Thanks for signing up for TITAN ARENA. Use the secure code below to complete your identity verification.</p>
-                        
-                        <div class="code-container">
-                            <span class="code">${otp}</span>
-                        </div>
-                        
-                        <p style="font-size: 14px; text-align: center;">This code will expire in 15 minutes.</p>
-                        
-                        <div style="text-align: center;">
-                            <p class="warning">⚠️ Do not share this code with anyone. Admin will never ask for it.</p>
-                        </div>
-
-
-                        <p>If you didn't create an account, you can safely ignore this email.</p>
-                    </div>
-                    <div class="footer">
-                        <p>© 2025 TITAN ARENA. All rights reserved.</p>
-                        <p>This is an automated message, please do not reply.</p>
-                    </div>
-                </div>
+                <p>Hi ${cleanUsername || 'there'},</p>
+                <p>Your Titan Arena verification code is:</p>
+                <p style="font-size: 28px; font-weight: bold; letter-spacing: 4px;">${otp}</p>
+                <p>This code expires in 15 minutes.</p>
+                <p>If you did not request this code, you can ignore this email.</p>
             </body>
             </html>
         `
@@ -141,57 +111,31 @@ exports.sendVerificationEmail = async (email, token, username) => {
 exports.sendCustomVerificationEmail = async (email, verificationLink, username) => {
     const transport = getTransporter();
     const cleanUsername = sanitize(username);
+    const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
 
     console.log(`📧 Sending custom verification email to ${email}`);
 
     const mailOptions = {
-        from: `"TITAN ARENA" <${process.env.SMTP_USER}>`,
+        from: { name: 'TITAN ARENA', address: fromAddress },
         to: email,
-        replyTo: 'no-reply@titanarena.com',
-        subject: '🛡️ Verify Your TITAN ARENA Account',
+        replyTo: fromAddress,
+        subject: 'Titan Arena account verification',
+        headers: {
+            'X-Priority': '1',
+            Importance: 'high'
+        },
         text: `Welcome, ${cleanUsername}! Verify your account here: ${verificationLink}`,
         html: `
             <!DOCTYPE html>
             <html>
             <head>
-                <style>
-                    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #050505; color: #ffffff; margin: 0; padding: 0; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
-                    .header { text-align: center; margin-bottom: 40px; }
-                    .header h1 { font-size: 32px; font-weight: 900; letter-spacing: -1px; margin: 0; text-transform: uppercase; }
-                    .header span { color: #8B5CF6; }
-                    .card { background: #0a0a0a; border-radius: 24px; padding: 48px; border: 1px solid rgba(139, 92, 246, 0.2); box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-                    h2 { font-size: 24px; font-weight: 700; margin-top: 0; margin-bottom: 16px; }
-                    p { color: #a0a0a0; line-height: 1.6; font-size: 16px; margin-bottom: 32px; }
-                    .btn { display: inline-block; background: #8B5CF6; color: #ffffff !important; text-decoration: none; padding: 16px 32px; border-radius: 12px; font-weight: 700; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; transition: all 0.3s ease; box-shadow: 0 10px 20px rgba(139, 92, 246, 0.3); }
-                    .footer { text-align: center; margin-top: 40px; color: #444; font-size: 12px; font-family: 'Courier New', monospace; }
-                    .divider { height: 1px; background: rgba(255,255,255,0.05); margin: 32px 0; }
-                    .link-alt { font-size: 12px; color: #444; word-break: break-all; margin-top: 32px; }
-                </style>
+                <meta charset="UTF-8">
             </head>
             <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>TITAN <span>ARENA</span></h1>
-                    </div>
-                    <div class="card">
-                        <h2>UPLINK INITIATED 📡</h2>
-                        <p>Welcome, <b>${cleanUsername}</b>. We've detected a registration request for your account. To establish a secure connection to the Arena, please verify your identity.</p>
-                        
-                        <div style="text-align: center;">
-                            <a href="${verificationLink}" class="btn">VERIFY ACCOUNT</a>
-                        </div>
-                        
-                        <div class="divider"></div>
-                        
-                        <p style="font-size: 14px; margin-bottom: 0;">If the button doesn't work, copy and paste this link into your browser:</p>
-                        <div class="link-alt">${verificationLink}</div>
-                    </div>
-                    <div class="footer">
-                        <p>OPERATIONAL PROTOCOL 04-A // ENCRYPTED TRANSMISSION</p>
-                        <p>© 2025 TITAN ARENA // GLOBAL ESPORTS GRID</p>
-                    </div>
-                </div>
+                <p>Welcome, ${cleanUsername}.</p>
+                <p>Please verify your Titan Arena account by opening this link:</p>
+                <p><a href="${verificationLink}">${verificationLink}</a></p>
+                <p>If you did not request this, you can ignore this email.</p>
             </body>
             </html>
         `
@@ -210,60 +154,30 @@ exports.sendCustomVerificationEmail = async (email, verificationLink, username) 
 exports.sendPasswordResetEmail = async (email, link, username) => {
     const transport = getTransporter();
     const cleanUsername = sanitize(username);
+    const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
 
     const mailOptions = {
-        from: `"TITAN ARENA" <${process.env.SMTP_USER}>`,
+        from: { name: 'TITAN ARENA', address: fromAddress },
         to: email,
-        replyTo: 'no-reply@titanarena.com',
-        subject: '🔐 Reset Your Password',
-        text: `Hi ${cleanUsername}, please click the link to reset your password: ${link}`, // Text fallback
+        replyTo: fromAddress,
+        subject: 'Titan Arena password reset',
+        headers: {
+            'X-Priority': '1',
+            Importance: 'high'
+        },
+        text: `Hi ${cleanUsername},\n\nUse this link to reset your Titan Arena password: ${link}\n\nIf you did not request this, you can ignore this email.`,
         html: `
             <!DOCTYPE html>
             <html>
             <head>
-                <style>
-                    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0D0D0D; color: #ffffff; margin: 0; padding: 0; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
-                    .logo { text-align: center; margin-bottom: 30px; }
-                    .logo h1 { font-size: 32px; margin: 0; }
-                    .logo span { color: #8B5CF6; }
-                    .card { background: linear-gradient(145deg, #1a1a2e, #16162a); border-radius: 16px; padding: 40px; border: 1px solid rgba(139, 92, 246, 0.2); }
-                    h2 { color: #00F0FF; margin-top: 0; }
-                    p { color: #e5e5e5; line-height: 1.6; } /* Lighter text for readability */
-                    .btn-container { text-align: center; margin: 30px 0; }
-                    .btn { display: inline-block; background: #8B5CF6; color: #FFFFFF !important; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: bold; letter-spacing: 1px; transition: background 0.3s; }
-                    .btn:hover { background: #7c3aed; }
-                    .footer { text-align: center; margin-top: 30px; color: #888; font-size: 12px; }
-                    .fallback-link { font-size: 11px; color: #888; word-break: break-all; margin-top: 20px; text-align: center; border-top: 1px solid #333; padding-top: 20px; }
-                    .warning { color: #fe8787; font-size: 13px; margin-top: 20px; text-align: center; } /* Softer red for warnings */
-                </style>
+                <meta charset="UTF-8">
             </head>
             <body>
-                <div class="container">
-                    <div class="logo">
-                        <h1>TITAN <span>ARENA</span></h1>
-                    </div>
-                    <div class="card">
-                        <h2>Password Reset Request 🔐</h2>
-                        <p>Hi ${cleanUsername},</p>
-                        <p>We received a request to reset your password. Click the button below to choose a new secure password.</p>
-                        
-                        <div class="btn-container">
-                            <a href="${link}" class="btn">RESET PASSWORD</a>
-                        </div>
-                        
-                        <p>This link will expire in 5 minutes.</p>
-                        <p>If you didn't request this, you can safely ignore this email.</p>
-
-                        <div class="fallback-link">
-                            <p>Button not working? Copy this link into your browser:</p>
-                            <a href="${link}" style="color: #8B5CF6;">${link}</a>
-                        </div>
-                    </div>
-                    <div class="footer">
-                        <p>© 2025 TITAN ARENA. All rights reserved.</p>
-                    </div>
-                </div>
+                <p>Hi ${cleanUsername},</p>
+                <p>Use this link to reset your Titan Arena password:</p>
+                <p><a href="${link}">${link}</a></p>
+                <p>This link expires in 5 minutes.</p>
+                <p>If you did not request this, you can ignore this email.</p>
             </body>
             </html>
         `
@@ -280,5 +194,28 @@ exports.sendPasswordResetEmail = async (email, link, username) => {
             smtpConfigured: !!process.env.SMTP_USER
         });
         throw error;
+    }
+};
+
+exports.sendGenericEmail = async (email, subject, text, html) => {
+    const transport = getTransporter();
+    const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER;
+
+    const mailOptions = {
+        from: { name: 'TITAN ARENA', address: fromAddress },
+        to: email,
+        replyTo: fromAddress,
+        subject: subject,
+        text: text,
+        html: html
+    };
+
+    try {
+        await transport.sendMail(mailOptions);
+        console.log(`📧 Generic email sent to ${email} with subject: "${subject}"`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Generic Email send error to ${email}:`, error.message);
+        return false;
     }
 };

@@ -220,6 +220,11 @@ Esports Tournament Website/
 - Docker Desktop
 - `.env` file configured (see `.env.example`)
 
+### Email Deliverability
+- Set `SMTP_USER`, `SMTP_PASS`, and preferably `SMTP_FROM` to a mailbox on a domain you control.
+- Publish SPF, DKIM, and DMARC records for that sending domain before relying on verification mail in production.
+- If messages still land in spam, check the provider's SMTP reputation, the sender domain alignment, and whether the `From` address matches the authenticated mailbox.
+
 ### Start All Services
 ```bash
 docker-compose up -d

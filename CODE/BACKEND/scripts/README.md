@@ -20,6 +20,15 @@ Migrates the database to the new region-based UID system.
 node scripts/production/migrate_region_system.js
 ```
 
+### `production/backfill_role_uids.js`
+Backfills `hostUid`, `adminUid`, and `superAdminUid` for existing users with those roles.
+
+```bash
+node scripts/production/backfill_role_uids.js
+```
+
+⚠️ This is safe to rerun. It only fills missing role-specific UIDs.
+
 ### `production/promote_superadmin.js`
 Promotes a user to SUPERADMIN role.
 
